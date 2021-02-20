@@ -12,15 +12,14 @@ namespace Appudeta
         public int ConsoleHeight { get; private set; }
         public char CharBorder { get; private set; } // █▓
         public string Arrow { get; private set; }
-        public string heading = string.Empty;
-        public Title[] MiddleTitles { get; private set; }
         public ConsoleColor ColorBoder { get; private set; }
+        public Title[] MiddleTitles { get; private set; }
         public LeftSide LeftSide { get; private set; }
         public bool IsWithColorPattern { get; private set; }
 
         public string[] Lines { get; private set; }
 
-        private string strAppInterface = string.Empty;
+        #region Costuctor
 
         public PanelInterface()
         {
@@ -47,11 +46,7 @@ namespace Appudeta
             Lines = new string[consoleHeight];
         }
 
-        public string StrAppInterface
-        {
-            get { if (String.IsNullOrWhiteSpace(strAppInterface)) { return "StrAppInterface NOT Compone"; } return strAppInterface; }
-            private set { strAppInterface = value; }
-        }
+        #endregion Costuctor
 
         private void TopRow()
         {

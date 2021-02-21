@@ -14,9 +14,9 @@ namespace Appudeta
         public string Arrow { get; private set; }
         public ConsoleColor ColorBoder { get; private set; }
         public Title[] MiddleTitles { get; private set; }
-        public LeftSide LeftSide { get; private set; }
+        public SideList SideList { get; private set; }
+        public SideResult SideResult { get; private set; }
         public bool IsWithColorPattern { get; private set; }
-
         public string[] Lines { get; private set; }
 
         #region Costuctor
@@ -30,10 +30,12 @@ namespace Appudeta
             MiddleTitles = new Title[] { new Title("Program"), new Title("App"), new Title("PROPROPROPROPRO"), new Title("") };
             ColorBoder = ConsoleColor.Magenta;
             IsWithColorPattern = true;
-            LeftSide = new LeftSide();
+            SideList = new SideList();
+            SideResult = new SideResult();
             Lines = new string[ConsoleHeight];
         }
-        public PanelInterface(int consoleWidth, int consoleHeight, char charBorder, string arrow, Title[] titles, ConsoleColor colorBoder, bool isWithColorPattern, string titlePrograms, int sizeLeftSide)
+        public PanelInterface(int consoleWidth, int consoleHeight, char charBorder, string arrow, Title[] titles, ConsoleColor colorBoder, bool isWithColorPattern
+            , string titleList, string titleProces, int sizeLeftSide)
         {
             ConsoleWidth = consoleWidth;
             ConsoleHeight = consoleHeight;
@@ -42,7 +44,8 @@ namespace Appudeta
             MiddleTitles = titles;
             ColorBoder = colorBoder;
             IsWithColorPattern = isWithColorPattern;
-            LeftSide = new LeftSide(titlePrograms, sizeLeftSide, charBorder, colorBoder, isWithColorPattern);
+            SideList = new SideList(titleList, sizeLeftSide, charBorder, colorBoder, isWithColorPattern);
+            SideResult = new SideResult(titleProces, 48, 16, charBorder, colorBoder, isWithColorPattern);
             Lines = new string[consoleHeight];
         }
 
@@ -50,7 +53,9 @@ namespace Appudeta
 
         private void TopRow()
         {
-            Lines[0] = this.LeftSide.GetHeadLine(); ;
+            Lines[0] = SideList.GetHeadLine();
+            Lines[0] += SideResult.GetHeadLine();
+
         }
         private void MiddleRows()
         {
@@ -60,18 +65,28 @@ namespace Appudeta
             {
                 if (MiddleTitles.Length > i && i < l)
                 {
-                    Lines[i + 1] = LeftSide.GetMiddleLine(MiddleTitles[i].Name);
+                    Lines[i + 1] = SideList.GetMiddleLine(MiddleTitles[i].Name);
                 }
                 else
                 {
-                    Lines[i + 1] = LeftSide.GetEmplyMiddleLine();
+                    Lines[i + 1] = SideList.GetEmplyMiddleLine();
+                }
+
+                if (SideResult.ResultRows.Count > i && i < l)
+                {
+                    Lines[i + 1] += SideResult.ResultRows[i];
+                }
+                else
+                {
+                    Lines[i + 1] += SideResult.GetEmplyMiddleLine();
                 }
             }
             //return $"{middleRows}";
         }
         private void BottomRow()
         {
-            Lines[Lines.Length - 1] = LeftSide.GetBottomLine();
+            Lines[Lines.Length - 1] = SideList.GetBottomLine();
+            Lines[Lines.Length - 1] = SideResult.GetBottomLine();
         }
         public void BuilderStrAppInterface()
         {

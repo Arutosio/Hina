@@ -45,12 +45,12 @@ namespace Appudeta
             }
             else
             {
-                FileManager.ProcessDirectory(@"C:\");
-
-                // foreach (string f in FileManager.GetAllFiles(@"C:\"))
-                // {
-                //     Console.WriteLine(FileManager.GetAllFiles(f));
-                // }
+                //FileManager.GetAllFiles(@"../");
+                foreach (string f in FileManager.GetAll(@"./"))
+                {
+                    string str = FileManager.PrintType(f);
+                    Printer.PrintStringPatter(str);
+                }
             }
 
             Console.ReadKey();

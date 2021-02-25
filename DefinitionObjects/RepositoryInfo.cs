@@ -1,5 +1,6 @@
 using System;
-using Newtonsoft.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Appudeta.ObjectsDefinitions
 {
@@ -7,7 +8,7 @@ namespace Appudeta.ObjectsDefinitions
     {
         private Status state;
 
-        public RepositoryInfo(string name, float version, string pathLocal, Uri origin)
+        public RepositoryInfo(string name, float version, string pathLocal, string origin)
         {
             this.Name = name;
             this.Version = version;
@@ -15,15 +16,10 @@ namespace Appudeta.ObjectsDefinitions
             this.Origin = origin;
         }
 
-        public RepositoryInfo(string json)
-        {
-            RepositoryInfo obj = JsonConvert.DeserializeObject<RepositoryInfo>(json);
-        }
-
         public string Name { get; private set; }
         public float Version { get; private set; }
         public string PathLocal { get; private set; }
-        public Uri Origin { get; private set; }
+        public string Origin { get; private set; }
         public ConsoleColor Color { get; private set; }
 
         public Status State

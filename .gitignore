@@ -1,6 +1,6 @@
 
-# Created by https://www.toptal.com/developers/gitignore/api/visualstudiocode,visualstudio,dotnetcore
-# Edit at https://www.toptal.com/developers/gitignore?templates=visualstudiocode,visualstudio,dotnetcore
+# Created by https://www.toptal.com/developers/gitignore/api/visualstudio,visualstudiocode,dotnetcore
+# Edit at https://www.toptal.com/developers/gitignore?templates=visualstudio,visualstudiocode,dotnetcore
 
 ### DotnetCore ###
 # .NET Core build folders
@@ -377,4 +377,4 @@ MigrationBackup/
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
 
-# End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,visualstudio,dotnetcore
+# End of https://www.toptal.com/developers/gitignore/api/visualstudio,visualstudiocode,dotnetcore

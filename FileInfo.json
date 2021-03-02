@@ -1,0 +1,17 @@
+[
+    {
+        "Name": "file1.txt",
+        "Version": 3.2,
+        "Directory": "./"
+    },
+    {
+        "Name": "file2.txt",
+        "Version": 3.2,
+        "Directory": "./"
+    },
+    {
+        "Name": "file3.txt",
+        "Version": 0,
+        "Directory": "./"
+    }
+]

@@ -1,6 +1,10 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Appudeta.AppInterface;
 using Appudeta.ObjectsDefinitions;
 using Appudeta.Utilities;
@@ -9,51 +13,70 @@ namespace Appudeta
 {
     class Program
     {
-        // private const int MF_BYCOMMAND = 0x00000000;
-        // public const int SC_CLOSE = 0xF060;
-        // public const int SC_MINIMIZE = 0xF020;
-        // public const int SC_MAXIMIZE = 0xF030;
-        // public const int SC_SIZE = 0xF000;
-
-        // [DllImport("user32.dll")]
-        // public static extern int DeleteMenu(IntPtr hMenu, int nPosition, int wFlags);
-
-        // [DllImport("user32.dll")]
-        // private static extern IntPtr GetSystemMenu(IntPtr hWnd, bool bRevert);
-
-        // [DllImport("kernel32.dll", ExactSpelling = true)]
-        // private static extern IntPtr GetConsoleWindow();
-
         static void Main(string[] args)
         {
-            HeadInfo();
             // Title[] ts = new Title[] { new Title("Program"), new Title("App"), new Title("PROPROPROPROPRO"), new Title("") };
             // PanelInterface panelInterface = new(10, 10, '▓', "~>", ts, ConsoleColor.DarkMagenta, true, "APP LIST", "PROCESS", 20);
             // panelInterface.BuilderStrAppInterface();
-
-            // FileManager Test
-            //FileManager.GetAllFiles(@"../");
-            foreach (string f in FileManager.GetAll(@"./"))
+            HeadInfo();
+            WebClient client = new();
+            foreach (RepositoryInfo r in GetRepositoryInfos())
             {
-                string str = FileManager.PrintType(f);
-                Printer.PrintStringPatter(str);
+                IList<string> files = FileManager.GetFilesWithSub(r.PathLocal);
+                List<Uri> fileUri = GenUrisFiles(r.Origin);
+                foreach (Uri uri in fileUri)
+                {
+                    //Uri uri = new Uri("https://raw.githubusercontent.com/Arutosio/Jira-Groovy-Script/master/Add%20~%20%20LOG%20Message%20in%20the%20Validator_Post-Function_Conditions.groovy");
+                    string[] filePathInside = FileManager.SterelizePathFromUri(uri, r.UriOrigin);
+                    string savePath = Path.Combine(r.PathLocal, Path.Combine(filePathInside));
+                    try
+                    {
+                        string fileToPrint = FileManager.PrintType(savePath);
+
+                        Printer.PrintStringPatter(fileToPrint);
+                        Printer.PrintLine(ConsoleColor.Cyan, uri.ToString());
+                        Printer.PrintLine(ConsoleColor.Green, savePath);
+                        //client.DownloadFile(r.Origin, r.Name);
+                    }
+                    catch (Exception ex)
+                    {
+                        Printer.PrintLine(ConsoleColor.Red, ex.Message);
+                        // Environment.Exit(0);
+                    }
+                    //break;
+                }
             }
 
-            //Json Test
-            string myJson = File.ReadAllText("./Repositorys.json");
-            RepositoryInfo[] rs = JsonReader.Deserialize(myJson);
-            foreach (RepositoryInfo r in rs)
-            {
-                Console.WriteLine(r.Name);
-            }
+            //Console.ReadKey();
 
-            Console.ReadKey();
+            // FileVersionInfo myFileVersionInfo = FileVersionInfo.GetVersionInfo(file);
+            // // Print the file name and version number.
+            // Console.WriteLine("File: " + myFileVersionInfo.FileDescription + '\n' +
+            // "Version number: " + myFileVersionInfo.FileVersion);
         }
 
         public static void HeadInfo()
         {
             Printer.PrintLine("Program is developed by ", ConsoleColor.Magenta, "@Arutosio");
             Printer.PrintLine("Open Source: ", ConsoleColor.Cyan, "https://github.com/Arutosio/Appudeta");
+        }
+        public static RepositoryInfo[] GetRepositoryInfos()
+        {
+            //Json Test
+            string myJson = File.ReadAllText("./Repositorys.json");
+            RepositoryInfo[] ret = JsonReader.Deserialize(myJson);
+            foreach (RepositoryInfo r in ret)
+            {
+                Console.WriteLine($"\n\r{r.Name}");
+            }
+            return ret;
+        }
+        public static List<Uri> GenUrisFiles(string origin)
+        {
+            List<Uri> urisFiles = new();
+            urisFiles.Add(new Uri("https://github.com/Arutosio/Appudeta"));
+            urisFiles.Add(new Uri("https://github.com/Arutosio/Miru-Naibu"));
+            return urisFiles;
         }
     }
 }

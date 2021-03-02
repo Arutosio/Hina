@@ -1,20 +1,20 @@
 [
     {
-        "Name": "program",
+        "Name": "FolderDownloand",
         "Version": 3.2,
-        "PathLocal": "path/path/path",
-        "Origin": "http://web.com/program1"
+        "PathLocal": "C:\\Users\\stefa\\Downloads",
+        "Origin": "https://raw.githubusercontent.com/modernuo/ModernUO/"
     },
     {
-        "Name": "App1",
+        "Name": "program",
         "Version": 3.2,
-        "PathLocal": "path/path/path",
-        "Origin": "http://maduro.co.ve/Maricon"
+        "PathLocal": "S:",
+        "Origin": "https://github.com/Arutosio/Jira-Groovy-Script"
     },
     {
         "Name": "Panini Ca Carni!",
         "Version": 0,
-        "PathLocal": "path/path/path",
+        "PathLocal": "S:\\",
         "Origin": "http://a.com/program2"
     }
 ]

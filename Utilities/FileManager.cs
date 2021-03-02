@@ -8,43 +8,45 @@ namespace Appudeta.Utilities
 {
     public static class FileManager
     {
-        public static IList<string> GetAll(string targetDirectory)
+        public static IList<string> GetContent(string targetDirectory)
         {
             List<string> ret = new();
-            IList<string> dirs = GetDirectorys(targetDirectory);
-            IList<string> files = GetAllFiles(targetDirectory);
+            IList<string> dirs = GetDirectories(targetDirectory);
+            IList<string> files = GetFiles(targetDirectory);
             ret.AddRange(dirs);
             ret.AddRange(files);
 
             return ret;
         }
 
-        public static IList<string> GetAllFiles(string targetDirectory)
+        public static IList<string> GetFiles(string targetDirectory)
         {
             // Get the list of files found in the directory.
             IList<string> files = Directory.GetFiles(targetDirectory).ToList();
-            foreach (string fileName in files)
-            {
-                PrintType(fileName);
-            }
+            return files;
+        }
+        public static IList<string> GetFilesWithSub(string targetDirectory)
+        {
+            List<string> files = Directory.GetFiles(targetDirectory, "*.*", SearchOption.AllDirectories).ToList();
             return files;
         }
 
-        public static IList<string> GetDirectorys(string targetDirectory)
+        public static IList<string> GetDirectories(string targetDirectory)
         {
             // Recurse into subdirectories of this directory.
-            IList<string> subDirectoryEntries = Directory.GetDirectories(targetDirectory);
+            IList<string> subDirectoryEntries = Directory.GetDirectories(targetDirectory).ToList();
             return subDirectoryEntries;
         }
 
-        public static IList<string> GetAllSubDirectory(string directory)
+        public static IList<string> GetAllSubDirectories(string directory)
         {
-            List<string> directorys = new();
-            foreach (string subDirectory in GetDirectorys(directory))
+            List<string> ret = new();
+            List<string> directorys = (GetDirectories(directory) as List<string>);
+            foreach (string subDirectory in directorys)
             {
-                directorys.AddRange(GetAllSubDirectory(subDirectory));
+                ret.AddRange(GetAllSubDirectories(subDirectory));
             }
-            return directorys;
+            return ret;
         }
 
 
@@ -70,6 +72,10 @@ namespace Appudeta.Utilities
                 ret = $"{ConsoleColor.Red}╠???:║ {path}";
             }
             return ret;
+        }
+        public static string[] SterelizePathFromUri(Uri uri, Uri uriOrigin)
+        {
+            return uri.AbsolutePath.Replace(uriOrigin.AbsolutePath, "").Replace("%20", " ").Split('/');
         }
     }
 }

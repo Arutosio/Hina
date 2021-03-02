@@ -10,16 +10,17 @@ namespace Appudeta.ObjectsDefinitions
 
         public RepositoryInfo(string name, float version, string pathLocal, string origin)
         {
-            this.Name = name;
-            this.Version = version;
-            this.PathLocal = pathLocal;
-            this.Origin = origin;
+            Name = name;
+            Version = version;
+            PathLocal = pathLocal;
+            UriOrigin = new(origin);
         }
 
         public string Name { get; private set; }
         public float Version { get; private set; }
         public string PathLocal { get; private set; }
-        public string Origin { get; private set; }
+        public Uri UriOrigin { get; private set; }
+        public string Origin { get { return UriOrigin.ToString(); } }
         public ConsoleColor Color { get; private set; }
 
         public Status State

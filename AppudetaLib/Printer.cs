@@ -1,6 +1,6 @@
 using System;
 
-namespace Appudeta.Utilities
+namespace AppudetaLib
 {
     public static class Printer
     {

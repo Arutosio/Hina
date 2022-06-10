@@ -1,0 +1,20 @@
+[
+    {
+        "Name": "AppudetaTestProgram",
+        "Version": 0,
+        "PathTochi": "C:\\Users\\stefa\\Desktop\\AppudetaTestProgram",
+        "Sosu": "https://raw.githubusercontent.com/modernuo/ModernUO/"
+    },
+    {
+        "Name": "program",
+        "Version": 3.2,
+        "PathTochi": "S:",
+        "Sosu": "https://github.com/Arutosio/Jira-Groovy-Script"
+    },
+    {
+        "Name": "Panini Ca Carni!",
+        "Version": 0,
+        "PathTochi": "S:\\",
+        "Sosu": "http://a.com/program2"
+    }
+]

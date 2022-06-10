@@ -1,11 +1,11 @@
 using System;
 using System.Text;
-using Appudeta.AppInterface;
-using Appudeta.Utilities;
+using AppudetaConsole.AppInterface;
+using AppudetaLib;
 
-namespace Appudeta
+namespace AppudetaConsole
 {
-    public enum Status { Unknow = 7, Working = 14, Done = 10, Error = 12 }
+    // public enum Status { Unknow = 7, Working = 14, Done = 10, Error = 12 }
     public class PanelInterface
     {
         public int ConsoleWidth { get; private set; }

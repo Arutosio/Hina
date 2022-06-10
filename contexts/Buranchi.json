@@ -1,0 +1,58 @@
+{
+    "Name": "net6.0",
+    "Branches": [
+        {
+            "Name": "ref",
+            "Branches": null,
+            "Leaves": [
+                {
+                    "Name": "AppudetaConsole.dll",
+                    "Version": 0,
+                    "LastUpdate": "2022-01-12T22:47:30.0532687+01:00"
+                }
+            ]
+        }
+    ],
+    "Leaves": [
+        {
+            "Name": "AppudetaConsole.deps.json",
+            "Version": 0,
+            "LastUpdate": "2022-01-12T22:47:16.9187882+01:00"
+        },
+        {
+            "Name": "AppudetaConsole.dll",
+            "Version": 0,
+            "LastUpdate": "2022-01-12T22:47:16.9229065+01:00"
+        },
+        {
+            "Name": "AppudetaConsole.exe",
+            "Version": 0,
+            "LastUpdate": "2022-01-12T22:47:16.9229092+01:00"
+        },
+        {
+            "Name": "AppudetaConsole.pdb",
+            "Version": 0,
+            "LastUpdate": "2022-01-12T22:47:16.9229097+01:00"
+        },
+        {
+            "Name": "AppudetaConsole.runtimeconfig.json",
+            "Version": 0,
+            "LastUpdate": "2022-01-12T22:47:16.92291+01:00"
+        },
+        {
+            "Name": "AppudetaLib.dll",
+            "Version": 0,
+            "LastUpdate": "2022-01-12T22:47:16.9229107+01:00"
+        },
+        {
+            "Name": "AppudetaLib.pdb",
+            "Version": 0,
+            "LastUpdate": "2022-01-12T22:47:16.9229109+01:00"
+        },
+        {
+            "Name": "TorankuInfo-OLD.json",
+            "Version": 0,
+            "LastUpdate": "2022-01-12T22:47:16.9229112+01:00"
+        }
+    ]
+}

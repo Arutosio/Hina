@@ -1,6 +1,7 @@
 using System;
+using AppudetaLib.Entities;
 
-namespace Appudeta.AppInterface
+namespace AppudetaConsole.AppInterface
 {
     public class Title
     {

@@ -7,28 +7,41 @@ using System.Text.RegularExpressions;
 
 namespace AppudetaLib
 {
+
     public class Downloader
     {
-        public static async Task<Stream> DownloadFile(Uri uriToranku, string pathTonkaruFile)
+        //static private HttpClient _client;
+        //static HttpClient Client()
+        //{ 
+        //    if (_client == null)
+        //        _client = new HttpClient();
+        //    return _client;
+        //} 
+
+        // Create a new WebClient instance.
+
+        public static async Task<Stream> DownloadFile(Uri uriToranku)
         {
-            using (HttpClient httpClient = new())
+            HttpClientHandler clientHandler = new();
+            clientHandler.ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => { return true; };
+
+            // Pass the handler to httpclient(from you are calling api)
+            using (HttpClient httpClient = new(clientHandler))
             {
                 // Download a text file.
-                // stream = httpClient.GetStringAsync(uriToranku);
+                //stream = httpClient.GetStringAsync(uriToranku);
 
                 // Download a img file.
                 //var stream = await httpClient.GetByteArrayAsync(uriToranku);
 
                 // Download a big file use streams.
                 Stream stream = await httpClient.GetStreamAsync(uriToranku);
-
                 return stream;
-
                 // HttpResponseMessage response = await httpClient.GetAsync(uriToranku);
-                // using (var fs = new FileStream(pathTonkaruFile, FileMode.CreateNew))
-                // {
-                //     await response.Content.CopyToAsync(fs);
-                // }
+                //using (var fs = new FileStream(pathTonkaruFile, FileMode.CreateNew))
+                //{
+                //    await response.Content.CopyToAsync(fs);
+                //}
             }
         }
 

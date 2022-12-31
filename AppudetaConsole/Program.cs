@@ -11,7 +11,7 @@ namespace AppudetaConsole
 {
     class Program
     {
-        private static Master master = new(ConsolePrint);
+        private static Master master = new(ConsolePrint, ConsoleInput);
 
         static void ConsolePrint(string msg, bool? EndWithNewLine)
         {
@@ -25,15 +25,27 @@ namespace AppudetaConsole
             }
         }
 
+        static string ConsoleInput(bool? EndWithNewLine)
+        {
+            if (EndWithNewLine == null || EndWithNewLine == false)
+            {
+                return "SINGLE LINEEEE"; //Console.Read();
+            }
+            else
+            {
+                return Console.ReadLine();
+            }
+        }
+
         static void Main(string[] args)
         {
             Kekka kekka;
-            string haJson = FileManager.ReadTextFile(@"D:\User\GitHub\Appudeta\contexts\Ha.json");
-            string buranchiJson = FileManager.ReadTextFile(@"D:\User\GitHub\Appudeta\contexts\Buranchi.json");
-            string torankuInfoJson = FileManager.ReadTextFile(@"D:\User\GitHub\Appudeta\contexts\TorankuInfo.json");
-            Ha ha = JsonParse.DeserializeHa(haJson);
-            Buranchi buranchi = JsonParse.DeserializeBuranchi(buranchiJson);
-            Toranku toranku = JsonParse.DeserializeToranku(torankuInfoJson);
+            //string haJson = FileManager.ReadTextFile(@"D:\User\GitHub\Appudeta\contexts\Ha.json");
+            //string buranchiJson = FileManager.ReadTextFile(@"D:\User\GitHub\Appudeta\contexts\Buranchi.json");
+            //string torankuInfoJson = FileManager.ReadTextFile(@"D:\User\GitHub\Appudeta\contexts\TorankuInfo.json");
+            //Ha ha = JsonParse.DeserializeHa(haJson);
+            //Buranchi buranchi = JsonParse.DeserializeBuranchi(buranchiJson);
+            //Toranku toranku = JsonParse.DeserializeToranku(torankuInfoJson);
 
             if (args.Any())
             {
@@ -138,13 +150,13 @@ namespace AppudetaConsole
                         case 2:
                             if (Uri.IsWellFormedUriString(command[1], UriKind.Absolute))
                             {
-                                retKekka = master.Dupe(Directory.GetCurrentDirectory(), new Uri(command[1]));
+                                retKekka =  master.Dupe(Directory.GetCurrentDirectory(), new Uri(command[1]));
                             }
                             break;
                         case 3:
                             if (Uri.IsWellFormedUriString(command[1], UriKind.Absolute) && (command[2].ToUpper().Equals("TRUE") || command[2].ToUpper().Equals("FALSE")))
                             {
-                                retKekka = master.Dupe(Directory.GetCurrentDirectory(), new Uri(command[1]), Convert.ToBoolean(command[2]));
+                                retKekka =  master.Dupe(Directory.GetCurrentDirectory(), new Uri(command[1]), Convert.ToBoolean(command[2]));
                             }
                             break;
                     }

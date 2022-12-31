@@ -3,19 +3,26 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection.Metadata;
 using System.Text;
 
 namespace AppudetaLib
 {
     public static class FileManager
     {
+        public static bool CheckFileExist(string pathFile)
+        {
+            return File.Exists(pathFile);
+        }
+
         public static string ReadTextFile(string pathFile)
         {
             // StreamReader r = new StreamReader(pathFile);
             // string jsonString = r.ReadToEnd();
             // return jsonString;
             // return File.ReadAllText(pathFile);
-            return string.Concat(File.ReadAllLines(pathFile));
+            string[] lines = File.ReadAllLines(pathFile);
+            return string.Concat(lines);
         }
 
         public static string GetNameDirectory(string dir)
@@ -50,6 +57,21 @@ namespace AppudetaLib
             else
             {
                 throw new Exception("The directory already exist.");
+            }
+        }
+
+        internal static void MakeFile(Stream stream, string filePath, bool force = false)
+        {
+            if (force || !File.Exists(filePath))
+            {
+                using (var fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write))
+                {
+                    stream.CopyTo(fileStream);
+                }
+            }
+            else
+            {
+                throw new Exception("The file already exist.");
             }
         }
 

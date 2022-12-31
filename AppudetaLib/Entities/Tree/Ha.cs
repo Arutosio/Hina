@@ -19,6 +19,8 @@ namespace AppudetaLib.Entities.Tree
         [JsonPropertyOrder(3)]
         public DateTime LastUpdate { get; set; }
 
+        public Ha() { }
+
         public Ha(string name)
         {
             Name = name;

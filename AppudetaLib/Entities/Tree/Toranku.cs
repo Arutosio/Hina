@@ -7,54 +7,45 @@ using System.Text.Json.Serialization;
 
 namespace AppudetaLib.Entities.Tree
 {
-    public class Toranku
+    public class Toranku : Buranchi
     {
-        public static string NameAppudetaFolder(Toranku toranku)
-        {
-            // return Path.Combine(toranku.DirPath, @".Appudeta");
-            return toranku.DirPath;
-        }
-
         [JsonIgnore]
         public DirectoryInfo DirInfo { get; private set; }
 
         [JsonPropertyOrder(1)]
-        public string DirPath { get { return DirInfo.FullName; } private set { } }
+        public float version { get; set; }
 
         [JsonPropertyOrder(2)]
-        public string Name { get; private set; }
+        public Ruto? Ruto { get; set; }
 
-        [JsonPropertyOrder(3)]
-        public Ruto Ruto { get; set; }
-
-        [JsonPropertyOrder(4)]
-        public Buranchi Buranchi { get; private set; }
+        public Toranku() { }
 
         public Toranku(string dirPath)
         {
             DirInfo = new(dirPath);
             Name = DirInfo.Name;
-            Ruto = new();
-            Buranchi = new(DirInfo.Name);
+            Branches= new();
+            Leaves = new();
         }
         public Toranku(string dirPath, Ruto ruto)
         {
             DirInfo = new(dirPath);
             Name = DirInfo.Name;
             Ruto = ruto;
-            Buranchi = new(DirInfo.Name);
-        }
-        public Toranku(string dirPath, string name, Ruto ruto, Buranchi buranchi)
-        {
-            DirInfo = new(dirPath);
-            Name = name;
-            Ruto = ruto;
-            Buranchi = buranchi;
+            Branches = new();
+            Leaves = new();
         }
 
         public string PathMainDir()
         {
             return Path.Combine(DirInfo.FullName, Ruto.GetTorankuMainFolder());
+        }
+
+        internal List<string> GetUrisFromTorankuObj(Toranku toranku)
+        {
+            List<string> uris = new();
+
+            return uris;
         }
     }
 }

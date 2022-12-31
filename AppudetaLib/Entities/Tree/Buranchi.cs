@@ -14,10 +14,12 @@ namespace AppudetaLib.Entities.Tree
         public string Name { get; set; }
 
         [JsonPropertyOrder(2)]
-        public List<Buranchi> Branches { get; set; }
+        public List<Buranchi>? Branches { get; set; }
 
         [JsonPropertyOrder(3)]
-        public List<Ha> Leaves { get; set; }
+        public List<Ha>? Leaves { get; set; }
+
+        public Buranchi() { }
 
         public Buranchi(string name)
         {
@@ -44,17 +46,26 @@ namespace AppudetaLib.Entities.Tree
         public List<string> Michi()
         {
             List<string> ret = new();
-            foreach (Ha ha in Leaves)
+
+            if (Leaves != null)
             {
-                ret.Add(Path.Combine(Name, ha.Name));
-            }
-            foreach (Buranchi faiba in Branches)
-            {
-                foreach (string haOnBurachi in faiba.Michi())
+                foreach (Ha ha in Leaves)
                 {
-                    ret.Add(Path.Combine(Name, haOnBurachi));
+                    ret.Add(Path.Combine(Name, ha.Name));
                 }
             }
+
+            if (Branches != null)
+            {
+                foreach (Buranchi faiba in Branches)
+                {
+                    foreach (string haOnBurachi in faiba.Michi())
+                    {
+                        ret.Add(Path.Combine(Name, haOnBurachi));
+                    }
+                }
+            }
+
             return ret;
         }
     }

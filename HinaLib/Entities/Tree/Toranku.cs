@@ -2,10 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace AppudetaLib.Entities.Tree
+namespace HinaLib.Entities.Tree
 {
     public class Toranku : Buranchi
     {

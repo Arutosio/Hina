@@ -1,5 +1,5 @@
 {
-  "DirPath": "D:\\User\\GitHub\\Appudeta\\AppudetaConsole\\bin\\Debug\\net6.0",
+  "DirPath": "D:\\User\\GitHub\\Hina\\HinaConsole\\bin\\Debug\\net6.0",
   "Ruto": {
     "UriSosu": null,
     "Sosu": null
@@ -12,7 +12,7 @@
         "Branches": null,
         "Leaves": [
           {
-            "Name": "AppudetaConsole.dll",
+            "Name": "HinaConsole.dll",
             "Version": 0,
             "LastUpdate": "2022-01-12T22:47:30.0532687+01:00"
           }
@@ -21,37 +21,37 @@
     ],
     "Leaves": [
       {
-        "Name": "AppudetaConsole.deps.json",
+        "Name": "HinaConsole.deps.json",
         "Version": 0,
         "LastUpdate": "2022-01-12T22:47:16.9187882+01:00"
       },
       {
-        "Name": "AppudetaConsole.dll",
+        "Name": "HinaConsole.dll",
         "Version": 0,
         "LastUpdate": "2022-01-12T22:47:16.9229065+01:00"
       },
       {
-        "Name": "AppudetaConsole.exe",
+        "Name": "HinaConsole.exe",
         "Version": 0,
         "LastUpdate": "2022-01-12T22:47:16.9229092+01:00"
       },
       {
-        "Name": "AppudetaConsole.pdb",
+        "Name": "HinaConsole.pdb",
         "Version": 0,
         "LastUpdate": "2022-01-12T22:47:16.9229097+01:00"
       },
       {
-        "Name": "AppudetaConsole.runtimeconfig.json",
+        "Name": "HinaConsole.runtimeconfig.json",
         "Version": 0,
         "LastUpdate": "2022-01-12T22:47:16.92291+01:00"
       },
       {
-        "Name": "AppudetaLib.dll",
+        "Name": "HinaLib.dll",
         "Version": 0,
         "LastUpdate": "2022-01-12T22:47:16.9229107+01:00"
       },
       {
-        "Name": "AppudetaLib.pdb",
+        "Name": "HinaLib.pdb",
         "Version": 0,
         "LastUpdate": "2022-01-12T22:47:16.9229109+01:00"
       },

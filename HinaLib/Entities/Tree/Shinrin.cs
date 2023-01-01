@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace AppudetaLib.Entities.Tree
+namespace HinaLib.Entities.Tree
 {
     public class Shinrin
     {

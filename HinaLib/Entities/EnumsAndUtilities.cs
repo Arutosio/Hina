@@ -1,7 +1,7 @@
 using System;
 using System.Drawing;
 
-namespace AppudetaLib.Entities
+namespace HinaLib.Entities
 {
     public enum Status { Done = 0, Error = 1, Warning = 2, Working = 4, Unknow = 3 }
 

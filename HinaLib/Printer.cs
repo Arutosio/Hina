@@ -1,6 +1,6 @@
 using System;
 
-namespace AppudetaLib
+namespace HinaLib
 {
     public static class Printer
     {

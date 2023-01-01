@@ -1,7 +1,7 @@
 using System;
-using AppudetaLib.Entities;
+using HinaLib.Entities;
 
-namespace AppudetaConsole.AppInterface
+namespace HinaConsole.AppInterface
 {
     public class Title
     {

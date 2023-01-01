@@ -1,6 +1,6 @@
-using AppudetaLib.Entities.Tree;
+using HinaLib.Entities.Tree;
 
-namespace AppudetaLib.Entities
+namespace HinaLib.Entities
 {
     public class Kekka
     {

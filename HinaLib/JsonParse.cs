@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Xml;
-using AppudetaLib.Entities.Tree;
+using HinaLib.Entities.Tree;
 
-namespace AppudetaLib
+namespace HinaLib
 {
     public static class JsonParse
     {

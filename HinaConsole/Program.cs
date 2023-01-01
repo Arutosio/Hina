@@ -3,19 +3,19 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Text.RegularExpressions;
-using AppudetaLib;
-using AppudetaLib.Entities;
-using AppudetaLib.Entities.Tree;
+using HinaLib;
+using HinaLib.Entities;
+using HinaLib.Entities.Tree;
 
-namespace AppudetaConsole
+namespace HinaConsole
 {
     class Program
     {
         private static Master master = new(ConsolePrint, ConsoleInput);
 
-        static void ConsolePrint(string msg, bool? EndWithNewLine)
+        static void ConsolePrint(string msg, bool EndWithNewLine = false)
         {
-            if (EndWithNewLine == null || EndWithNewLine == false)
+            if (EndWithNewLine == false)
             {
                 Console.Write(msg);
             }
@@ -25,9 +25,9 @@ namespace AppudetaConsole
             }
         }
 
-        static string ConsoleInput(bool? EndWithNewLine)
+        static string ConsoleInput(bool EndWithNewLine = false)
         {
-            if (EndWithNewLine == null || EndWithNewLine == false)
+            if (EndWithNewLine == false)
             {
                 return "SINGLE LINEEEE"; //Console.Read();
             }
@@ -40,9 +40,9 @@ namespace AppudetaConsole
         static void Main(string[] args)
         {
             Kekka kekka;
-            //string haJson = FileManager.ReadTextFile(@"D:\User\GitHub\Appudeta\contexts\Ha.json");
-            //string buranchiJson = FileManager.ReadTextFile(@"D:\User\GitHub\Appudeta\contexts\Buranchi.json");
-            //string torankuInfoJson = FileManager.ReadTextFile(@"D:\User\GitHub\Appudeta\contexts\TorankuInfo.json");
+            //string haJson = FileManager.ReadTextFile(@"D:\User\GitHub\Hina\contexts\Ha.json");
+            //string buranchiJson = FileManager.ReadTextFile(@"D:\User\GitHub\Hina\contexts\Buranchi.json");
+            //string torankuInfoJson = FileManager.ReadTextFile(@"D:\User\GitHub\Hina\contexts\TorankuInfo.json");
             //Ha ha = JsonParse.DeserializeHa(haJson);
             //Buranchi buranchi = JsonParse.DeserializeBuranchi(buranchiJson);
             //Toranku toranku = JsonParse.DeserializeToranku(torankuInfoJson);
@@ -80,7 +80,7 @@ namespace AppudetaConsole
 
 
             // master.Init(@"D:\User\Heroku", true);
-            // string dirPath = @"C:\Users\stefa\Desktop\AppudetaTestProgram";
+            // string dirPath = @"C:\Users\stefa\Desktop\HinaTestProgram";
 
             // DirectoryInfo dirInfo = new(dirPath);
             // Console.WriteLine(dirInfo.Name);
@@ -129,7 +129,7 @@ namespace AppudetaConsole
         public static void HeadInfo()
         {
             Printer.PrintLine("Program is developed by ", ConsoleColor.Magenta, "@Arutosio");
-            Printer.PrintLine("Open Source: ", ConsoleColor.Cyan, "https://github.com/Arutosio/Appudeta\n");
+            Printer.PrintLine("Open Source: ", ConsoleColor.Cyan, "https://github.com/Arutosio/Hina\n");
         }
 
         private static Kekka RunCommand(string[] command)
@@ -141,10 +141,30 @@ namespace AppudetaConsole
                     Console.WriteLine($"Command Dir {Directory.GetCurrentDirectory()}");
                     break;
                 case "CHECK":
-                    Console.WriteLine("Command Check");
+                    switch (command.Length)
+                    {
+                        case 1:
+                            retKekka = master.Check(Directory.GetCurrentDirectory());
+                            break;
+                        case 2:
+                            if (command[1].ToUpper().Equals("deep") )
+                            {
+                                retKekka = master.Check(Directory.GetCurrentDirectory(), true);
+                            }
+                            else
+                            {
+                                retKekka = master.Check(command[1]);
+                            }
+                            break;
+                        case 3:
+                            if (command[2].ToUpper().Equals("DEEP"))
+                            {
+                                retKekka = master.Check(command[1], true);
+                            }
+                            break;
+                    }
                     break;
                 case "DUPE":
-                    Console.WriteLine("Command Dupe");
                     switch (command.Length)
                     {
                         case 2:
@@ -162,10 +182,17 @@ namespace AppudetaConsole
                     }
                     break;
                 case "UPDATE":
-                    Console.WriteLine("Command Update");
+                    switch (command.Length)
+                    {
+                        case 1:
+                            retKekka = master.Update(Directory.GetCurrentDirectory());
+                            break;
+                        case 2:
+                            retKekka = master.Update(command[1], true);
+                            break;
+                    }
                     break;
                 case "INIT":
-                    Console.WriteLine("Command Init");
                     switch (command.Length)
                     {
                         case 1:
@@ -203,9 +230,20 @@ namespace AppudetaConsole
         public static List<Uri> GenUrisFiles(string origin)
         {
             List<Uri> urisFiles = new();
-            urisFiles.Add(new Uri("https://github.com/Arutosio/Appudeta"));
+            urisFiles.Add(new Uri("https://github.com/Arutosio/Hina"));
             urisFiles.Add(new Uri("https://github.com/Arutosio/Miru-Naibu"));
             return urisFiles;
         }
+
+        //public static Type GetType(string value)
+        //{
+        //    Type type = null;
+        //    switch (value)
+        //    {
+        //        case :
+        //            break;
+        //    }
+        //    return type
+        //}
     }
 }

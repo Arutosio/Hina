@@ -1,9 +1,9 @@
 using System;
 using System.Text;
-using AppudetaConsole.AppInterface;
-using AppudetaLib;
+using HinaConsole.AppInterface;
+using HinaLib;
 
-namespace AppudetaConsole
+namespace HinaConsole
 {
     // public enum Status { Unknow = 7, Working = 14, Done = 10, Error = 12 }
     public class PanelInterface

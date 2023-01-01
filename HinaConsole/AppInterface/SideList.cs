@@ -1,50 +1,46 @@
 using System;
-using System.Collections.Generic;
 
-namespace AppudetaConsole.AppInterface
+namespace HinaConsole.AppInterface
 {
-    public class SideResult
+    public class SideList
     {
         public string Title { get; private set; }
-        public List<string> ResultRows { get; private set; }
+        public string[] MiddleElements { get; private set; }
         public int SizeWidth { get; private set; }
-        public int NumMiddleRows { get; private set; }
+        //public int SizeHeight { get; private set; }
         public char CharBorder { get; private set; }
         public ConsoleColor ConColor { get; private set; }
         public bool IsWithColorPattern { get; private set; }
 
         #region Costuctor
-        public SideResult()
+        public SideList()
         {
-            Title = "Proces Result";
-            SizeWidth = 48;
-            NumMiddleRows = 10 - 2;
-            ResultRows = new List<string>(NumMiddleRows - 2);
+            Title = "List";
+            SizeWidth = 20;
+            //SizeHeight = 12;
             CharBorder = '█';
             ConColor = ConsoleColor.DarkMagenta;
             IsWithColorPattern = true;
         }
-        public SideResult(string title)
+        public SideList(string title)
         {
             Title = title;
-            SizeWidth = 48;
-            NumMiddleRows = 10 - 2;
-            ResultRows = new List<string>(NumMiddleRows - 2);
+            SizeWidth = 20;
+            //SizeHeight = 12;
             CharBorder = '█';
             ConColor = ConsoleColor.DarkMagenta;
             IsWithColorPattern = true;
+
         }
-        public SideResult(string title, int sizeWidth, int sizeHeight, char charBorder, ConsoleColor c, bool isWithColorPattern)
+        public SideList(string title, int sizeSide, char charBorder, ConsoleColor c, bool isWithColorPattern)
         {
             Title = title;
-            SizeWidth = sizeWidth >= 32 ? sizeWidth : 48;
-            NumMiddleRows = sizeHeight - 2;
-            ResultRows = new List<string>(NumMiddleRows - 2);
+            SizeWidth = sizeSide >= 5 ? sizeSide : 20;
+            //SizeHeight = sizeHeight >= 8 ? sizeHeight : 12;
             CharBorder = charBorder;
             ConColor = c;
             IsWithColorPattern = isWithColorPattern;
         }
-
         #endregion Costuctor
 
         public string GetHeadLine()
@@ -77,9 +73,9 @@ namespace AppudetaConsole.AppInterface
             }
             if (IsWithColorPattern)
             {
-                return $"{ConColor.ToString()}╠{bBefore}║White╠>{Title}<║{ConColor.ToString()}╠{bAfter}║";
+                return $"{ConColor.ToString()}╠{bBefore}║White╠>{Title}<║{ConColor.ToString()}╠{bAfter}║"; // ██>Programs<██
             }
-            return $"{bBefore}>{Title}<{bAfter}║";
+            return $"{bBefore}>{Title}<{bAfter}║"; // ██>Programs<██
         }
 
         private string FixMiddileString(string strFix)
@@ -125,40 +121,54 @@ namespace AppudetaConsole.AppInterface
             return res;
         }
 
+        public string GetMiddleLine(string strMiddle)
+        {
+            int limitLength = SizeWidth - 4; // 4 = 2 Border 2 Space 
+            string toPut = FixMiddileString(strMiddle);
+            if (IsWithColorPattern)
+            {
+                toPut = $"{ConColor.ToString()}╠{CharBorder}║White╠ {toPut} ║{ConColor.ToString()}╠{CharBorder}║";
+            }
+            else
+            {
+                toPut = $"{CharBorder} {toPut} {CharBorder}║";
+            }
+            return toPut;
+        }
+
+        public string[] GetMiddleLine(string[] middleElements)
+        {
+            string[] res = new string[middleElements.Length];
+            int limitLength = SizeWidth - 4; // 4 = 2 Border 2 Space 
+
+            for (int i = 0; i < middleElements.Length; i++)
+            {
+                string toPut = FixMiddileString(middleElements[i]);
+                if (IsWithColorPattern)
+                {
+                    res[i] = $"{ConColor.ToString()}╠{CharBorder}║White╠ {toPut} ║{ConColor.ToString()}╠{CharBorder}║";
+                }
+                else
+                {
+                    res[i] = $"{CharBorder} {toPut} {CharBorder}║";
+                }
+            }
+            return res;
+        }
+
         public string GetBottomLine()
         {
             string bottomLine = string.Empty;
-            for (int j = 0; j < SizeWidth; j++)
+            for (int j = 0; j < SizeWidth; j++)//
             {
                 bottomLine = bottomLine.Insert(0, CharBorder.ToString());
             }
 
             if (IsWithColorPattern)
             {
-                return $"{ConColor.ToString()}╠{bottomLine}";
+                return $"{ConColor.ToString()}╠{bottomLine}"; // ██>Programs<██
             }
-            return $"{bottomLine}";
-        }
-
-        public void AddRow(string strToAdd)
-        {
-            int freeRow = (NumMiddleRows - 2);
-            int freeChar = (SizeWidth - 2);
-            if (strToAdd.Length < freeChar)
-            {
-                ResultRows.Insert(0, strToAdd);
-            }
-            else
-            {
-                foreach (string line in strToAdd.Split())
-                {
-                    ResultRows.Insert(0, $"::{strToAdd}");
-                }
-            }
-            while (ResultRows.Count > freeRow)
-            {
-                ResultRows.RemoveAt(ResultRows.Count - 1);
-            }
+            return $"{bottomLine}"; // ██>Programs<██
         }
     }
 }

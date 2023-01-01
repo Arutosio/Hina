@@ -6,10 +6,28 @@ using System.Linq;
 using System.Reflection.Metadata;
 using System.Text;
 
-namespace AppudetaLib
+namespace HinaLib
 {
     public static class FileManager
     {
+        public static string ConvertStreamToString(Stream stream)
+        {
+            // convert stream to string
+            StreamReader reader = new StreamReader(stream);
+            string text = reader.ReadToEnd();
+
+            return text;
+        }
+
+        public static Stream ConvertStringToStream(string str)
+        {
+            // convert string to stream
+            byte[] byteArray = Encoding.ASCII.GetBytes(str);
+            MemoryStream stream = new MemoryStream(byteArray);
+            
+            return stream;
+        }
+
         public static bool CheckFileExist(string pathFile)
         {
             return File.Exists(pathFile);

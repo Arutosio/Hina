@@ -5,7 +5,7 @@
     <TargetFramework>net7.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <StartupObject>Hina.Program</StartupObject>
+    <StartupObject>HinaConsole.Program</StartupObject>
     <!-- <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64;linux-x64;osx-x64;linux-arm</RuntimeIdentifier>

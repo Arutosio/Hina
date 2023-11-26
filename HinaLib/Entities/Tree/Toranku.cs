@@ -14,7 +14,7 @@ namespace HinaLib.Entities.Tree
         public DirectoryInfo DirInfo { get; private set; }
 
         [JsonPropertyOrder(1)]
-        public float version { get; set; }
+        public float Version { get; set; }
 
         [JsonPropertyOrder(2)]
         public Ruto? Ruto { get; set; }

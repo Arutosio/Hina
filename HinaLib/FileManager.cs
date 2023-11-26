@@ -3,13 +3,37 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Reflection.Metadata;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace HinaLib
 {
     public static class FileManager
     {
+    //    public delegate void ProgressChangedHandler(int percent);
+    //    public static event ProgressChangedHandler ProgressChanged;
+
+        private static async Task SaveFile(Stream stream, string fileName, long totalBytes, int bufferSize)
+        {
+            long totalBytesRead = 0;
+
+            using (FileStream fileStream = System.IO.File.Create(fileName))
+            {
+                byte[] buffer = new byte[bufferSize];
+                int bytesRead;
+                while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                {
+                    await fileStream.WriteAsync(buffer, 0, bytesRead);
+                    totalBytesRead += bytesRead;
+
+                    //ProgressChanged?.Invoke((int)(100 * totalBytesRead / totalBytes));
+                }
+            }
+        }
+
+        // Convert Methods
         public static string ConvertStreamToString(Stream stream)
         {
             // convert stream to string
@@ -31,6 +55,11 @@ namespace HinaLib
         public static bool CheckFileExist(string pathFile)
         {
             return File.Exists(pathFile);
+        }
+
+        public static void DeleteFile(string pathFile)
+        {
+            File.Delete(pathFile);
         }
 
         public static string ReadTextFile(string pathFile)
@@ -64,6 +93,32 @@ namespace HinaLib
             // Get the list of files found in the directory.
             IList<string> files = Directory.GetFiles(targetDirectory).ToList();
             return files;
+        }
+
+        public static List<string> GetRelativePaths(string baseDirectory, IList<string> absolutePaths)
+        {
+            List<string> ret = new List<string>();
+
+            foreach(string absolutePath in absolutePaths)
+            {
+                ret.Add(GetRelativePath(baseDirectory, absolutePath));
+            }
+
+            return ret;
+        }
+
+        public static string GetRelativePath(string baseDirectory, string absolutePath)
+        {
+            Uri absoluteUri = new Uri(absolutePath);
+            Uri baseUri = new Uri(baseDirectory + Path.DirectorySeparatorChar);
+
+            // Calcola la differenza tra i percorsi
+            Uri relativeUri = baseUri.MakeRelativeUri(absoluteUri);
+
+            // Converti l'URI relativo in una stringa
+            string relativePath = Uri.UnescapeDataString(relativeUri.ToString());
+
+            return relativePath.Replace('/', Path.DirectorySeparatorChar);
         }
 
         internal static void MakeDirectory(string dirPath, bool force = false)
@@ -112,10 +167,39 @@ namespace HinaLib
             }
         }
 
-        public static IList<string> GetFilesWithSub(string targetDirectory)
+        public static List<string> GetFilesWithSub(string targetDirectory, string excludedFileName = null)
         {
-            List<string> files = Directory.GetFiles(targetDirectory, "*.*", SearchOption.AllDirectories).ToList();
-            return files;
+            List<string> retFiles;
+            List<string> allFiles = Directory.GetFiles(targetDirectory, "*.*", SearchOption.AllDirectories).ToList();
+
+            // Filtra i file escludendo quelli con il nome specificato
+            if (allFiles.Count > 0 && excludedFileName != null)
+            {
+                List<string> filteredFiles = allFiles
+                    .Where(file => !Path.GetFileName(file).Equals(excludedFileName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                retFiles = filteredFiles;
+            }
+            else
+            {
+                retFiles = allFiles;
+            }
+            return retFiles;
+        }
+
+        public static string CalcolaMD5Hash(FileInfo fileInfo)
+        {
+            using (MD5 md5 = MD5.Create())
+            {
+                using (FileStream stream = fileInfo.OpenRead())
+                {
+                    // Calcola l'hash MD5 del file
+                    byte[] hashBytes = md5.ComputeHash(stream);
+
+                    // Converte l'array di byte in una stringa esadecimale
+                    return BitConverter.ToString(hashBytes).Replace("-", "").ToLower();
+                }
+            }
         }
 
         public static IList<string> GetDirectories(string targetDirectory)

@@ -11,7 +11,7 @@ namespace HinaConsole
 {
     class Program
     {
-        private static Master master = new(ConsolePrint, ConsoleInput);
+        private static Master master = new(ConsolePrint, ConsoleInput, PrintProgressBar);
 
         static void ConsolePrint(string msg, bool EndWithNewLine = false)
         {
@@ -35,6 +35,20 @@ namespace HinaConsole
             {
                 return Console.ReadLine();
             }
+        }
+
+        private static void PrintProgressBar(int percent)
+        {
+            int consoleWidth = Console.WindowWidth - 1;
+            int progressBarSize = consoleWidth - 10;
+            int progressBarValue = (int)((float)progressBarSize * percent / 100);
+
+            Console.Write("\r");
+            Console.CursorLeft = 0;
+            Console.Write("[");
+            Console.Write(new string('#', progressBarValue));
+            Console.Write(new string(' ', progressBarSize - progressBarValue));
+            Console.Write("] " + percent + "%");
         }
 
         static void Main(string[] args)
@@ -85,7 +99,7 @@ namespace HinaConsole
             // DirectoryInfo dirInfo = new(dirPath);
             // Console.WriteLine(dirInfo.Name);
             // Console.WriteLine(Path.GetDirectoryName(dirPath));
-            //Kekka kekka = master.Init(dirPath, true);
+            // Kekka kekka = master.Init(dirPath, true);
 
             // foreach (var item in Downloader.GetFilesList())
             // {
@@ -128,7 +142,7 @@ namespace HinaConsole
 
         public static void HeadInfo()
         {
-            Printer.PrintLine("Program is developed by ", ConsoleColor.Magenta, "@Arutosio");
+            Printer.PrintLine("Hina is developed by ", ConsoleColor.Magenta, "@Arutosio");
             Printer.PrintLine("Open Source: ", ConsoleColor.Cyan, "https://github.com/Arutosio/Hina\n");
         }
 
@@ -170,13 +184,13 @@ namespace HinaConsole
                         case 2:
                             if (Uri.IsWellFormedUriString(command[1], UriKind.Absolute))
                             {
-                                retKekka =  master.Dupe(Directory.GetCurrentDirectory(), new Uri(command[1]));
+                                retKekka =  master.Dupe(Directory.GetCurrentDirectory(), new Uri(command[1])).Result;
                             }
                             break;
                         case 3:
                             if (Uri.IsWellFormedUriString(command[1], UriKind.Absolute) && (command[2].ToUpper().Equals("TRUE") || command[2].ToUpper().Equals("FALSE")))
                             {
-                                retKekka =  master.Dupe(Directory.GetCurrentDirectory(), new Uri(command[1]), Convert.ToBoolean(command[2]));
+                                retKekka =  master.Dupe(Directory.GetCurrentDirectory(), new Uri(command[1]), Convert.ToBoolean(command[2])).Result;
                             }
                             break;
                     }
@@ -185,10 +199,10 @@ namespace HinaConsole
                     switch (command.Length)
                     {
                         case 1:
-                            retKekka = master.Update(Directory.GetCurrentDirectory());
+                            retKekka = master.Update(Directory.GetCurrentDirectory()).Result;
                             break;
                         case 2:
-                            retKekka = master.Update(command[1], true);
+                            retKekka = master.Update(command[1], true).Result;
                             break;
                     }
                     break;
@@ -199,10 +213,18 @@ namespace HinaConsole
                             retKekka = master.Init(Directory.GetCurrentDirectory());
                             break;
                         case 2:
-                            retKekka = master.Init(command[1]);
+                            retKekka = master.Init(Directory.GetCurrentDirectory(), command[1]);
                             break;
                         case 3:
-                            retKekka = master.Init(command[1], Convert.ToBoolean(command[2]));
+                            retKekka = master.Init(Directory.GetCurrentDirectory(), command[1], Convert.ToBoolean(command[2]));
+                            break;
+                    }
+                    break;
+                case "HUPDATE":
+                    switch (command.Length)
+                    {
+                        case 1:
+                            retKekka = master.HUpdate(Directory.GetCurrentDirectory());
                             break;
                     }
                     break;

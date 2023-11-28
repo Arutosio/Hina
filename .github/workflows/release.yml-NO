@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*'
+      
+    branches:
+      - master
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v2
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: 8.0.x
+
+    - name: Build and Release
+      run: |
+        # Build HinaLib
+        cd HinaLib
+        dotnet build --no-restore -c Release
+
+        # Build HinaConsole
+        cd ../HinaConsole
+        dotnet build --no-restore -c Release
+
+        # Esegui altre operazioni necessarie per creare i tuoi file di rilascio
+        # Ad esempio, potresti copiare i file compilati in una directory specifica
+        mkdir -p ./release
+        cp -R ./HinaLib/bin/Release/* ./release/
+        cp -R ./HinaConsole/bin/Release/* ./release/
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: ./release/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -133,6 +133,14 @@ namespace HinaLib
             }
         }
 
+        internal static void MakeDirectoryIfNotExist(string dirPath)
+        {
+            if (!Directory.Exists(dirPath))
+            {
+                Directory.CreateDirectory(dirPath);
+            }
+        }
+
         internal static void MakeFile(Stream stream, string filePath, bool force = false)
         {
             if (force || !File.Exists(filePath))
@@ -167,7 +175,7 @@ namespace HinaLib
             }
         }
 
-        public static List<string> GetFilesWithSub(string targetDirectory, string excludedFileName = null)
+        public static List<string> GetFilesWithSub(string targetDirectory, string? excludedFileName = null)
         {
             List<string> retFiles;
             List<string> allFiles = Directory.GetFiles(targetDirectory, "*.*", SearchOption.AllDirectories).ToList();

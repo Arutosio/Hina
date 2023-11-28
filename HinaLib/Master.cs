@@ -1,10 +1,13 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.ComponentModel.Design;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Reflection.Metadata.Ecma335;
 using System.Runtime;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using HinaLib.Entities;
@@ -13,13 +16,12 @@ using HinaLib.Entities.Vitis;
 
 namespace HinaLib
 {
-
     public class Master
     {
         public static readonly string mainFileName = ".HinaInfo.json"; //"TorankuInfo.json";
 
-        private Action<string, bool> PrintMessage = null;
-        private Func<bool, string> GetInput = null;
+        private Action<string, bool> PrintMessage;
+        private Func<bool, string> GetInput;
 
         public Master(Action<string, bool> PrintMethod, Func<bool, string> InputMethod, Action<int> ProgressProcess)
         {
@@ -29,7 +31,7 @@ namespace HinaLib
             //Downloader.ProgressChanged += SendProgressBar;
         }
 
-        public Kekka Init(string dirGrappolo, string strUri = null, bool force = false)
+        public Kekka Init(string dirGrappolo, string? strUri = null, bool force = false)
         {
             Kekka kekka = new();
 
@@ -134,7 +136,7 @@ namespace HinaLib
             return kekka;
         }
 
-        public Kekka HUpdate(string dirGrappolo, string strUri = null, bool force = false)
+        public Kekka HUpdate(string dirGrappolo, string? strUri = null, bool force = false)
         {
             Kekka kekka = new();
 
@@ -143,20 +145,14 @@ namespace HinaLib
                 bool wasAChangeds = false;
 
                 // Update Grappolo
-                DirectoryInfo dirInfo = new(dirGrappolo);
+                DirectoryInfo grappoloDirInfo = new(dirGrappolo);
 
-                if (dirInfo.Exists)
+                if (grappoloDirInfo.Exists)
                 {
-                    string hinaFilePath = Path.Combine(dirInfo.FullName, mainFileName);
+                    Grappolo localGrappolo = GetGrappoloFromLocal(grappoloDirInfo);
 
-                    //Load local Grappolo
-                    string textFile = FileManager.ReadTextFile(hinaFilePath);
-                    // non ricordo il perche di questo.
-                    //textFile = textFile.Replace("\\r\\n", "").Replace("\\\\", "\\");
-                    Grappolo localGrappolo = JsonParse.DeserializeGrappolo(textFile);
-
-                    List<string> fullPathFileNames = FileManager.GetFilesWithSub(dirInfo.FullName, mainFileName);
-                    List<string> relativeFileNames = FileManager.GetRelativePaths(dirInfo.FullName, fullPathFileNames);
+                    List<string> fullPathFileNames = FileManager.GetFilesWithSub(grappoloDirInfo.FullName, mainFileName);
+                    List<string> relativeFileNames = FileManager.GetRelativePaths(grappoloDirInfo.FullName, fullPathFileNames);
 
                     // Rimozione dei file non piu esistendi nella directory al grappolo
                     PrintMessage("Beginning of cleaning the Grappolo phase for files that are no longer present ... ", false);
@@ -235,6 +231,7 @@ namespace HinaLib
                         PrintMessage("Beginning of the serialize phase of the local Grappolo JSON ... ", false);
                         localGrappolo.Version++;
                         string jsonG = JsonParse.SerializeGrappolo(localGrappolo);
+                        string hinaFilePath = Path.Combine(dirGrappolo, mainFileName);
                         // create dir and files
                         FileManager.MakeFile(hinaFilePath, jsonG, true);
                         PrintMessage("Done!", true);
@@ -258,68 +255,45 @@ namespace HinaLib
             return kekka;
         }
 
-        public async Task<Kekka> Dupe(string pathTochi, Uri uriToranku, bool force = false)
+        public async Task<Kekka> Dupe(string pathTochi, Uri uriHinaInfo, bool force = false)
         {
             Kekka kekka = new();
 
             try
             {
                 // Dupe Grappolo
-                string nameMainFolder = Ruto.GetTorankuMainFolder(uriToranku);
+                string nameMainFolder = Ruto.GetTorankuMainFolder(uriHinaInfo);
                 string pathMainFolder = Path.Combine(pathTochi, nameMainFolder);
-                string pathTonkaruFile = Path.Combine(pathMainFolder, Ruto.GetName(uriToranku));
+                string pathTonkaruFile = Path.Combine(pathMainFolder, Ruto.GetName(uriHinaInfo));
 
-                DirectoryInfo dirInfo = new(pathMainFolder);
+                DirectoryInfo directoryInfo = new(pathMainFolder);
 
-                if (force || !dirInfo.Exists)
+                if (force || !directoryInfo.Exists)
                 {
-                    string hinaFilePath = Path.Combine(dirInfo.FullName, mainFileName);
+                    string hinaFilePath = Path.Combine(directoryInfo.FullName, mainFileName);
+                    
+                    Grappolo sosuGrappolo = GetGrappoloFromUri(uriHinaInfo);
 
-                    Stream stream = Internet.DownloadFile(uriToranku).Result;
-                    string textSosuFile = FileManager.ConvertStreamToString(stream);
-                    Grappolo sosuGrappolo = JsonParse.DeserializeGrappolo(textSosuFile);
+                    if(sosuGrappolo.Ruto == null)
+                    {
+                        sosuGrappolo.Ruto = new(uriHinaInfo);
+                    }
 
                     // Download dei files
-                    int count = 0;
-                    foreach (Acino sosuAcino in sosuGrappolo.Acinos)
-                    {
-                        count++;
-                        // Download sosuAcino perche è un file nuovo non presente sul vecchio Grappolo.
-                        if(sosuGrappolo.Ruto == null)
-                        {
-                            sosuGrappolo.Ruto = new(uriToranku);
-                        }
-                        Uri uriFile = new(Internet.BuildUrl(sosuGrappolo.Ruto.UriSosu.Replace(mainFileName, ""), sosuAcino.FullName));
-                        string filePath = Path.Combine(pathMainFolder, sosuAcino.FullName);
-
-                        //crea la directory nel caso non esista
-                        string directory = Path.GetDirectoryName(filePath);
-
-                        // Verifica se la directory esiste, altrimenti creala
-                        if (!Directory.Exists(directory))
-                        {
-                            Directory.CreateDirectory(directory);
-                        }
-
-                        PrintMessage($"{count}/{sosuGrappolo.Acinos.Count} - Download: {sosuAcino.FullName} ", true);
-                        await Internet.DownloadAndSaveFile(uriFile, filePath);
-                        PrintMessage("", true);
-
-                        //Stream streamFile = Internet.DownloadFile(uriFile).Result;
-                        //FileManager.MakeFile(streamFile, filePath, true);
-
-                    }
-                    PrintMessage($"Download complete!", true);
+                    await DownloadAcinosFilesAsync(directoryInfo, sosuGrappolo);
 
                     // Aggiorno il Grappolo locale con quello sosu
                     string jsonG = JsonParse.SerializeGrappolo(sosuGrappolo);
-                    // Override files
                     FileManager.MakeFile(hinaFilePath, jsonG, true);
                     PrintMessage($"Grappolo was saved.", true);
+
+                    // Check files integrity
+                    await IntegrityPhaseAsync(directoryInfo, sosuGrappolo);
+                    PrintMessage("Integrity check complete", true);
                 }
                 else
                 {
-                    kekka.Message = $"Directory \"{dirInfo.FullName}\" doesn't exist.";
+                    kekka.Message = $"Directory \"{directoryInfo.FullName}\" doesn't exist.";
                     kekka.Status = Status.Error;
                 }
 
@@ -394,26 +368,12 @@ namespace HinaLib
                     if(FileManager.CheckFileExist(hinaFilePath))
                     {
                         //Load local Grappolo
-                        string textFile = FileManager.ReadTextFile(hinaFilePath);
-                        // non ricordo il perche di questo.
-                        //textFile = textFile.Replace("\\r\\n", "").Replace("\\\\", "\\");
-                        Grappolo localGrappolo = JsonParse.DeserializeGrappolo(textFile);
-
+                        Grappolo localGrappolo = GetGrappoloFromLocal(dirInfo);
                         //Load stream Grappolo
                         Grappolo sosuGrappolo;
                         if (localGrappolo.Ruto != null)
                         {
-                            //Scarica il file HinaInfo dal url impostato sul Ruto.UriSosu
-                            Stream stream = Internet.DownloadFile(new(localGrappolo.Ruto.UriSosu)).Result;
-                            string textSosuFile = FileManager.ConvertStreamToString(stream);
-
-                            // TEST
-                            //string textTestFile = FileManager.ReadTextFile(Path.Combine(dirPath, ".HinaInfo_Update_Test.json"));
-                            // non ricordo il perche di questo.
-                            //textTestFile = textTestFile.Replace("\\r\\n", "").Replace("\\\\", "\\");
-                            // END TEST
-
-                            sosuGrappolo = JsonParse.DeserializeGrappolo(textSosuFile); //textTestFile);
+                            sosuGrappolo = GetGrappoloFromUri(new(localGrappolo.Ruto.UriSosu));
 
                             if (isDeep || localGrappolo.Version < sosuGrappolo.Version)
                             {
@@ -455,7 +415,6 @@ namespace HinaLib
                                 kekka.Message = "Already uptodate.";
                                 kekka.Status = Status.Done;
                             }
-
                         }
                         else
                         {
@@ -574,8 +533,6 @@ namespace HinaLib
 
                     //Load local Grappolo
                     string textFile = FileManager.ReadTextFile(hinaFilePath);
-                    // non ricordo il perche di questo.
-                    //textFile = textFile.Replace("\\r\\n", "").Replace("\\\\", "\\");
                     Grappolo localGrappolo = JsonParse.DeserializeGrappolo(textFile);
 
                     //Load stream Grappolo
@@ -631,8 +588,6 @@ namespace HinaLib
                     kekka.Message = $"Directory \"{dirInfo.FullName}\" doesn't exist.";
                     kekka.Status = Status.Error;
                 }
-
-
 
                 #region Toranku Update
                 /* Toranku Update ************************************************************************************************
@@ -714,6 +669,101 @@ namespace HinaLib
         //    Ruto ruto = new(dirPath);
         //    return ruto;
         //}
+
+        private Grappolo GetGrappoloFromLocal(DirectoryInfo grappoloDirInfo)
+        {
+            string hinaFilePath = Path.Combine(grappoloDirInfo.FullName, mainFileName);
+            string textFileGrappolo = FileManager.ReadTextFile(hinaFilePath);
+            Grappolo grappolo = JsonParse.DeserializeGrappolo(textFileGrappolo);
+
+            return grappolo;
+        }
+
+        private Grappolo GetGrappoloFromUri(Uri uriHinaInfo)
+        {
+            Stream stream = Internet.DownloadFile(uriHinaInfo).Result;
+            string textFileGrappolo = FileManager.ConvertStreamToString(stream);
+            Grappolo grappolo = JsonParse.DeserializeGrappolo(textFileGrappolo);
+
+            return grappolo;
+        }
+
+        private async Task IntegrityPhaseAsync(DirectoryInfo directoryInfo, Grappolo grappolo)
+        {
+            PrintMessage("Start cheking integritive file", true);
+            List<Acino> brokenAcinos = CheckAcinoIntegrity(directoryInfo, grappolo);
+            if(brokenAcinos.Count > 0)
+            {
+                PrintMessage($"There is {brokenAcinos.Count}.", true);
+            }
+            else
+            {
+                PrintMessage($"All files are integrateve.", true);
+            }
+            int count = 0;
+            foreach (Acino acino in brokenAcinos)
+            {
+                count++;
+                PrintMessage($"{count}/{brokenAcinos.Count} - ReDownload: {acino.FullName} ", true);
+                await DownloadAcinoFileIfCorruptedAsync(directoryInfo, grappolo, acino);
+                PrintMessage($"", true);
+            }
+        }
+
+        private List<Acino> CheckAcinoIntegrity(DirectoryInfo directoryInfo, Grappolo grappolo)
+        {
+            // Check files integrity
+            List<Acino> brokenAcinos = new();
+            foreach (Acino acino in grappolo.Acinos)
+            {
+                string fullFilePath = Path.Combine(directoryInfo.FullName, acino.FullName);
+                FileInfo fileInfo = new(fullFilePath);
+                string mD5HashFile = FileManager.CalcolaMD5Hash(fileInfo);
+
+                if(!mD5HashFile.Equals(acino.MD5Hash))
+                {
+                    brokenAcinos.Add(acino);
+                }
+            }
+
+            return brokenAcinos;
+        }
+
+        private async Task DownloadAcinosFilesAsync(DirectoryInfo directoryInfo, Grappolo grappolo)
+        {
+            // Download dei files
+            int count = 0;
+            foreach(Acino acino in grappolo.Acinos)
+            {
+                count++;
+                string fullFilePath = Path.Combine(directoryInfo.FullName, acino.FullName);
+
+                // Verifica se la directory esiste, altrimenti creala
+                string directory = Path.GetDirectoryName(fullFilePath);
+                FileManager.MakeDirectoryIfNotExist(directory);
+
+                Uri uriFile = new(Internet.BuildUrl(grappolo.Ruto.GetRepoUri(), acino.FullName));
+                
+                PrintMessage($"{count}/{grappolo.Acinos.Count} - Download: {acino.FullName} ", true);
+                await Internet.DownloadAndSaveFile(uriFile, fullFilePath);
+                PrintMessage("", true);
+            }
+        }
+
+        private async Task DownloadAcinoFileIfCorruptedAsync(DirectoryInfo directoryInfo, Grappolo grappolo, Acino acino)
+        {
+            string fullFilePath = Path.Combine(directoryInfo.FullName, acino.FullName);
+            FileInfo fileInfo = new(fullFilePath);
+            string mD5HashFile = FileManager.CalcolaMD5Hash(fileInfo);
+            PrintMessage($"MD5 Acino != File:{acino.MD5Hash} != {mD5HashFile}", true);
+
+            if(!mD5HashFile.Equals(acino.MD5Hash))
+            {
+                PrintMessage("File non scaricato correttamente. Rieseguo il download", true);
+                Uri uriFile = new(Internet.BuildUrl(grappolo.Ruto.GetRepoUri(), acino.FullName));
+                await Internet.DownloadAndSaveFile(uriFile, fullFilePath);
+            }
+        }
 
         private List<Ha> GetHas(string dirPath)
         {

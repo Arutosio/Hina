@@ -12,6 +12,8 @@ namespace HinaLib.Entities.Vitis
 {
     public class Grappolo
     {
+        public readonly DirectoryInfo GrappoloDir;
+
         [JsonPropertyOrder(1)]
         public Ruto? Ruto { get; set; }
 
@@ -58,7 +60,6 @@ namespace HinaLib.Entities.Vitis
             Acinos = acinos;
         }
 
-
         private void InitAcinos(List<string> fullFileNames)
         {
             if (Acinos == null)
@@ -70,6 +71,30 @@ namespace HinaLib.Entities.Vitis
             {
                 Acinos.Add(new Acino(fullFileName));
             }
+        }
+
+        public string AcinoFullPathName(Acino acino)
+        {
+            string ret = Path.Combine(Ruto.GetRepoUri(), acino.FullName);
+            
+            return ret;
+        }
+
+        public Uri BuildUrl(string baseUrl, string relativePath)
+        {
+            if (!baseUrl.EndsWith("/"))
+            {
+                baseUrl += "/";
+            }
+
+            Uri baseUri = new Uri(baseUrl);
+
+            if (Uri.TryCreate(baseUri, relativePath, out Uri resultUri))
+            {
+                return resultUri;
+            }
+
+            throw new ArgumentException("Impossibile costruire l'URL con i percorsi forniti.");
         }
     }
 }

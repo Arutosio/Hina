@@ -53,6 +53,11 @@ namespace HinaLib.Entities.Tree
             return Ruto.GetName(this._uriSosu);
         }
 
+        public string GetRepoUri()
+        {
+            return UriSosu.Replace(GetName(), "");
+        }
+
         public string GetTorankuMainFolder()
         {
             return Ruto.GetTorankuMainFolder(this._uriSosu);
@@ -63,7 +68,7 @@ namespace HinaLib.Entities.Tree
             return UriSosu.Replace($"{GetTorankuMainFolder()}/{GetName()}", "");
         }
 
-        //STATICI!!!!
+        // STATICI!!!!
         private static bool IsValidUri(Uri uri)
         {
             return Uri.IsWellFormedUriString(uri.ToString(), UriKind.Absolute);

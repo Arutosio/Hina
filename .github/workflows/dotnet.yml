@@ -3,11 +3,22 @@
 
 name: .NET
 
+# Questa configurazione indica che il flusso di lavoro verrà eseguito solo quando viene effettuato un push o viene aperta una pull request sul branch master. 
+# on:
+#   push:
+#     branches: [ "master" ]
+#   pull_request:
+#     branches: [ "master" ]
+
+# Con questa modifica, il flusso di lavoro verrà attivato solo per gli eventi push e pull_request su master e non su develop.
 on:
   push:
-    branches: [ "master" ]
+    branches:
+      - master
   pull_request:
-    branches: [ "master" ]
+    branches:
+      - master
+
 
 jobs:
   build:
@@ -23,6 +34,6 @@ jobs:
     - name: Restore dependencies
       run: dotnet restore
     - name: Build
-      run: dotnet build --no-restore
+      run: dotnet build --no-restore -c Release
     - name: Test
       run: dotnet test --no-build --verbosity normal

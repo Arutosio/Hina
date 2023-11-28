@@ -46,7 +46,7 @@ namespace HinaConsole
             Console.Write("\r");
             Console.CursorLeft = 0;
             Console.Write("[");
-            Console.Write(new string('#', progressBarValue));
+            Printer.Print(ConsoleColor.Green, new string('#', progressBarValue));
             Console.Write(new string(' ', progressBarSize - progressBarValue));
             Console.Write("] " + percent + "%");
         }

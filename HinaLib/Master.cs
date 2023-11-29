@@ -22,11 +22,13 @@ namespace HinaLib
 
         private Action<string, bool> PrintMessage;
         private Func<bool, string> GetInput;
+        private Action<int> SendProgressBar;
 
         public Master(Action<string, bool> PrintMethod, Func<bool, string> InputMethod, Action<int> ProgressProcess)
         {
             PrintMessage = PrintMethod;
             GetInput = InputMethod;
+            SendProgressBar = ProgressProcess;
             Internet.SendProgressBar = ProgressProcess;
             //Downloader.ProgressChanged += SendProgressBar;
         }
@@ -59,8 +61,10 @@ namespace HinaLib
 
 
                     List<Acino> acinoList = new List<Acino>();
+                    int count = 0;
                     foreach (string fullFilePath in fullFileNames)
                     {
+                        count++;
                         string relativeFilePath = FileManager.GetRelativePath(dirGrappolo, fullFilePath);
                         FileInfo fileInfo = new FileInfo(fullFilePath);
                         DateTime creationTime = fileInfo.CreationTime;
@@ -68,6 +72,8 @@ namespace HinaLib
 
                         Acino newAcino = new Acino(relativeFilePath, 0, creationTime, mD5Hash);
                         acinoList.Add(newAcino);
+
+                        SendProgressBar?.Invoke((int)(100 * count / fullFileNames.Count));
                     }
 
                     if (strUri != null && Internet.IsUrlValid(strUri))
@@ -79,8 +85,8 @@ namespace HinaLib
                     {
                         initGrappolo = new(dirInfo.Name, acinoList);
                     }
-                    
-                    PrintMessage("Done!", true);
+
+                    PrintMessage(" Done!", true);
                     PrintMessage("Beginning of the serialize phase of the Toranku JSON ... ", false);
                     string jsonG = JsonParse.SerializeGrappolo(initGrappolo);
                     // create dir and files
@@ -149,100 +155,117 @@ namespace HinaLib
 
                 if (grappoloDirInfo.Exists)
                 {
-                    Grappolo localGrappolo = GetGrappoloFromLocal(grappoloDirInfo);
+                    string hinaFilePath = GetFullPathHinaFile(grappoloDirInfo);
 
-                    List<string> fullPathFileNames = FileManager.GetFilesWithSub(grappoloDirInfo.FullName, mainFileName);
-                    List<string> relativeFileNames = FileManager.GetRelativePaths(grappoloDirInfo.FullName, fullPathFileNames);
-
-                    // Rimozione dei file non piu esistendi nella directory al grappolo
-                    PrintMessage("Beginning of cleaning the Grappolo phase for files that are no longer present ... ", false);
-                    List<Acino> acinosToRemove = new List<Acino>();
-
-                    foreach (Acino acino in localGrappolo.Acinos)
+                    if(FileManager.CheckFileExist(hinaFilePath))
                     {
-                        bool exist = false;
-                        foreach (string relativeFilePath in relativeFileNames)
-                        {
-                            if(acino.FullName.Equals(relativeFilePath))
-                            {
-                                exist = true;
-                                break;
-                            }
-                        }
-                        if(!exist)
-                        {
-                            acinosToRemove.Add(acino);
-                        }
-                    }
-                    // Eliminazione
-                    if(acinosToRemove.Count > 0)
-                    {
-                        foreach (var acino in acinosToRemove)
-                        {
-                            localGrappolo.Acinos.Remove(acino);
-                        }
-                        wasAChangeds = true;
-                    }
-                    PrintMessage("Done! ", true);
+                        Grappolo localGrappolo = GetGrappoloFromLocal(grappoloDirInfo);
 
-                    PrintMessage("Beginning of the Auto update phase for previously existing files ... ", false);
-                    List<Acino> newAcinos = new();
-                    foreach (string fullFilePath in fullPathFileNames)
-                    {
-                        if (File.Exists(fullFilePath))
+                        if(localGrappolo.Acinos != null && localGrappolo.Acinos.Count > 0)
                         {
-                            string relativeFilePath = FileManager.GetRelativePath(dirGrappolo, fullFilePath);
-                            FileInfo fileInfo = new FileInfo(fullFilePath);
-                            DateTime creationTime = fileInfo.CreationTime;
-                            string mD5Hash = FileManager.CalcolaMD5Hash(fileInfo);
+                            List<string> fullPathFileNames = FileManager.GetFilesWithSub(grappoloDirInfo.FullName, mainFileName);
+                            List<string> relativeFileNames = FileManager.GetRelativePaths(grappoloDirInfo.FullName, fullPathFileNames);
 
-                            bool isThere = false;
+                            // Rimozione dei file non piu esistendi nella directory al grappolo
+                            PrintMessage("Beginning of cleaning the Grappolo phase for files that are no longer present ... ", false);
+                            List<Acino> acinosToRemove = new List<Acino>();
+
                             foreach (Acino acino in localGrappolo.Acinos)
                             {
-                                if (acino.FullName.Equals(relativeFilePath))
+                                bool exist = false;
+                                foreach (string relativeFilePath in relativeFileNames)
                                 {
-                                    isThere = true;
-                                    // Update del acino che esiosteva gia prima
-                                    acino.Version++;
-                                    acino.LastUpdate = creationTime;
-                                    acino.MD5Hash = mD5Hash;
-                                    wasAChangeds = true;
-                                    break;
+                                    if (acino.FullName.Equals(relativeFilePath))
+                                    {
+                                        exist = true;
+                                        break;
+                                    }
+                                }
+                                if (!exist)
+                                {
+                                    acinosToRemove.Add(acino);
                                 }
                             }
-                            if(!isThere)
+                            // Eliminazione
+                            if (acinosToRemove.Count > 0)
                             {
-                                Acino newAcino = new Acino(relativeFilePath, 0, creationTime, mD5Hash);
-                                newAcinos.Add(newAcino);
+                                foreach (var acino in acinosToRemove)
+                                {
+                                    localGrappolo.Acinos.Remove(acino);
+                                }
+                                wasAChangeds = true;
+                            }
+                            PrintMessage("Done! ", true);
+
+                            PrintMessage("Beginning of the Auto update phase for previously existing files ... ", false);
+                            List<Acino> newAcinos = new();
+                            foreach (string fullFilePath in fullPathFileNames)
+                            {
+                                if (File.Exists(fullFilePath))
+                                {
+                                    string relativeFilePath = FileManager.GetRelativePath(dirGrappolo, fullFilePath);
+                                    FileInfo fileInfo = new FileInfo(fullFilePath);
+                                    DateTime creationTime = fileInfo.CreationTime;
+                                    string mD5Hash = FileManager.CalcolaMD5Hash(fileInfo);
+
+                                    bool isThere = false;
+                                    foreach (Acino acino in localGrappolo.Acinos)
+                                    {
+                                        if (acino.FullName.Equals(relativeFilePath))
+                                        {
+                                            isThere = true;
+                                            // Update del acino che esiosteva gia prima
+                                            acino.Version++;
+                                            acino.LastUpdate = creationTime;
+                                            acino.MD5Hash = mD5Hash;
+                                            wasAChangeds = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!isThere)
+                                    {
+                                        Acino newAcino = new Acino(relativeFilePath, 0, creationTime, mD5Hash);
+                                        newAcinos.Add(newAcino);
+                                    }
+                                }
+                            }
+                            PrintMessage("Done!", true);
+
+                            if (newAcinos.Count > 0)
+                            {
+                                PrintMessage("Adding new files to local Grappolo ... ", false);
+                                localGrappolo.Acinos.AddRange(newAcinos);
+                                PrintMessage("Done!", true);
+                            }
+
+                            if (wasAChangeds)
+                            {
+                                PrintMessage("Beginning of the serialize phase of the local Grappolo JSON ... ", false);
+                                localGrappolo.Version++;
+                                string jsonG = JsonParse.SerializeGrappolo(localGrappolo);
+                                // create dir and files
+                                FileManager.MakeFile(hinaFilePath, jsonG, true);
+                                PrintMessage("Done!", true);
+
+                                kekka.Status = Status.Done;
+                                kekka.Message = "The Grappolo has been upgraded.";
+                            }
+                            else
+                            {
+                                kekka.Status = Status.Done;
+                                kekka.Message = "There have been no changes.";
                             }
                         }
-                    }
-                    PrintMessage("Done!", true);
-
-                    if(newAcinos.Count > 0)
-                    {
-                        PrintMessage("Adding new files to local Grappolo ... ", false);
-                        localGrappolo.Acinos.AddRange(newAcinos);
-                        PrintMessage("Done!", true);
-                    }
-
-                    if(wasAChangeds)
-                    {
-                        PrintMessage("Beginning of the serialize phase of the local Grappolo JSON ... ", false);
-                        localGrappolo.Version++;
-                        string jsonG = JsonParse.SerializeGrappolo(localGrappolo);
-                        string hinaFilePath = Path.Combine(dirGrappolo, mainFileName);
-                        // create dir and files
-                        FileManager.MakeFile(hinaFilePath, jsonG, true);
-                        PrintMessage("Done!", true);
-
-                        kekka.Status = Status.Done;
-                        kekka.Message = "The Grappolo has been upgraded.";
+                        else
+                        {
+                            kekka.Status = Status.Warning;
+                            kekka.Message = "There are no Acinos in the Grappolo.";
+                        }
                     }
                     else
                     {
-                        kekka.Status = Status.Done;
-                        kekka.Message = "There have been no changes.";
+                        kekka.Status = Status.Error;
+                        kekka.Message = $"The \"{mainFileName}\" file doesn't exist.";
                     }
                 }
             }
@@ -255,7 +278,7 @@ namespace HinaLib
             return kekka;
         }
 
-        public async Task<Kekka> Dupe(string pathTochi, Uri uriHinaInfo, bool force = false)
+        public async Task<Kekka> Dupe(string dirGrappolo, Uri uriHinaInfo, bool force = false)
         {
             Kekka kekka = new();
 
@@ -263,7 +286,7 @@ namespace HinaLib
             {
                 // Dupe Grappolo
                 string nameMainFolder = Ruto.GetTorankuMainFolder(uriHinaInfo);
-                string pathMainFolder = Path.Combine(pathTochi, nameMainFolder);
+                string pathMainFolder = Path.Combine(dirGrappolo, nameMainFolder);
                 string pathTonkaruFile = Path.Combine(pathMainFolder, Ruto.GetName(uriHinaInfo));
 
                 DirectoryInfo directoryInfo = new(pathMainFolder);
@@ -271,10 +294,10 @@ namespace HinaLib
                 if (force || !directoryInfo.Exists)
                 {
                     string hinaFilePath = Path.Combine(directoryInfo.FullName, mainFileName);
-                    
+
                     Grappolo sosuGrappolo = GetGrappoloFromUri(uriHinaInfo);
 
-                    if(sosuGrappolo.Ruto == null)
+                    if (sosuGrappolo.Ruto == null)
                     {
                         sosuGrappolo.Ruto = new(uriHinaInfo);
                     }
@@ -352,86 +375,99 @@ namespace HinaLib
             return kekka;
         }
 
-        public Kekka Check(string dirPath, bool isDeep = false)
+        public Kekka Check(string dirGrappolo, bool isDeep = false)
         {
             Kekka kekka = new();
 
             try
             {
-                // Check Grappolo
-                DirectoryInfo dirInfo = new(dirPath);
+                DirectoryInfo grappoloDirInfo = new(dirGrappolo);
 
-                if (dirInfo.Exists)
+                if (grappoloDirInfo.Exists)
                 {
-                    string hinaFilePath = Path.Combine(dirPath, mainFileName);
+                    string hinaFilePath = GetFullPathHinaFile(grappoloDirInfo);
 
-                    if(FileManager.CheckFileExist(hinaFilePath))
+                    if (FileManager.CheckFileExist(hinaFilePath))
                     {
                         //Load local Grappolo
-                        Grappolo localGrappolo = GetGrappoloFromLocal(dirInfo);
-                        //Load stream Grappolo
-                        Grappolo sosuGrappolo;
-                        if (localGrappolo.Ruto != null)
+                        Grappolo localGrappolo = GetGrappoloFromLocal(grappoloDirInfo);
+                        if (localGrappolo.Acinos != null)
                         {
-                            sosuGrappolo = GetGrappoloFromUri(new(localGrappolo.Ruto.UriSosu));
-
-                            if (isDeep || localGrappolo.Version < sosuGrappolo.Version)
+                            if (localGrappolo.Ruto != null)
                             {
-                                // Confronta le versioni e scarica la versione nuova e i nuovi file.
-                                foreach (Acino sosuAcino in sosuGrappolo.Acinos)
+                                Grappolo sosuGrappolo = GetGrappoloFromUri(new(localGrappolo.Ruto.UriSosu));
+
+                                if (sosuGrappolo.Acinos != null)
                                 {
-                                    bool isFound = true;
-                                    foreach (Acino localAcino in localGrappolo.Acinos)
+                                    if (isDeep || localGrappolo.Version < sosuGrappolo.Version)
                                     {
-                                        if(sosuAcino.FullName.Equals(localAcino.FullName))
+                                        // Confronta le versioni e scarica la versione nuova e i nuovi file.
+                                        foreach (Acino sosuAcino in sosuGrappolo.Acinos)
                                         {
-                                            isFound = true;
-                                            if (sosuAcino.Version > localAcino.Version)
+                                            bool isFound = false;
+                                            foreach (Acino localAcino in localGrappolo.Acinos)
                                             {
-                                                PrintMessage($"{sosuAcino.FullName} {localAcino.Version} -> {sosuAcino.Version}", true);
-                                                break;
+                                                if (sosuAcino.FullName.Equals(localAcino.FullName))
+                                                {
+                                                    isFound = true;
+                                                    if (sosuAcino.Version > localAcino.Version)
+                                                    {
+                                                        PrintMessage($"{sosuAcino.FullName} {localAcino.Version} -> {sosuAcino.Version}", true);
+                                                        break;
+                                                    }
+                                                    break;
+                                                }
                                             }
-                                            break;
+                                            if (!isFound)
+                                            {
+                                                PrintMessage($"{sosuAcino.FullName} NewFile = {sosuAcino.Version}", true);
+                                            }
                                         }
+
+                                        //kekka.Message = "There are files with major version: \r\n";
+                                        //foreach (string logItem in log)
+                                        //{
+                                        //    kekka.Message += logItem + "\r\n";
+                                        //}
+                                        //kekka.Message = $"Files with major version: {log.Count}";
+                                        kekka.Status = Status.Done;
+                                        kekka.Message = "There is a new version.";
                                     }
-                                    if (isFound)
+                                    else
                                     {
-                                        PrintMessage($"{sosuAcino.FullName} NewFile = {sosuAcino.Version}", true);
+                                        //PrintMessage("Already uptodate.", true);
+                                        kekka.Status = Status.Done;
+                                        kekka.Message = "Already uptodate.";
                                     }
                                 }
-
-                                //kekka.Message = "There are files with major version: \r\n";
-                                //foreach (string logItem in log)
-                                //{
-                                //    kekka.Message += logItem + "\r\n";
-                                //}
-                                //kekka.Message = $"Files with major version: {log.Count}";
-                                kekka.Message = "There is a new version.";
-                                kekka.Status = Status.Done;
+                                else
+                                {
+                                    kekka.Status = Status.Warning;
+                                    kekka.Message = "There are no Acinos in the online Grappolo.";
+                                }
                             }
                             else
                             {
-                                //PrintMessage("Already uptodate.", true);
-                                kekka.Message = "Already uptodate.";
-                                kekka.Status = Status.Done;
+                                kekka.Status = Status.Error;
+                                kekka.Message = $"The Hina file does not contain a Ruto configuration inside.";
                             }
                         }
                         else
                         {
-                            kekka.Message = $"The Hina file does not contain a Ruto configuration inside.";
-                            kekka.Status = Status.Error;
+                            kekka.Status = Status.Warning;
+                            kekka.Message = "There are no Acinos in the local Grappolo.";
                         }
                     }
                     else
                     {
-                        kekka.Message = $"The \"{mainFileName}\" file doesn't exist.";
                         kekka.Status = Status.Error;
+                        kekka.Message = $"The \"{mainFileName}\" file doesn't exist.";
                     }
                 }
                 else
                 {
-                    kekka.Message = $"Directory \"{dirInfo.FullName}\" doesn't exist.";
                     kekka.Status = Status.Error;
+                    kekka.Message = $"Directory \"{grappoloDirInfo.FullName}\" doesn't exist.";
                 }
 
                 #region Toranku Check
@@ -518,74 +554,101 @@ namespace HinaLib
             return kekka;
         }
 
-        public async Task<Kekka> Update(string dirPath, bool force = false)
+        public async Task<Kekka> Update(string dirGrappolo, bool force = false)
         {
             Kekka kekka = new();
 
             try
             {
                 // Update Grappolo
-                DirectoryInfo dirInfo = new(dirPath);
+                DirectoryInfo grappoloDirInfo = new(dirGrappolo);
 
-                if (dirInfo.Exists)
+                if (grappoloDirInfo.Exists)
                 {
-                    string hinaFilePath = Path.Combine(dirPath, mainFileName);
+                    string hinaFilePath = Path.Combine(dirGrappolo, mainFileName);
 
-                    //Load local Grappolo
-                    string textFile = FileManager.ReadTextFile(hinaFilePath);
-                    Grappolo localGrappolo = JsonParse.DeserializeGrappolo(textFile);
-
-                    //Load stream Grappolo
-                    Grappolo sosuGrappolo;
-                    if (localGrappolo != null && localGrappolo.Ruto.UriSosu != null)
+                    if (FileManager.CheckFileExist(hinaFilePath))
                     {
-                        Stream stream = Internet.DownloadFile(new(localGrappolo.Ruto.UriSosu)).Result;
-                        string textSosuFile = FileManager.ConvertStreamToString(stream);
-                        sosuGrappolo = JsonParse.DeserializeGrappolo(textSosuFile);
-
-                        if (localGrappolo.Version < sosuGrappolo.Version)
+                        Grappolo localGrappolo = GetGrappoloFromLocal(grappoloDirInfo);
+                        if (localGrappolo.Acinos != null)
                         {
-                            int count = 0;
-                            // Confronta le versioni e scarica la versione nuova e i nuovi file.
-                            foreach (Acino sosuAcino in sosuGrappolo.Acinos)
+                            if (localGrappolo.Ruto?.UriSosu != null)
                             {
-                                bool toDownload = true;
-                                foreach (Acino localAcino in localGrappolo.Acinos)
+                                Grappolo sosuGrappolo = GetGrappoloFromUri(new(localGrappolo.Ruto.UriSosu));
+
+                                if (sosuGrappolo.Acinos != null && sosuGrappolo.Ruto?.UriSosu != null)
                                 {
-                                    if (sosuAcino.FullName.Equals(localAcino.FullName))
+                                    if (localGrappolo.Version < sosuGrappolo.Version)
                                     {
-                                        if (sosuAcino.Version <= localAcino.Version)
+                                        int count = 0;
+                                        // Confronta le versioni e scarica la versione nuova e i nuovi file.
+                                        foreach (Acino sosuAcino in sosuGrappolo.Acinos)
                                         {
-                                            toDownload = false;
-                                            break;
+                                            bool toDownload = true;
+                                            foreach (Acino localAcino in localGrappolo.Acinos)
+                                            {
+                                                if (sosuAcino.FullName.Equals(localAcino.FullName))
+                                                {
+                                                    if (sosuAcino.Version <= localAcino.Version)
+                                                    {
+                                                        toDownload = false;
+                                                        break;
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                            if (toDownload)
+                                            {
+                                                count++;
+                                                // Download sosuAcino perche è un file nuovo non presente sul vecchio Grappolo.
+                                                Uri uriFile = new(Internet.BuildUrl(sosuGrappolo.Ruto.UriSosu, sosuAcino.FullName));
+                                                string filePath = Path.Combine(grappoloDirInfo.FullName, sosuAcino.FullName);
+
+                                                PrintMessage($"{count} - Download: {sosuAcino.FullName}", false);
+                                                await Internet.DownloadAndSaveFile(uriFile, filePath);
+                                                PrintMessage($" --> Done!", true);
+                                            }
                                         }
-                                        break;
+
+                                        // Aggiorno il Grappolo locale con quello sosu
+                                        string jsonG = JsonParse.SerializeGrappolo(sosuGrappolo);
+                                        // Override files
+                                        FileManager.MakeFile(hinaFilePath, jsonG, true);
+                                        PrintMessage($" Grappolo updated.", true);
+                                    }
+                                    else
+                                    {
+                                        kekka.Status = Status.Done;
+                                        kekka.Message = "Already uptodate.";
                                     }
                                 }
-                                if (toDownload)
+                                else
                                 {
-                                    count++;
-                                    // Download sosuAcino perche è un file nuovo non presente sul vecchio Grappolo.
-                                    Uri uriFile = new(Internet.BuildUrl(sosuGrappolo.Ruto.UriSosu, sosuAcino.FullName));
-                                    string filePath = Path.Combine(dirInfo.FullName, sosuAcino.FullName);
-
-                                    PrintMessage($"{count} - Download: {sosuAcino.FullName}", false);
-                                    await Internet.DownloadAndSaveFile(uriFile, filePath);
-                                    PrintMessage($" --> Done!", true);
+                                    kekka.Status = Status.Warning;
+                                    kekka.Message = "There are no Acinos in the online Grappolo.";
                                 }
                             }
-
-                            // Aggiorno il Grappolo locale con quello sosu
-                            string jsonG = JsonParse.SerializeGrappolo(sosuGrappolo);
-                            // Override files
-                            FileManager.MakeFile(hinaFilePath, jsonG, true);
-                            PrintMessage($" Grappolo updated.", true);
+                            else
+                            {
+                                kekka.Status = Status.Error;
+                                kekka.Message = $"The Hina file does not contain a Ruto configuration inside.";
+                            }
                         }
+                        else
+                        {
+                            kekka.Status = Status.Warning;
+                            kekka.Message = "There are no Acinos in the local Grappolo.";
+                        }
+                    }
+                    else
+                    {
+                        kekka.Status = Status.Error;
+                        kekka.Message = $"The \"{mainFileName}\" file doesn't exist.";
                     }
                 }
                 else
                 {
-                    kekka.Message = $"Directory \"{dirInfo.FullName}\" doesn't exist.";
+                    kekka.Message = $"Directory \"{grappoloDirInfo.FullName}\" doesn't exist.";
                     kekka.Status = Status.Error;
                 }
 
@@ -669,6 +732,11 @@ namespace HinaLib
         //    Ruto ruto = new(dirPath);
         //    return ruto;
         //}
+
+        private string GetFullPathHinaFile(DirectoryInfo grappoloDirInfo)
+        {
+            return Path.Combine(grappoloDirInfo.FullName, mainFileName);
+        }
 
         private Grappolo GetGrappoloFromLocal(DirectoryInfo grappoloDirInfo)
         {

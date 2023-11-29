@@ -39,8 +39,8 @@ namespace HinaConsole
 
         private static void PrintProgressBar(int percent)
         {
-            int consoleWidth = Console.WindowWidth - 1;
-            int progressBarSize = consoleWidth - 10;
+            int consoleWidth = Console.WindowWidth - 6; // - 1
+            int progressBarSize = consoleWidth - 16; // - 10
             int progressBarValue = (int)((float)progressBarSize * percent / 100);
 
             Console.Write("\r");

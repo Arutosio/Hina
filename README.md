@@ -1,6 +1,6 @@
 <p style="text-align: center; font-weight: bold; font-size: 14vw;">
-    <img src="https://github.com/Arutosio/Hina/blob/master/img/Hina_Logo.png?raw=true" width="20%" alt="Hina Logo">
     Hina
+    <img src="https://github.com/Arutosio/Hina/blob/master/img/Hina_Logo.png?raw=true" width="20%" alt="Hina Logo">
 </p>
 
 ## Status
@@ -29,7 +29,7 @@ Contributing to the Hina project is an opportunity to be part of a community-dri
 [![.NET](https://img.shields.io/badge/-%208.0.0%20SDK-5C2D91?logo=.NET&logoColor=white&labelColor=222222)](https://dotnet.microsoft.com/download/dotnet/8.0)
 
 - #### Getting Started
-  - Install prerequisite [requirements](https://github.com/modernuo/ModernUO#requirements)
+  - Install prerequisite [requirements]()
   - Clone this repository `git clone https://github.com/Arutosio/Hina.git`
   - If you have 
     - [Visual Studio](https://visualstudio.microsoft.com/vs/): Open `Hina.sln` to start developing.

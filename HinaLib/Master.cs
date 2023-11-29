@@ -20,9 +20,9 @@ namespace HinaLib
     {
         public static readonly string mainFileName = ".HinaInfo.json"; //"TorankuInfo.json";
 
-        private Action<string, bool> PrintMessage;
-        private Func<bool, string> GetInput;
-        private Action<int> SendProgressBar;
+        private readonly Action<string, bool> PrintMessage;
+        private readonly Func<bool, string> GetInput;
+        private readonly Action<int> SendProgressBar;
 
         public Master(Action<string, bool> PrintMethod, Func<bool, string> InputMethod, Action<int> ProgressProcess)
         {
@@ -60,17 +60,17 @@ namespace HinaLib
                     //List<Acino> acinoList = Acino.CreateNewListAcino(relativeFileNames);
 
 
-                    List<Acino> acinoList = new List<Acino>();
+                    List<Acino> acinoList = new();
                     int count = 0;
                     foreach (string fullFilePath in fullFileNames)
                     {
                         count++;
                         string relativeFilePath = FileManager.GetRelativePath(dirGrappolo, fullFilePath);
-                        FileInfo fileInfo = new FileInfo(fullFilePath);
+                        FileInfo fileInfo = new(fullFilePath);
                         DateTime creationTime = fileInfo.CreationTime;
                         string mD5Hash = FileManager.CalcolaMD5Hash(fileInfo);
 
-                        Acino newAcino = new Acino(relativeFilePath, 0, creationTime, mD5Hash);
+                        Acino newAcino = new(relativeFilePath, 0, creationTime, mD5Hash);
                         acinoList.Add(newAcino);
 
                         SendProgressBar?.Invoke((int)(100 * count / fullFileNames.Count));
@@ -168,7 +168,7 @@ namespace HinaLib
 
                             // Rimozione dei file non piu esistendi nella directory al grappolo
                             PrintMessage("Beginning of cleaning the Grappolo phase for files that are no longer present ... ", false);
-                            List<Acino> acinosToRemove = new List<Acino>();
+                            List<Acino> acinosToRemove = new();
 
                             foreach (Acino acino in localGrappolo.Acinos)
                             {
@@ -189,7 +189,7 @@ namespace HinaLib
                             // Eliminazione
                             if (acinosToRemove.Count > 0)
                             {
-                                foreach (var acino in acinosToRemove)
+                                foreach (Acino acino in acinosToRemove)
                                 {
                                     localGrappolo.Acinos.Remove(acino);
                                 }
@@ -204,7 +204,7 @@ namespace HinaLib
                                 if (File.Exists(fullFilePath))
                                 {
                                     string relativeFilePath = FileManager.GetRelativePath(dirGrappolo, fullFilePath);
-                                    FileInfo fileInfo = new FileInfo(fullFilePath);
+                                    FileInfo fileInfo = new(fullFilePath);
                                     DateTime creationTime = fileInfo.CreationTime;
                                     string mD5Hash = FileManager.CalcolaMD5Hash(fileInfo);
 
@@ -733,29 +733,6 @@ namespace HinaLib
         //    return ruto;
         //}
 
-        private string GetFullPathHinaFile(DirectoryInfo grappoloDirInfo)
-        {
-            return Path.Combine(grappoloDirInfo.FullName, mainFileName);
-        }
-
-        private Grappolo GetGrappoloFromLocal(DirectoryInfo grappoloDirInfo)
-        {
-            string hinaFilePath = Path.Combine(grappoloDirInfo.FullName, mainFileName);
-            string textFileGrappolo = FileManager.ReadTextFile(hinaFilePath);
-            Grappolo grappolo = JsonParse.DeserializeGrappolo(textFileGrappolo);
-
-            return grappolo;
-        }
-
-        private Grappolo GetGrappoloFromUri(Uri uriHinaInfo)
-        {
-            Stream stream = Internet.DownloadFile(uriHinaInfo).Result;
-            string textFileGrappolo = FileManager.ConvertStreamToString(stream);
-            Grappolo grappolo = JsonParse.DeserializeGrappolo(textFileGrappolo);
-
-            return grappolo;
-        }
-
         private async Task IntegrityPhaseAsync(DirectoryInfo directoryInfo, Grappolo grappolo)
         {
             PrintMessage("Start cheking integritive file", true);
@@ -778,7 +755,7 @@ namespace HinaLib
             }
         }
 
-        private List<Acino> CheckAcinoIntegrity(DirectoryInfo directoryInfo, Grappolo grappolo)
+        private static List<Acino> CheckAcinoIntegrity(DirectoryInfo directoryInfo, Grappolo grappolo)
         {
             // Check files integrity
             List<Acino> brokenAcinos = new();
@@ -833,6 +810,33 @@ namespace HinaLib
             }
         }
 
+
+        //**** METODI STATICI ********************************************************
+        private static string GetFullPathHinaFile(DirectoryInfo grappoloDirInfo)
+        {
+            return Path.Combine(grappoloDirInfo.FullName, mainFileName);
+        }
+
+        private static Grappolo GetGrappoloFromLocal(DirectoryInfo grappoloDirInfo)
+        {
+            string hinaFilePath = Path.Combine(grappoloDirInfo.FullName, mainFileName);
+            string textFileGrappolo = FileManager.ReadTextFile(hinaFilePath);
+            Grappolo grappolo = JsonParse.DeserializeGrappolo(textFileGrappolo);
+
+            return grappolo;
+        }
+
+        private static Grappolo GetGrappoloFromUri(Uri uriHinaInfo)
+        {
+            Stream stream = Internet.DownloadFile(uriHinaInfo).Result;
+            string textFileGrappolo = FileManager.ConvertStreamToString(stream);
+            Grappolo grappolo = JsonParse.DeserializeGrappolo(textFileGrappolo);
+
+            return grappolo;
+        }
+
+
+        /* private void UpdateLocalFromSosu
         private List<Ha> GetHas(string dirPath)
         {
             List<Ha> has = new();
@@ -1027,5 +1031,6 @@ namespace HinaLib
                 }
             }
         }
+        */
     }
 }

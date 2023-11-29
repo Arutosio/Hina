@@ -220,7 +220,7 @@ namespace HinaLib
         public static IList<string> GetAllSubDirectories(string directory)
         {
             List<string> ret = new();
-            List<string> directorys = (GetDirectories(directory) as List<string>);
+            IList<string> directorys = GetDirectories(directory);
             foreach (string subDirectory in directorys)
             {
                 ret.AddRange(GetAllSubDirectories(subDirectory));

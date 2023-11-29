@@ -60,24 +60,16 @@ namespace HinaLib.Entities.Vitis
             Acinos = acinos;
         }
 
-        private void InitAcinos(List<string> fullFileNames)
-        {
-            if (Acinos == null)
-            {
-                Acinos = new List<Acino>();
-            }
-
-            foreach (var fullFileName in fullFileNames)
-            {
-                Acinos.Add(new Acino(fullFileName));
-            }
-        }
-
         public string AcinoFullPathName(Acino acino)
         {
-            string ret = Path.Combine(Ruto.GetRepoUri(), acino.FullName);
-            
-            return ret;
+            if (Ruto?.UriSosu != null)
+            {
+                return Path.Combine(Ruto.GetRepoUri(), acino.FullName);
+            }
+            else
+            {
+                throw new ArgumentException("Impossibile costruire l'URL con i percorsi forniti.");
+            }
         }
 
         public Uri BuildUrl(string baseUrl, string relativePath)

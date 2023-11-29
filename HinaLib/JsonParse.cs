@@ -16,11 +16,6 @@ namespace HinaLib
             WriteIndented = true
         };
 
-        public static string JsonTextReader()
-        {
-            return null;
-        }
-
         public static string Serialize(object x)
         {
             return JsonSerializer.Serialize(x, options);
@@ -31,7 +26,7 @@ namespace HinaLib
         {
             return JsonSerializer.Serialize(ha, options);
         }
-        public static Ha DeserializeHa(string json)
+        public static Ha? DeserializeHa(string json)
         {
             return JsonSerializer.Deserialize<Ha>(json);
         }
@@ -41,7 +36,7 @@ namespace HinaLib
         {
             return JsonSerializer.Serialize(buranchi, options);
         }
-        public static Buranchi DeserializeBuranchi(string json)
+        public static Buranchi? DeserializeBuranchi(string json)
         {
             return JsonSerializer.Deserialize<Buranchi>(json);
         }
@@ -51,7 +46,7 @@ namespace HinaLib
         {
             return JsonSerializer.Serialize(toranku, options);
         }
-        public static Toranku DeserializeToranku(string json)
+        public static Toranku? DeserializeToranku(string json)
         {
             return JsonSerializer.Deserialize<Toranku>(json, options);
         }
@@ -62,7 +57,7 @@ namespace HinaLib
             return JsonSerializer.Serialize(acino, options); ;
         }
 
-        public static Acino DeserializeAcino(string json)
+        public static Acino? DeserializeAcino(string json)
         {
             return JsonSerializer.Deserialize<Acino>(json, options);
         }
@@ -73,7 +68,7 @@ namespace HinaLib
             return JsonSerializer.Serialize(grappolo, options);;
         }
 
-        public static Grappolo DeserializeGrappolo(string json)
+        public static Grappolo? DeserializeGrappolo(string json)
         {
             return JsonSerializer.Deserialize<Grappolo>(json, options);
         }
@@ -83,7 +78,7 @@ namespace HinaLib
         {
             return JsonSerializer.Serialize(shinrin, options);
         }
-        public static Shinrin DeserializeShinrin(string json)
+        public static Shinrin? DeserializeShinrin(string json)
         {
             return JsonSerializer.Deserialize<Shinrin>(json);
         }

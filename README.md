@@ -1,6 +1,6 @@
 # Hina
 
-![Hina Logo](img/Hina_Logo.png)
+![Hina Logo](img/HinaPack_Logo.png)
 
 **An open-source, rsync-like patcher for game clients and desktop applications.**
 

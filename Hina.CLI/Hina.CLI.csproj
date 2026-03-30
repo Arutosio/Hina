@@ -21,6 +21,11 @@
     <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
+    <PackageIcon>HinaPack_Logo.png</PackageIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\img\HinaPack_Logo.png" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
 </Project>

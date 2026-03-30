@@ -8,6 +8,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <PackageIcon>HinaPack_Logo.png</PackageIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\img\HinaPack_Logo.png" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
 </Project>

@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    branches: [ "master" ]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: 10.0.x
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --no-restore -c Release
+
+    - name: Test
+      run: dotnet test --no-build -c Release --verbosity normal
+
+    - name: Publish CLI (win-x64)
+      run: dotnet publish Hina.CLI/Hina.CLI.csproj -c Release -r win-x64 --self-contained -o artifacts/win-x64
+
+    - name: Publish CLI (linux-x64)
+      run: dotnet publish Hina.CLI/Hina.CLI.csproj -c Release -r linux-x64 --self-contained -o artifacts/linux-x64
+
+    - name: Publish Builder (win-x64)
+      run: dotnet publish Hina.Builder/Hina.Builder.csproj -c Release -r win-x64 --self-contained -o artifacts/builder-win-x64
+
+    - name: Publish Builder (linux-x64)
+      run: dotnet publish Hina.Builder/Hina.Builder.csproj -c Release -r linux-x64 --self-contained -o artifacts/builder-linux-x64
+
+    - name: Publish Host (win-x64)
+      run: dotnet publish Hina.Host/Hina.Host.csproj -c Release -r win-x64 --self-contained -o artifacts/host-win-x64
+
+    - name: Publish Host (linux-x64)
+      run: dotnet publish Hina.Host/Hina.Host.csproj -c Release -r linux-x64 --self-contained -o artifacts/host-linux-x64
+
+    - name: Package artifacts
+      run: |
+        cd artifacts
+        zip -r ../Hina.CLI-win-x64.zip win-x64/
+        zip -r ../Hina.CLI-linux-x64.zip linux-x64/
+        zip -r ../Hina.Builder-win-x64.zip builder-win-x64/
+        zip -r ../Hina.Builder-linux-x64.zip builder-linux-x64/
+        zip -r ../Hina.Host-win-x64.zip host-win-x64/
+        zip -r ../Hina.Host-linux-x64.zip host-linux-x64/
+
+    - name: Generate version tag
+      id: version
+      run: |
+        TAG="v1.0.0-$(git rev-parse --short HEAD)"
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+        echo "Generated tag: $TAG"
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.version.outputs.tag }}
+        name: Hina ${{ steps.version.outputs.tag }}
+        generate_release_notes: true
+        files: |
+          Hina.CLI-win-x64.zip
+          Hina.CLI-linux-x64.zip
+          Hina.Builder-win-x64.zip
+          Hina.Builder-linux-x64.zip
+          Hina.Host-win-x64.zip
+          Hina.Host-linux-x64.zip

@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using Hina.Core.Configuration;
 using Hina.Core.Patching;
+using Microsoft.Extensions.Logging;
 
 namespace Hina.CLI
 {
@@ -21,10 +22,19 @@ namespace Hina.CLI
             string? baseUrl = GetArgValue(args, "--base");
             string? configPath = GetArgValue(args, "--config");
             string? trustedKey = GetArgValue(args, "--pubkey");
+            bool verbose = HasArg(args, "--verbose") || HasArg(args, "-v");
+
+            using ILoggerFactory loggerFactory = LoggerFactory.Create(builder =>
+            {
+                builder.AddConsole();
+                builder.SetMinimumLevel(verbose ? LogLevel.Debug : LogLevel.Information);
+            });
+
+            ILogger logger = loggerFactory.CreateLogger("Hina.CLI");
 
             if (string.IsNullOrWhiteSpace(root))
             {
-                Console.WriteLine("Missing required --dir <path>.");
+                logger.LogError("Missing required --dir <path>");
                 return 2;
             }
 
@@ -37,7 +47,7 @@ namespace Hina.CLI
 
             if (string.IsNullOrWhiteSpace(config.BaseUrl?.ToString()))
             {
-                Console.WriteLine("Missing required --base <url> or config baseUrl.");
+                logger.LogError("Missing required --base <url> or config baseUrl");
                 return 2;
             }
 
@@ -52,7 +62,8 @@ namespace Hina.CLI
                 config = ApplyOverrides(config, null, null, channel);
             }
 
-            PatchClient client = new PatchClient(config);
+            ILogger<PatchClient> clientLogger = loggerFactory.CreateLogger<PatchClient>();
+            PatchClient client = new PatchClient(config, clientLogger);
             CancellationToken ct = CancellationToken.None;
 
             switch (command)
@@ -60,31 +71,31 @@ namespace Hina.CLI
                 case "check":
                     {
                         var res = client.CheckAsync(root, ct).Result;
-                        Console.WriteLine(res.Message);
+                        logger.LogInformation("{Message}", res.Message);
                         return res.IsUpdateAvailable ? 1 : 0;
                     }
                 case "patch":
                     {
                         var res = client.PatchAsync(root, ct).Result;
-                        Console.WriteLine(res.Message);
+                        logger.LogInformation("{Message}", res.Message);
                         return res.Success ? 0 : 2;
                     }
                 case "verify":
                     {
                         var res = client.VerifyAsync(root, ct).Result;
-                        Console.WriteLine(res.Message);
+                        logger.LogInformation("{Message}", res.Message);
                         return res.Success ? 0 : 3;
                     }
                 case "rollback":
                     client.RollbackAsync(root, ct).Wait();
-                    Console.WriteLine("Rollback complete.");
+                    logger.LogInformation("Rollback complete");
                     return 0;
                 case "cleanup":
                     PatchCleanup.Cleanup(root);
-                    Console.WriteLine("Cleanup complete.");
+                    logger.LogInformation("Cleanup complete");
                     return 0;
                 default:
-                    Console.WriteLine("Unknown command.");
+                    logger.LogError("Unknown command: {Command}", command);
                     PrintHelp();
                     return 2;
             }
@@ -95,7 +106,7 @@ namespace Hina.CLI
         {
             Console.WriteLine("Hina CLI");
             Console.WriteLine("Usage:");
-            Console.WriteLine("  hina <command> --dir <path> --base <url> [--channel stable]");
+            Console.WriteLine("  hina <command> --dir <path> --base <url> [--channel stable] [-v|--verbose]");
             Console.WriteLine();
             Console.WriteLine("Commands:");
             Console.WriteLine("  check   - Check for updates");
@@ -107,6 +118,7 @@ namespace Hina.CLI
             Console.WriteLine("Options:");
             Console.WriteLine("  --config <file>  - JSON config file");
             Console.WriteLine("  --pubkey <b64>   - Trusted public key for manifest verification");
+            Console.WriteLine("  -v, --verbose    - Enable verbose/debug logging");
         }
 
         private static bool HasArg(string[] args, string name)

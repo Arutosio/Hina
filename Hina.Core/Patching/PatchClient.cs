@@ -10,6 +10,8 @@ using Hina.Core.IO;
 using Hina.Core.Manifest;
 using Hina.Core.Net;
 using Hina.Core.Rsync;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Hina.Core.Patching
 {
@@ -18,18 +20,22 @@ namespace Hina.Core.Patching
     {
         private readonly IHasher _hasher;
         private readonly HttpChunkClient _http;
+        private readonly ILogger<PatchClient> _logger;
 
         public PatcherConfig Config { get; }
 
-        public PatchClient(PatcherConfig config)
+        public PatchClient(PatcherConfig config, ILogger<PatchClient>? logger = null)
         {
             Config = config;
             _hasher = new Sha256Hasher();
-            _http = new HttpChunkClient(new HttpClient());
+            _logger = logger ?? NullLogger<PatchClient>.Instance;
+            var retryPolicy = new RetryPolicy(config.MaxRetries, config.RetryBaseDelayMs, _logger);
+            _http = new HttpChunkClient(new HttpClient(), retryPolicy);
         }
 
         public async Task<CheckResult> CheckAsync(string rootDir, CancellationToken ct)
         {
+            _logger.LogInformation("Checking for updates in {RootDir}", rootDir);
             Manifest.Manifest manifest = await _http.GetManifestAsync(Config.BaseUrl, Config.Channel, ct);
             VerifyManifestOrThrow(manifest);
             // Patch every file listed in the manifest.
@@ -38,6 +44,7 @@ namespace Hina.Core.Patching
                 string localPath = PathUtils.ToOsPath(rootDir, file.Path);
                 if (!File.Exists(localPath))
                 {
+                    _logger.LogInformation("Missing file detected: {FilePath}", file.Path);
                     return new CheckResult { IsUpdateAvailable = true, Message = "Missing files." };
                 }
 
@@ -46,16 +53,19 @@ namespace Hina.Core.Patching
                     string hash = await _hasher.ComputeHashAsync(fs, ct);
                     if (!string.Equals(hash, file.FileHash, StringComparison.OrdinalIgnoreCase))
                     {
+                        _logger.LogInformation("Out of date file detected: {FilePath}", file.Path);
                         return new CheckResult { IsUpdateAvailable = true, Message = "Out of date files." };
                     }
                 }
             }
 
+            _logger.LogInformation("All files are up to date");
             return new CheckResult { IsUpdateAvailable = false, Message = "Already up to date." };
         }
 
         public async Task<PatchResult> PatchAsync(string rootDir, CancellationToken ct)
         {
+            _logger.LogInformation("Starting patch in {RootDir}", rootDir);
             Manifest.Manifest manifest = await _http.GetManifestAsync(Config.BaseUrl, Config.Channel, ct);
             VerifyManifestOrThrow(manifest);
             PatchResult result = new PatchResult { Success = true };
@@ -64,6 +74,7 @@ namespace Hina.Core.Patching
             PatchJournal? existing = PatchJournal.Load(journalPath);
             if (existing != null)
             {
+                _logger.LogWarning("Incomplete journal found, rolling back previous patch");
                 await RollbackAsync(rootDir, ct);
             }
 
@@ -90,8 +101,11 @@ namespace Hina.Core.Patching
 
                 if (!needsPatch)
                 {
+                    _logger.LogDebug("File already up to date, skipping {FilePath}", file.Path);
                     continue;
                 }
+
+                _logger.LogInformation("Patching file {FilePath}", file.Path);
 
                 // Patch to a temp file first, then swap atomically.
                 string tempPath = localPath + ".hina.tmp";
@@ -104,6 +118,7 @@ namespace Hina.Core.Patching
                     if (File.Exists(localPath))
                     {
                         matches = await RsyncMatchLocalAsync(localPath, file, ct);
+                        _logger.LogDebug("Rsync matched {MatchCount}/{TotalChunks} chunks for {FilePath}", matches.Count, file.Chunks.Count, file.Path);
                     }
 
                     using (FileStream outFs = File.Create(tempPath))
@@ -119,6 +134,7 @@ namespace Hina.Core.Patching
                             else
                             {
                                 // Download missing chunk from server.
+                                _logger.LogDebug("Downloading chunk {ChunkIndex} for {FilePath}", chunk.Index, file.Path);
                                 byte[] data = await _http.GetChunkAsync(Config.BaseUrl, chunk.Strong, ct);
                                 await outFs.WriteAsync(data.AsMemory(0, chunk.Size), ct);
                             }
@@ -135,6 +151,7 @@ namespace Hina.Core.Patching
                                 throw new InvalidDataException("Hash mismatch after patch.");
                             }
                         }
+                        _logger.LogDebug("Verification passed for {FilePath}", file.Path);
                     }
 
                     // Keep a backup when configured to allow rollback.
@@ -156,6 +173,7 @@ namespace Hina.Core.Patching
                 }
                 catch (Exception ex)
                 {
+                    _logger.LogError(ex, "Failed to patch file {FilePath}", file.Path);
                     result.Success = false;
                     result.Message = ex.Message;
 
@@ -173,11 +191,13 @@ namespace Hina.Core.Patching
 
             if (result.Success)
             {
+                _logger.LogInformation("Patch completed successfully, {FileCount} files applied", result.AppliedFiles.Count);
                 journal.Status = "Completed";
                 await journal.SaveAsync(journalPath);
             }
             else
             {
+                _logger.LogError("Patch failed: {Message}", result.Message);
                 journal.Status = "Failed";
                 await journal.SaveAsync(journalPath);
             }
@@ -187,6 +207,7 @@ namespace Hina.Core.Patching
 
         public async Task<VerifyResult> VerifyAsync(string rootDir, CancellationToken ct)
         {
+            _logger.LogInformation("Verifying files in {RootDir}", rootDir);
             Manifest.Manifest manifest = await _http.GetManifestAsync(Config.BaseUrl, Config.Channel, ct);
             VerifyManifestOrThrow(manifest);
             VerifyResult result = new VerifyResult { Success = true };
@@ -197,6 +218,7 @@ namespace Hina.Core.Patching
                 string localPath = PathUtils.ToOsPath(rootDir, file.Path);
                 if (!File.Exists(localPath))
                 {
+                    _logger.LogWarning("Missing file during verification: {FilePath}", file.Path);
                     result.Success = false;
                     result.BrokenFiles.Add(file.Path);
                     continue;
@@ -207,6 +229,7 @@ namespace Hina.Core.Patching
                     string hash = await _hasher.ComputeHashAsync(fs, ct);
                     if (!string.Equals(hash, file.FileHash, StringComparison.OrdinalIgnoreCase))
                     {
+                        _logger.LogWarning("Hash mismatch for {FilePath}", file.Path);
                         result.Success = false;
                         result.BrokenFiles.Add(file.Path);
                     }
@@ -214,15 +237,18 @@ namespace Hina.Core.Patching
             }
 
             result.Message = result.Success ? "OK" : "Broken files detected.";
+            _logger.LogInformation("Verification complete: {Result}", result.Message);
             return result;
         }
 
         public Task RollbackAsync(string rootDir, CancellationToken ct)
         {
+            _logger.LogInformation("Rolling back patch in {RootDir}", rootDir);
             string journalPath = PatchJournal.GetJournalPath(rootDir);
             PatchJournal? journal = PatchJournal.Load(journalPath);
             if (journal == null)
             {
+                _logger.LogDebug("No journal found, nothing to roll back");
                 return Task.CompletedTask;
             }
 
@@ -230,12 +256,14 @@ namespace Hina.Core.Patching
             {
                 if (File.Exists(entry.BackupPath))
                 {
+                    _logger.LogDebug("Restoring {TargetPath} from backup", entry.TargetPath);
                     File.Copy(entry.BackupPath, entry.TargetPath, overwrite: true);
                     File.Delete(entry.BackupPath);
                 }
             }
 
             File.Delete(journalPath);
+            _logger.LogInformation("Rollback complete");
             return Task.CompletedTask;
         }
 

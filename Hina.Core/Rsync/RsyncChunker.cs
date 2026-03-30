@@ -9,7 +9,7 @@ using Hina.Core.Manifest;
 namespace Hina.Core.Rsync
 {
     // Builds fixed-size chunks with weak+strong checksums.
-    public sealed class RsyncChunker
+    public sealed class RsyncChunker : IChunker
     {
         private readonly int _chunkSize;
         private readonly IHasher _hasher;
@@ -24,6 +24,9 @@ namespace Hina.Core.Rsync
             _chunkSize = chunkSize;
             _hasher = hasher;
         }
+
+        public Task<List<ManifestChunk>> ChunkAsync(Stream stream, CancellationToken ct)
+            => BuildChunksAsync(stream, ct);
 
         public async Task<List<ManifestChunk>> BuildChunksAsync(Stream stream, CancellationToken ct)
         {

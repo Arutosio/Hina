@@ -24,6 +24,17 @@ namespace Hina.Core.Manifest
             int chunkSize,
             CancellationToken ct)
         {
+            IChunker chunker = new RsyncChunker(chunkSize, _hasher);
+            return await BuildAsync(root, baseUrl, chunkSize, chunker, ct);
+        }
+
+        public async Task<Manifest> BuildAsync(
+            DirectoryInfo root,
+            Uri baseUrl,
+            int chunkSize,
+            IChunker chunker,
+            CancellationToken ct)
+        {
             if (!root.Exists)
             {
                 throw new DirectoryNotFoundException(root.FullName);
@@ -34,7 +45,6 @@ namespace Hina.Core.Manifest
                 BaseUrl = baseUrl.ToString()
             };
 
-            RsyncChunker chunker = new RsyncChunker(chunkSize, _hasher);
             List<FileInfo> files = new List<FileInfo>();
             foreach (string filePath in Directory.EnumerateFiles(root.FullName, "*", SearchOption.AllDirectories))
             {
@@ -47,7 +57,7 @@ namespace Hina.Core.Manifest
 
                 using (FileStream fs = file.OpenRead())
                 {
-                    List<ManifestChunk> chunks = await chunker.BuildChunksAsync(fs, ct);
+                    List<ManifestChunk> chunks = await chunker.ChunkAsync(fs, ct);
                     fs.Position = 0;
                     string fileHash = await _hasher.ComputeHashAsync(fs, ct);
 

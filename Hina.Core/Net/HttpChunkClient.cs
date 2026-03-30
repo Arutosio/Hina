@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Hina.Core.Compression;
 using Hina.Core.Manifest;
+using Microsoft.Extensions.Logging;
 
 namespace Hina.Core.Net
 {
@@ -12,10 +13,17 @@ namespace Hina.Core.Net
     public sealed class HttpChunkClient
     {
         private readonly HttpClient _http;
+        private readonly RetryPolicy? _retryPolicy;
 
         public HttpChunkClient(HttpClient http)
         {
             _http = http;
+        }
+
+        public HttpChunkClient(HttpClient http, RetryPolicy retryPolicy)
+        {
+            _http = http;
+            _retryPolicy = retryPolicy;
         }
 
         public async Task<Manifest.Manifest> GetManifestAsync(Uri baseUrl, string channel, CancellationToken ct)
@@ -26,6 +34,19 @@ namespace Hina.Core.Net
                 : $"manifest.{channel}.json";
 
             Uri manifestUrl = new Uri(baseUrl, fileName);
+
+            if (_retryPolicy != null)
+            {
+                return await _retryPolicy.ExecuteAsync(async token =>
+                {
+                    using (Stream stream = await _http.GetStreamAsync(manifestUrl, token))
+                    {
+                        Manifest.Manifest? manifest = await System.Text.Json.JsonSerializer.DeserializeAsync<Manifest.Manifest>(stream, cancellationToken: token);
+                        return manifest ?? new Manifest.Manifest();
+                    }
+                }, ct);
+            }
+
             using (Stream stream = await _http.GetStreamAsync(manifestUrl, ct))
             {
                 Manifest.Manifest? manifest = await System.Text.Json.JsonSerializer.DeserializeAsync<Manifest.Manifest>(stream, cancellationToken: ct);
@@ -40,8 +61,18 @@ namespace Hina.Core.Net
             string bucket = hashOnly.Substring(0, 2);
             string relative = $"chunks/{bucket}/{hashOnly}.chunk.br";
             Uri chunkUrl = new Uri(baseUrl, relative);
-            byte[] compressed = await _http.GetByteArrayAsync(chunkUrl, ct);
-            return BrotliCodec.Decompress(compressed);
+
+            if (_retryPolicy != null)
+            {
+                return await _retryPolicy.ExecuteAsync(async token =>
+                {
+                    byte[] compressed = await _http.GetByteArrayAsync(chunkUrl, token);
+                    return BrotliCodec.Decompress(compressed);
+                }, ct);
+            }
+
+            byte[] compressedData = await _http.GetByteArrayAsync(chunkUrl, ct);
+            return BrotliCodec.Decompress(compressedData);
         }
 
         private static string HashOnly(string strongHash)

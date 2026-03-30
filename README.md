@@ -29,6 +29,22 @@ Hina delivers fast, bandwidth-efficient updates by computing rolling checksums a
 
 ---
 
+## Documentation
+
+For detailed guides beyond this README, see the [`docs/`](docs/) directory:
+
+- [Architecture](docs/Architecture.md) -- project structure, class diagrams, design decisions
+- [Configuration](docs/Configuration.md) -- full reference for all config properties
+- [Builder Guide](docs/Builder-Guide.md) -- manifest generation, CDC vs fixed chunking, CI/CD
+- [CLI Guide](docs/CLI-Guide.md) -- all commands, flags, exit codes, common workflows
+- [Host Guide](docs/Host-Guide.md) -- deployment, Nginx, Docker, CDN, CORS
+- [Security](docs/Security.md) -- Ed25519 signing, threat model, best practices
+- [Integration Guide](docs/Integration-Guide.md) -- embedding Hina.Core in your app
+- [Troubleshooting](docs/Troubleshooting.md) -- common errors and solutions
+- [Changelog](docs/Changelog.md) -- feature history
+
+---
+
 ## How It Works
 
 Hina produces a manifest and a chunk store from a build directory. Clients download only the chunks they are missing, rebuild files locally, and verify integrity.

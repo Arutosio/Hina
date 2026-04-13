@@ -8,73 +8,91 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  test:
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v3
-      with:
-        fetch-depth: 0
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet restore
+      - run: dotnet build --no-restore -c Release
+      - run: dotnet test --no-build -c Release --verbosity normal
 
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v3
-      with:
-        dotnet-version: 10.0.x
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, osx-arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
 
-    - name: Restore dependencies
-      run: dotnet restore
+      - name: Publish Hina.CLI (${{ matrix.rid }})
+        run: dotnet publish Hina.CLI/Hina.CLI.csproj -c Release -r ${{ matrix.rid }} --self-contained -o artifacts/cli
+      - name: Publish Hina.Builder (${{ matrix.rid }})
+        run: dotnet publish Hina.Builder/Hina.Builder.csproj -c Release -r ${{ matrix.rid }} --self-contained -o artifacts/builder
+      - name: Publish Hina.Host (${{ matrix.rid }})
+        run: dotnet publish Hina.Host/Hina.Host.csproj -c Release -r ${{ matrix.rid }} --self-contained -o artifacts/host
 
-    - name: Build
-      run: dotnet build --no-restore -c Release
+      - name: Package archives
+        run: |
+          set -e
+          mkdir -p dist
+          for project in cli builder host; do
+            case "$project" in
+              cli) name=Hina.CLI ;;
+              builder) name=Hina.Builder ;;
+              host) name=Hina.Host ;;
+            esac
+            base="$name-${{ matrix.rid }}"
+            if [[ "${{ matrix.rid }}" == win-* ]]; then
+              (cd artifacts/$project && zip -r "../../dist/$base.zip" .)
+            else
+              tar -C artifacts/$project -czf "dist/$base.tar.gz" .
+            fi
+          done
+          ls -la dist
 
-    - name: Test
-      run: dotnet test --no-build -c Release --verbosity normal
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hina-${{ matrix.rid }}
+          path: dist/*
+          if-no-files-found: error
 
-    - name: Publish CLI (win-x64)
-      run: dotnet publish Hina.CLI/Hina.CLI.csproj -c Release -r win-x64 --self-contained -o artifacts/win-x64
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Publish CLI (linux-x64)
-      run: dotnet publish Hina.CLI/Hina.CLI.csproj -c Release -r linux-x64 --self-contained -o artifacts/linux-x64
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
 
-    - name: Publish Builder (win-x64)
-      run: dotnet publish Hina.Builder/Hina.Builder.csproj -c Release -r win-x64 --self-contained -o artifacts/builder-win-x64
+      - name: List artifacts
+        run: ls -la dist
 
-    - name: Publish Builder (linux-x64)
-      run: dotnet publish Hina.Builder/Hina.Builder.csproj -c Release -r linux-x64 --self-contained -o artifacts/builder-linux-x64
+      - name: Generate version tag
+        id: version
+        run: |
+          TAG="v1.0.0-$(git rev-parse --short HEAD)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Generated tag: $TAG"
 
-    - name: Publish Host (win-x64)
-      run: dotnet publish Hina.Host/Hina.Host.csproj -c Release -r win-x64 --self-contained -o artifacts/host-win-x64
-
-    - name: Publish Host (linux-x64)
-      run: dotnet publish Hina.Host/Hina.Host.csproj -c Release -r linux-x64 --self-contained -o artifacts/host-linux-x64
-
-    - name: Package artifacts
-      run: |
-        cd artifacts
-        zip -r ../Hina.CLI-win-x64.zip win-x64/
-        zip -r ../Hina.CLI-linux-x64.zip linux-x64/
-        zip -r ../Hina.Builder-win-x64.zip builder-win-x64/
-        zip -r ../Hina.Builder-linux-x64.zip builder-linux-x64/
-        zip -r ../Hina.Host-win-x64.zip host-win-x64/
-        zip -r ../Hina.Host-linux-x64.zip host-linux-x64/
-
-    - name: Generate version tag
-      id: version
-      run: |
-        TAG="v1.0.0-$(git rev-parse --short HEAD)"
-        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-        echo "Generated tag: $TAG"
-
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: ${{ steps.version.outputs.tag }}
-        name: Hina ${{ steps.version.outputs.tag }}
-        generate_release_notes: true
-        files: |
-          Hina.CLI-win-x64.zip
-          Hina.CLI-linux-x64.zip
-          Hina.Builder-win-x64.zip
-          Hina.Builder-linux-x64.zip
-          Hina.Host-win-x64.zip
-          Hina.Host-linux-x64.zip
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Hina ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: dist/*

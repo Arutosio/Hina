@@ -1,0 +1,10 @@
+services:
+  hina-host:
+    build:
+      context: ..
+      dockerfile: Hina.Host/Dockerfile
+    ports:
+      - "49876:49876"
+    volumes:
+      - ./patch:/app/patch:ro
+    restart: unless-stopped

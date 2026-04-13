@@ -230,7 +230,7 @@ dotnet run --project Hina.Builder -- build \
 
 ## Host Usage
 
-Hina.Host is a lightweight ASP.NET Core static file server purpose-built for serving patch manifests and chunks.
+Hina.Host is a lightweight ASP.NET Core static file server purpose-built for serving patch manifests and chunks. It can serve one program or several programs from a single process, with built-in rate limiting, per-IP abuse detection, and structured request logging.
 
 Start the host:
 
@@ -238,29 +238,82 @@ Start the host:
 dotnet run --project Hina.Host
 ```
 
+On first run, if no `hina.host.json` exists and stdin is a terminal, an **interactive setup wizard** launches automatically to configure port, single/multi-app mode, rate limits, and CORS. Re-run it any time with `--setup`.
+
+### Default Port
+
+Hina.Host binds to `http://0.0.0.0:49876` by default. The port is in the IANA dynamic/private range and is not assigned to any common service. Override it with `--port`, `--urls`, the `urls` config key, or the `ASPNETCORE_URLS` environment variable.
+
 ### Configuration
 
-Create a `hina.host.json` file:
+`hina.host.json` (full schema, see [`Hina.Host/hina.host.example.json`](Hina.Host/hina.host.example.json)):
 
 ```json
 {
-  "root": "patch"
+  "urls": "http://0.0.0.0:49876",
+  "root": "patch",
+  "requestsPerMinutePerIp": 600,
+  "abuseThresholdPerMinute": 300,
+  "summaryIntervalSeconds": 60,
+  "statsEnabled": true,
+  "cors": []
 }
 ```
 
-Pass a configuration file explicitly:
+### CLI Flags
+
+| Flag | Description |
+|------|-------------|
+| `--root <path>` | Patch directory (single-app mode) |
+| `--port <n>` | Shortcut for `--urls http://0.0.0.0:<n>` |
+| `--urls <list>` | Bind URLs (semicolon-separated) |
+| `--config <path>` | Use a specific JSON config |
+| `--rate-limit <n>` | Max requests/minute per (IP, App). `0` disables. |
+| `--abuse-threshold <n>` | Log `Warning` when (IP, App) exceeds N req/min |
+| `--cors <origins>` | Comma-separated allowed origins |
+| `--no-stats` | Disable the `/stats` endpoint |
+| `--setup` | Force the interactive setup wizard |
+| `-h`, `--help` | Show help |
+
+### Multi-App Mode
+
+A single host can serve patches for several independent programs. Define `apps` in the config:
+
+```json
+{
+  "urls": "http://0.0.0.0:49876",
+  "apps": {
+    "gameA": "/var/patches/gameA",
+    "gameB": "/srv/gameB/release"
+  }
+}
+```
+
+Each app is served under `/<appName>/...`, gets its own rate-limit bucket per IP, and is tracked separately in logs and `/stats`. Requests to unknown prefixes return `404` without touching the filesystem. Build each app with `--base https://host/<appName>/` so client `baseUrl` resolves correctly. When `apps` is set, `root` is ignored.
+
+### Observability
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Liveness probe, returns `"ok"`. |
+| `GET /stats` | Loopback-only JSON snapshot: totals, top IPs / apps / paths in the last minute, rejections per app. |
+
+Out of the box the host logs:
+
+- `Information` on every manifest GET (`Update check: app={App} ip={Ip} path={Path} ua={UserAgent}`) - useful to track which clients are polling for updates.
+- `Warning` when the per-(IP, App) rate limiter rejects a request.
+- `Warning` when an IP exceeds the configured abuse threshold (throttled to once per minute per IP).
+- `Information` periodic traffic summary.
+
+### Docker
+
+A [`Dockerfile`](Hina.Host/Dockerfile) and [`docker-compose.yml`](Hina.Host/docker-compose.yml) are included:
 
 ```shell
-dotnet run --project Hina.Host -- --config ./hina.host.json
+docker compose -f Hina.Host/docker-compose.yml up -d
 ```
 
-### Health Check
-
-The host exposes a `/health` endpoint for monitoring and load balancer probes.
-
-```
-GET /health
-```
+See [`docs/Host-Guide.md`](docs/Host-Guide.md) for Nginx/Apache/CDN deployment, CORS, and performance tuning.
 
 ---
 

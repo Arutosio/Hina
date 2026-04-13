@@ -11,7 +11,19 @@ Hina.Host serves two things:
 1. **Manifest files** -- JSON documents describing the current release (file list, chunk hashes, version, signature).
 2. **Chunk files** -- Brotli-compressed binary blobs stored under a two-character hash-prefix directory structure.
 
-The host also exposes a `/health` endpoint for load balancer and monitoring integrations.
+The host also exposes a `/health` endpoint for load balancer integrations and an optional `/stats` endpoint (loopback-only) with live traffic counters.
+
+### Observability and Abuse Detection
+
+Out of the box Hina.Host logs:
+
+- `Information` "Update check: {Ip} requested {Path}" on every manifest GET — useful to track which clients are polling for updates and at what rate.
+- `Debug` for every other request (IP, method, path).
+- `Warning` "Rate limit exceeded by {Ip} on {Path}" when the per-IP limiter rejects a request.
+- `Warning` "Possible abuse from {Ip}: {Count} requests in last minute" once per minute per offending IP.
+- `Information` periodic traffic summary (total, top IP, top path, rejections).
+
+The `/stats` endpoint (bound to loopback) returns a JSON snapshot with the top 10 IPs and paths over the last minute plus aggregate counters.
 
 Because Hina.Host is a pure static file server, you can replace it entirely with Nginx, Apache, a CDN, or any HTTP server capable of serving files from disk.
 
@@ -21,28 +33,81 @@ Because Hina.Host is a pure static file server, you can replace it entirely with
 
 ### hina.host.json
 
-The primary configuration file. Place it in the working directory alongside the Hina.Host binary.
+The primary configuration file. Place it in the working directory alongside the Hina.Host binary. A full example ships at `Hina.Host/hina.host.example.json`.
 
 ```json
 {
-  "root": "patch"
+  "root": "patch",
+  "urls": "http://0.0.0.0:5000",
+  "requestsPerMinutePerIp": 600,
+  "abuseThresholdPerMinute": 300,
+  "summaryIntervalSeconds": 60,
+  "statsEnabled": true,
+  "cors": []
 }
 ```
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `root` | `string` | `"patch"` | Path to the directory containing `manifest.json` and `chunks/`. Relative paths are resolved from the working directory. |
+| `root` | `string` | `"patch"` | Path to the directory containing `manifest.json` and `chunks/`. |
+| `urls` | `string` | ASP.NET default | Semicolon-separated bind URLs (e.g. `http://0.0.0.0:5000`). |
+| `requestsPerMinutePerIp` | `int` | `600` | Per-IP rate limit. Requests beyond this return `429`. Set `0` (CLI) to disable. |
+| `abuseThresholdPerMinute` | `int` | `300` | Per-IP request count that triggers a `Warning` log (possible DoS). |
+| `summaryIntervalSeconds` | `int` | `60` | How often the aggregated traffic summary is logged. |
+| `statsEnabled` | `bool` | `true` | Expose `/stats` (loopback-only) with top IPs / paths / rejections. |
+| `cors` | `string[]` | `[]` | Origins allowed for CORS. Empty means CORS middleware is not installed. |
+| `apps` | `object` | `{}` | Multi-app mode. Maps `<appName>` → physical directory. Each app is served under `/<appName>/...`. When set, `root` is ignored and unknown prefixes return 404. |
+
+### Multi-App Hosting
+
+A single Hina.Host can serve patches for several independent programs from one process. Define `apps` in `hina.host.json`:
+
+```json
+{
+  "urls": "http://0.0.0.0:5000",
+  "requestsPerMinutePerIp": 600,
+  "apps": {
+    "gameA": "/var/patches/gameA",
+    "gameB": "/srv/gameB/release",
+    "toolC": "./patches/toolC"
+  }
+}
+```
+
+Each app:
+
+- Is served at `/<appName>/manifest.json`, `/<appName>/manifest.<channel>.json`, `/<appName>/chunks/...`.
+- Gets its own rate-limit bucket per IP, so a noisy client on `gameA` cannot exhaust the budget of `gameB`.
+- Is tracked separately in logs (`app=<name>` on every `Update check` / abuse warning) and in `/stats` (`apps` and `appRejections` breakdown).
+- Must be built with `--base https://host/<appName>/` so client `baseUrl` resolves correctly.
+
+Requests to prefixes not listed in `apps` return `404` immediately (no filesystem probe). `/health` and `/stats` are always exempt and not considered apps.
+
+### CLI Flags
+
+All JSON keys have an equivalent flag and override the file:
+
+| Flag | Equivalent |
+|------|------------|
+| `--root <path>` | `root` |
+| `--port <n>` | `urls = http://0.0.0.0:<n>` |
+| `--urls <list>` | `urls` |
+| `--config <path>` | alternate JSON config path |
+| `--rate-limit <n>` | `requestsPerMinutePerIp` (0 disables) |
+| `--abuse-threshold <n>` | `abuseThresholdPerMinute` |
+| `--cors <origins>` | comma-separated origins |
+| `--no-stats` | `statsEnabled = false` |
+| `-h`, `--help` | prints usage and exits |
 
 ### Resolution Order
 
-The host resolves its root directory in the following priority order:
-
-| Priority | Source | Example |
-|----------|--------|---------|
-| 1 | `--config <path>` flag | `--config /etc/hina/host.json` |
-| 2 | `hina.host.json` in working directory | Automatic discovery |
-| 3 | `Patcher:Root` in appsettings.json | ASP.NET Core configuration |
-| 4 | Built-in default | `"patch"` |
+| Priority | Source |
+|----------|--------|
+| 1 | CLI flags |
+| 2 | `--config <path>` JSON file |
+| 3 | `hina.host.json` in working directory |
+| 4 | `Patcher:Root` in `appsettings.json` (legacy, only `root`) |
+| 5 | Built-in defaults |
 
 ### Using the --config Flag
 

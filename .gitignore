@@ -380,3 +380,7 @@ MigrationBackup/
 # End of https://www.toptal.com/developers/gitignore/api/visualstudio,visualstudiocode,dotnetcore
 .vscode/launch.json
 .vscode/tasks.json
+
+# OMC local state and shell artifacts
+.omc/
+*.stackdump

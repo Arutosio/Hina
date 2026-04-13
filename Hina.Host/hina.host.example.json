@@ -1,0 +1,15 @@
+{
+  "root": "patch",
+  "urls": "http://0.0.0.0:49876",
+  "requestsPerMinutePerIp": 600,
+  "abuseThresholdPerMinute": 300,
+  "summaryIntervalSeconds": 60,
+  "statsEnabled": true,
+  "cors": [],
+
+  "_comment_apps": "Multi-app mode: when 'apps' is set, 'root' is ignored. Each app is served at /<name>/... and clients point baseUrl there.",
+  "apps": {
+    "gameA": "./patches/gameA",
+    "gameB": "./patches/gameB"
+  }
+}

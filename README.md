@@ -34,6 +34,7 @@ Hina delivers fast, bandwidth-efficient updates by computing rolling checksums a
 For detailed guides beyond this README, see the [`docs/`](docs/) directory:
 
 - [Architecture](docs/Architecture.md) -- project structure, class diagrams, design decisions
+- [Package Manager Guide](docs/PackageManager-Guide.md) -- `hina install/update/uninstall`, descriptor schema, hooks, signature chain
 - [Configuration](docs/Configuration.md) -- full reference for all config properties
 - [Builder Guide](docs/Builder-Guide.md) -- manifest generation, CDC vs fixed chunking, CI/CD
 - [CLI Guide](docs/CLI-Guide.md) -- all commands, flags, exit codes, common workflows

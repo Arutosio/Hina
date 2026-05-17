@@ -19,7 +19,73 @@ jobs:
       - run: dotnet build --no-restore -c Release
       - run: dotnet test --no-build -c Release --verbosity normal
 
-  build:
+  # Hina.CLI is NativeAOT — must build on the matching host OS family.
+  # Hina.Builder / Hina.Host are plain self-contained and cross-compile from any host.
+  build-cli:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: windows-latest
+            rid: win-arm64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: ubuntu-latest
+            rid: linux-arm64
+          - os: macos-latest
+            rid: osx-x64
+          - os: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      # macOS NativeAOT links against system OpenSSL + Brotli, both supplied by Homebrew.
+      - name: Install brew libs for macOS AOT
+        if: matrix.os == 'macos-latest'
+        run: brew install openssl@3 brotli
+
+      # linux-arm64 cross-compile from x64 needs the cross-arch sysroot package.
+      - name: Install linux-arm64 cross toolchain
+        if: matrix.rid == 'linux-arm64'
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs) main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs)-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+          sudo apt-get update
+          sudo apt-get install -y clang llvm binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu zlib1g-dev:arm64
+
+      - name: Publish Hina.CLI (${{ matrix.rid }}, AOT)
+        run: dotnet publish Hina.CLI/Hina.CLI.csproj -c Release -r ${{ matrix.rid }} --self-contained -o artifacts/cli
+
+      - name: Package Hina.CLI archive
+        shell: bash
+        run: |
+          set -e
+          mkdir -p dist
+          base="Hina.CLI-${{ matrix.rid }}"
+          if [[ "${{ matrix.rid }}" == win-* ]]; then
+            (cd artifacts/cli && 7z a -tzip "../../dist/$base.zip" . > /dev/null)
+          else
+            tar -C artifacts/cli -czf "dist/$base.tar.gz" .
+          fi
+          ls -la dist
+
+      - name: Upload Hina.CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hina-cli-${{ matrix.rid }}
+          path: dist/*
+          if-no-files-found: error
+
+  build-builder-host:
     needs: test
     runs-on: ubuntu-latest
     strategy:
@@ -32,8 +98,6 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Publish Hina.CLI (${{ matrix.rid }})
-        run: dotnet publish Hina.CLI/Hina.CLI.csproj -c Release -r ${{ matrix.rid }} --self-contained -o artifacts/cli
       - name: Publish Hina.Builder (${{ matrix.rid }})
         run: dotnet publish Hina.Builder/Hina.Builder.csproj -c Release -r ${{ matrix.rid }} --self-contained -o artifacts/builder
       - name: Publish Hina.Host (${{ matrix.rid }})
@@ -43,9 +107,8 @@ jobs:
         run: |
           set -e
           mkdir -p dist
-          for project in cli builder host; do
+          for project in builder host; do
             case "$project" in
-              cli) name=Hina.CLI ;;
               builder) name=Hina.Builder ;;
               host) name=Hina.Host ;;
             esac
@@ -61,12 +124,12 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hina-${{ matrix.rid }}
+          name: hina-builder-host-${{ matrix.rid }}
           path: dist/*
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [build-cli, build-builder-host]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

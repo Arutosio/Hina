@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <Content Include="Hina_Logo.ico" />
@@ -19,9 +19,25 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationIcon>Hina_Logo.ico</ApplicationIcon>
-    <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
-    <PublishSingleFile>true</PublishSingleFile>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
     <SelfContained>true</SelfContained>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <StripSymbols>true</StripSymbols>
   </PropertyGroup>
+
+  <!--
+    macOS NativeAOT links against system OpenSSL via -lssl/-lcrypto. macOS doesn't ship
+    OpenSSL headers/libs in the SDK, so we point the linker at Homebrew's openssl@3.
+    Both Apple Silicon (/opt/homebrew) and Intel (/usr/local) brew prefixes are tried;
+    GitHub Actions macos-latest runners have brew openssl@3 pre-installed at the
+    Apple-Silicon prefix.
+  -->
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('osx-'))">
+    <LinkerArg Include="-L/opt/homebrew/opt/openssl@3/lib" Condition="Exists('/opt/homebrew/opt/openssl@3/lib')" />
+    <LinkerArg Include="-L/usr/local/opt/openssl@3/lib" Condition="Exists('/usr/local/opt/openssl@3/lib')" />
+    <LinkerArg Include="-L/opt/homebrew/opt/brotli/lib" Condition="Exists('/opt/homebrew/opt/brotli/lib')" />
+    <LinkerArg Include="-L/usr/local/opt/brotli/lib" Condition="Exists('/usr/local/opt/brotli/lib')" />
+  </ItemGroup>
 
 </Project>

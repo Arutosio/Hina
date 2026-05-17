@@ -1,8 +1,10 @@
 using System;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Hina.Core.Configuration;
 using Hina.Core.Patching;
+using Hina.PackageManager.Descriptor;
 using Hina.PackageManager.Paths;
 using Hina.PackageManager.Platform;
 using Hina.PackageManager.Registry;
@@ -11,36 +13,41 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Hina.PackageManager.Install
 {
-    // `hina reinstall <name>`. Reads the descriptor URL from the registry, uninstalls
-    // cleanly, then re-runs InstallService against the same URL. Use --rotate-key to
-    // accept a publisher key change (otherwise the TOFU lock from the install flow
-    // would reject any descriptor signed with a new key).
+    // `hina reinstall <name>`. Re-fetches the descriptor from the URL captured at install
+    // time, uninstalls cleanly, then re-runs InstallService against the same URL.
+    //
+    // Without --rotate-key, ReinstallService refuses if the new descriptor declares a
+    // different publisher key from the one currently pinned in the registry; this prevents
+    // a silent key-rotation from sneaking through a reinstall (which would otherwise
+    // bypass UpdateService's pin check). The fetch + key check happen BEFORE uninstall
+    // so a refusal leaves the registry untouched.
     public sealed class ReinstallService
     {
         private readonly InstallPaths _paths;
         private readonly IPlatformIntegration _platform;
-        private readonly Descriptor.DescriptorFetcher _fetcher;
+        private readonly DescriptorFetcher _fetcher;
         private readonly Func<PatcherConfig, IPatchClient> _patchClientFactory;
         private readonly ILogger _logger;
 
         public ReinstallService(
             InstallPaths paths,
             IPlatformIntegration platform,
-            Descriptor.DescriptorFetcher? fetcher = null,
+            DescriptorFetcher? fetcher = null,
             Func<PatcherConfig, IPatchClient>? patchClientFactory = null,
             ILogger? logger = null)
         {
             _paths = paths;
             _platform = platform;
-            _fetcher = fetcher ?? new Descriptor.DescriptorFetcher();
+            _fetcher = fetcher ?? new DescriptorFetcher();
             _patchClientFactory = patchClientFactory ?? (cfg => new PatchClient(cfg));
             _logger = logger ?? NullLogger.Instance;
         }
 
         public async Task<InstallResult> ReinstallAsync(string name, bool rotateKey, CancellationToken ct)
         {
-            // Read URL inside a short lock; uninstall/install each take their own.
+            // [1] Read existing registry entry to learn descriptorUrl + pinned key.
             string descriptorUrl;
+            string pinnedKey;
             {
                 LockManager locks = new LockManager(_paths.LockFile);
                 using RegistryLock l = await locks.AcquireAsync(ct);
@@ -50,20 +57,28 @@ namespace Hina.PackageManager.Install
                     throw new InvalidOperationException($"'{name}' is not installed; use `hina install <url>` instead.");
                 }
                 descriptorUrl = app.DescriptorUrl;
+                pinnedKey = app.PublicKey;
             }
 
+            // [2] Fetch the new descriptor and enforce the key-rotation rule BEFORE we
+            //     touch anything on disk. If --rotate-key isn't set and the publisher
+            //     rotated, abort — the user must re-issue with --rotate-key.
+            AppDescriptor descriptor = await _fetcher.FetchAsync(new Uri(descriptorUrl), ct);
+            if (!rotateKey && !string.Equals(descriptor.PublicKey, pinnedKey, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Descriptor declares a different publisher key. Re-run with `--rotate-key` if you trust the new key.");
+            }
+
+            // [3] Uninstall.
             UninstallService uninstall = new UninstallService(_paths, _platform, _logger);
             await uninstall.UninstallAsync(name, ct);
 
+            // [4] Install. Auto-accept the TOFU prompt: the user already approved this
+            //     publisher (and explicitly --rotate-key'd if the key changed), so the
+            //     interactive prompt is unnecessary.
             InstallService install = new InstallService(_paths, _platform, _fetcher, _patchClientFactory, _logger);
-
-            // For rotate-key flows we silently accept whatever publicKey the new descriptor
-            // declares; otherwise we let the normal first-time-trust path run (which, because
-            // there is now no registry entry, behaves as a fresh install).
-            InstallOptions opts = new InstallOptions
-            {
-                OnFirstTimeTrust = rotateKey ? _ => true : null
-            };
+            InstallOptions opts = new InstallOptions { OnFirstTimeTrust = _ => true };
             return await install.InstallAsync(new Uri(descriptorUrl), opts, ct);
         }
     }

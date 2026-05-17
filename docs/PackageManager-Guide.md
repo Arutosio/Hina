@@ -19,7 +19,7 @@ This guide covers the user-facing CLI and the wire format publishers author.
 | `hina which <name>` | Print the install path of an app |
 | `hina update [name]` | Update one app or all installed apps |
 | `hina reinstall <name>` | Reinstall (use `--rotate-key` to accept a new publisher key) |
-| `hina dev <subcommand>` | Advanced patcher commands (`check`, `patch`, `verify`, `rollback`, `cleanup`) |
+| `hina dev <subcommand>` | Advanced patcher / publisher commands (`check`, `patch`, `verify`, `rollback`, `cleanup`, `sign-descriptor`) |
 
 Global flags:
 
@@ -194,13 +194,27 @@ Existing patcher tooling is reused — see
 
 End-to-end:
 
-1. Generate an Ed25519 key pair with `dotnet run --project Hina.Builder -- keygen`.
-2. Build the manifest with `--sign-key` pointed at your private key.
+1. Generate an Ed25519 key pair with:
+   ```
+   dotnet run --project Hina.Builder -- keygen --out . --name myapp
+   ```
+   That writes `myapp.key.b64` (keep secret) and `myapp.pub.b64` (paste into the
+   descriptor as `publicKey`).
+2. Build the manifest with the same private key:
+   ```
+   dotnet run --project Hina.Builder -- build \
+     --input ./build --out ./patch \
+     --base https://cdn.example.com/myapp/ --version 1.0.0 \
+     --sign-key ./myapp.key.b64
+   ```
 3. Upload the resulting `manifest.json` and `chunks/` tree to your CDN at the URL
    that the descriptor's `baseUrl` points to.
-4. Sign `hina.app.json` with the same private key (Hina exposes
-   `DescriptorSigner.AttachSignature` for build tooling; a `hina dev sign-descriptor`
-   command is planned).
+4. Author `hina.app.json` with the same `publicKey` and sign it:
+   ```
+   hina dev sign-descriptor --in hina.app.json --key ./myapp.key.b64
+   ```
+   The command validates the descriptor, attaches an Ed25519
+   `descriptorSignature`, and writes the result in place (or to `--out <path>`).
 5. Host the descriptor at any URL you control. Tell users to run
    `hina install <descriptor-url>`.
 

@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using Hina.Core.Configuration;
 using Hina.Core.Patching;
+using Hina.PackageManager.Descriptor;
 using Microsoft.Extensions.Logging;
 
 namespace Hina.CLI.Commands
@@ -30,6 +31,12 @@ namespace Hina.CLI.Commands
             {
                 PrintHelp();
                 return 0;
+            }
+
+            // sign-descriptor doesn't operate on a patch dir; route it before the --dir check.
+            if (subcommand == "sign-descriptor")
+            {
+                return RunSignDescriptor(args, logger);
             }
 
             if (string.IsNullOrWhiteSpace(root))
@@ -90,14 +97,95 @@ namespace Hina.CLI.Commands
 
         private static void PrintHelp()
         {
-            Console.WriteLine("hina dev <subcommand> --dir <path> --base <url> [--channel stable] [--pubkey b64]");
+            Console.WriteLine("hina dev <subcommand> [options]");
             Console.WriteLine();
-            Console.WriteLine("Subcommands:");
-            Console.WriteLine("  check     Check for updates against a manifest");
-            Console.WriteLine("  patch     Apply updates from a manifest");
-            Console.WriteLine("  verify    Verify local files against a manifest");
-            Console.WriteLine("  rollback  Restore from the most recent backup");
-            Console.WriteLine("  cleanup   Remove leftover .hina.tmp/.bak files");
+            Console.WriteLine("Patcher subcommands (require --dir <path> --base <url>):");
+            Console.WriteLine("  check                Check for updates against a manifest");
+            Console.WriteLine("  patch                Apply updates from a manifest");
+            Console.WriteLine("  verify               Verify local files against a manifest");
+            Console.WriteLine("  rollback             Restore from the most recent backup");
+            Console.WriteLine("  cleanup              Remove leftover .hina.tmp/.bak files");
+            Console.WriteLine();
+            Console.WriteLine("Publisher subcommands:");
+            Console.WriteLine("  sign-descriptor --in <hina.app.json> --key <ed25519.priv.b64> [--out <path>]");
+            Console.WriteLine("                       Attach an Ed25519 signature to a descriptor file.");
+        }
+
+        // `hina dev sign-descriptor --in hina.app.json --key priv.b64 [--out path]`
+        // Publisher-side helper so the workflow doesn't require a custom signing tool.
+        // Generate the key pair with `dotnet run --project Hina.Builder -- keygen`.
+        private static int RunSignDescriptor(string[] args, ILogger logger)
+        {
+            string? inPath = Args.GetValue(args, "--in");
+            string? keyPath = Args.GetValue(args, "--key");
+            string? outPath = Args.GetValue(args, "--out");
+
+            if (string.IsNullOrWhiteSpace(inPath))
+            {
+                logger.LogError("Missing required --in <hina.app.json>");
+                return 2;
+            }
+            if (string.IsNullOrWhiteSpace(keyPath))
+            {
+                logger.LogError("Missing required --key <ed25519.priv.b64>");
+                return 2;
+            }
+            if (!File.Exists(inPath))
+            {
+                logger.LogError("Descriptor not found: {Path}", inPath);
+                return 2;
+            }
+            if (!File.Exists(keyPath))
+            {
+                logger.LogError("Private key not found: {Path}", keyPath);
+                return 2;
+            }
+
+            string target = string.IsNullOrWhiteSpace(outPath) ? inPath : outPath;
+
+            string json;
+            try { json = File.ReadAllText(inPath); }
+            catch (Exception ex) { logger.LogError("Read descriptor failed: {Message}", ex.Message); return 2; }
+
+            AppDescriptor descriptor;
+            try { descriptor = DescriptorParser.Parse(json); }
+            catch (Exception ex) { logger.LogError("Parse descriptor failed: {Message}", ex.Message); return 2; }
+
+            // Validate before signing so publishers get clear errors instead of shipping
+            // garbage that fails at install time.
+            ValidationResult v = DescriptorValidator.Validate(descriptor, new ValidationContext { AllowInsecure = true });
+            if (!v.IsValid)
+            {
+                logger.LogError("Descriptor validation failed:\n  - {Errors}", string.Join("\n  - ", v.Errors));
+                return 2;
+            }
+
+            byte[] privateKey;
+            try { privateKey = Convert.FromBase64String(File.ReadAllText(keyPath).Trim()); }
+            catch (Exception ex) { logger.LogError("Decode key failed: {Message}", ex.Message); return 2; }
+
+            try
+            {
+                DescriptorSigner.AttachSignature(descriptor, privateKey);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError("Sign failed: {Message}", ex.Message);
+                return 2;
+            }
+
+            try
+            {
+                File.WriteAllText(target, DescriptorParser.Serialize(descriptor));
+            }
+            catch (Exception ex)
+            {
+                logger.LogError("Write descriptor failed: {Message}", ex.Message);
+                return 2;
+            }
+
+            Console.WriteLine($"Signed descriptor → {target}");
+            return 0;
         }
 
         private static PatcherConfig LoadConfigOrDefault(string? configPath)

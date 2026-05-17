@@ -3,7 +3,7 @@ using Hina.PackageManager.Descriptor;
 
 namespace Hina.PackageManager.Json
 {
-    [JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true)]
+    [JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
     [JsonSerializable(typeof(AppDescriptor))]
     [JsonSerializable(typeof(HookAction))]
     [JsonSerializable(typeof(AddToPathHook))]
@@ -20,7 +20,7 @@ namespace Hina.PackageManager.Json
     [JsonSerializable(typeof(Registry.ShellEntryRecord))]
     public partial class PackageManagerJsonContext : JsonSerializerContext { }
 
-    [JsonSourceGenerationOptions(WriteIndented = true)]
+    [JsonSourceGenerationOptions(WriteIndented = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
     [JsonSerializable(typeof(AppDescriptor))]
     [JsonSerializable(typeof(Registry.Registry))]
     public partial class PackageManagerIndentedJsonContext : JsonSerializerContext { }

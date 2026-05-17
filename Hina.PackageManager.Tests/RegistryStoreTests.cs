@@ -52,9 +52,12 @@ namespace Hina.PackageManager.Tests
                 LastUpdatedAt = new DateTimeOffset(2026, 5, 17, 10, 0, 0, TimeSpan.Zero),
                 ExecutedHooks =
                 {
-                    new HookEvidence { Action = "addToPath", Evidence = "/Users/x/.local/bin/fooedit" }
+                    new HookEvidence { Action = "addToPath", Identity = "addToPath:fooedit", Evidence = "/Users/x/.local/bin/fooedit" }
                 },
-                ShellEntries = { "/Users/x/.local/share/applications/fooedit.desktop" }
+                ShellEntries =
+                {
+                    new ShellEntryRecord { Id = "main", Evidence = "/Users/x/.local/share/applications/fooedit.desktop" }
+                }
             };
 
             await store.SaveAsync(input);

@@ -22,25 +22,26 @@ namespace Hina.PackageManager.Hooks
 
         public async Task<HookEvidence> ApplyAsync(HookAction hook, string appDir, CancellationToken ct)
         {
+            string identity = HookIdentity.For(hook);
             switch (hook)
             {
                 case AddToPathHook a:
                 {
                     string targetAbs = Path.Combine(appDir, a.Target);
                     string evidence = await _platform.AddToPath(a.Name, targetAbs, ct);
-                    return new HookEvidence { Action = "addToPath", Evidence = evidence };
+                    return new HookEvidence { Action = "addToPath", Identity = identity, Evidence = evidence };
                 }
 
                 case MimeTypeHook m:
                 {
                     string evidence = await _platform.RegisterMimeType(m, appDir, ct);
-                    return new HookEvidence { Action = "registerMimeType", Evidence = evidence };
+                    return new HookEvidence { Action = "registerMimeType", Identity = identity, Evidence = evidence };
                 }
 
                 case UrlSchemeHook u:
                 {
                     string evidence = await _platform.RegisterUrlScheme(u, appDir, ct);
-                    return new HookEvidence { Action = "registerUrlScheme", Evidence = evidence };
+                    return new HookEvidence { Action = "registerUrlScheme", Identity = identity, Evidence = evidence };
                 }
 
                 case InstallFontHook f:
@@ -49,20 +50,20 @@ namespace Hina.PackageManager.Hooks
                     {
                         throw new InvalidOperationException("installFont hook requires at least one file.");
                     }
-                    // installFont evidence is a comma-joined list of absolute installed-font paths.
+                    // installFont evidence is a |-joined list of absolute installed-font paths.
                     List<string> installed = new List<string>(f.Files.Count);
                     foreach (string rel in f.Files)
                     {
                         string abs = Path.Combine(appDir, rel);
                         installed.Add(await _platform.InstallFont(abs, ct));
                     }
-                    return new HookEvidence { Action = "installFont", Evidence = string.Join("|", installed) };
+                    return new HookEvidence { Action = "installFont", Identity = identity, Evidence = string.Join("|", installed) };
                 }
 
                 case AutostartHook au:
                 {
                     string evidence = await _platform.RegisterAutostart(au, appDir, ct);
-                    return new HookEvidence { Action = "registerAutostart", Evidence = evidence };
+                    return new HookEvidence { Action = "registerAutostart", Identity = identity, Evidence = evidence };
                 }
 
                 default:

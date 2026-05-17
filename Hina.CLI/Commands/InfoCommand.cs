@@ -39,7 +39,7 @@ namespace Hina.CLI.Commands
             if (app.ShellEntries.Count > 0)
             {
                 Console.WriteLine("Shell entries:");
-                foreach (string e in app.ShellEntries) Console.WriteLine($"  - {e}");
+                foreach (ShellEntryRecord e in app.ShellEntries) Console.WriteLine($"  - [{e.Id}] {e.Evidence}");
             }
             if (app.ExecutedHooks.Count > 0)
             {

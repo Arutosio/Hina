@@ -43,9 +43,9 @@ namespace Hina.CLI
                 case "which":
                     return Task.FromResult(WhichCommand.Run(args, logger));
                 case "update":
+                    return UpdateCommand.RunAsync(args, logger, ct);
                 case "reinstall":
-                    logger.LogError("'{Cmd}' arrives in Phase 3.", command);
-                    return Task.FromResult(2);
+                    return ReinstallCommand.RunAsync(args, logger, ct);
                 case "dev":
                     return Task.FromResult(DevCommand.Run(args, loggerFactory, logger));
                 default:
@@ -67,8 +67,8 @@ namespace Hina.CLI
             Console.WriteLine("  list                   List installed apps");
             Console.WriteLine("  info <name>            Show details for an installed app");
             Console.WriteLine("  which <name>           Print the install path of an app");
-            Console.WriteLine("  update [name]          Update one app or all (coming in Phase 3)");
-            Console.WriteLine("  reinstall <name>       Reinstall an app (coming in Phase 3)");
+            Console.WriteLine("  update [name]          Update one app or all installed apps");
+            Console.WriteLine("  reinstall <name>       Reinstall an app (use --rotate-key for key change)");
             Console.WriteLine("  dev <subcommand>       Advanced patcher commands");
             Console.WriteLine();
             Console.WriteLine("Global flags:");

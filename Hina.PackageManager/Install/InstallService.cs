@@ -155,7 +155,7 @@ namespace Hina.PackageManager.Install
                 {
                     string evidence = await _platform.CreateMenuShortcut(entry, appDir, ct);
                     tx.RecordShellEntry(evidence);
-                    newApp.ShellEntries.Add(evidence);
+                    newApp.ShellEntries.Add(new ShellEntryRecord { Id = entry.Id, Evidence = evidence });
                 }
 
                 // [13] Post-install hooks in declared order.

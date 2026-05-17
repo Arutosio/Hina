@@ -22,16 +22,26 @@ namespace Hina.PackageManager.Registry
         public DateTimeOffset InstalledAt { get; set; }
         public DateTimeOffset LastUpdatedAt { get; set; }
 
-        // Side-effects that were created on disk. Read at uninstall time
-        // because the live descriptor cannot be trusted to still list the
+        // Side-effects that were created on disk. Read at uninstall and update
+        // time because the live descriptor cannot be trusted to still list the
         // same hooks/entries.
         public List<HookEvidence> ExecutedHooks { get; set; } = new List<HookEvidence>();
-        public List<string> ShellEntries { get; set; } = new List<string>();
+        public List<ShellEntryRecord> ShellEntries { get; set; } = new List<ShellEntryRecord>();
     }
 
     public sealed class HookEvidence
     {
         public string Action { get; set; } = string.Empty;
+        // Stable identity computed from the descriptor at apply time; used by UpdateService
+        // to diff against the new descriptor's hooks. Optional for backwards-compat with
+        // pre-Phase-3 registries.
+        public string Identity { get; set; } = string.Empty;
+        public string Evidence { get; set; } = string.Empty;
+    }
+
+    public sealed class ShellEntryRecord
+    {
+        public string Id { get; set; } = string.Empty;
         public string Evidence { get; set; } = string.Empty;
     }
 }

@@ -49,9 +49,9 @@ namespace Hina.PackageManager.Install
                 catch { /* fail-soft */ }
             }
 
-            foreach (string evidence in app.ShellEntries)
+            foreach (ShellEntryRecord entry in app.ShellEntries)
             {
-                try { await _platform.RemoveMenuShortcut(evidence, ct); }
+                try { await _platform.RemoveMenuShortcut(entry.Evidence, ct); }
                 catch { /* fail-soft */ }
             }
 

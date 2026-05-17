@@ -17,6 +17,7 @@ namespace Hina.PackageManager.Json
     [JsonSerializable(typeof(Registry.Registry))]
     [JsonSerializable(typeof(Registry.InstalledApp))]
     [JsonSerializable(typeof(Registry.HookEvidence))]
+    [JsonSerializable(typeof(Registry.ShellEntryRecord))]
     public partial class PackageManagerJsonContext : JsonSerializerContext { }
 
     [JsonSourceGenerationOptions(WriteIndented = true)]

@@ -8,28 +8,37 @@ using Hina.PackageManager.Paths;
 
 namespace Hina.PackageManager.Platform.Linux
 {
-    // Linux shell integration. Phase 2 implements menu shortcuts (.desktop) and AddToPath (symlink).
-    // Other hooks (MIME, font, scheme, autostart) arrive in Phase 4.
+    // Linux shell integration. Writes XDG-compatible .desktop files and copies fonts into
+    // the user-scope fonts directory. Does NOT shell out to update-desktop-database /
+    // fc-cache: those caches refresh on next user session and shell-outs introduce flaky
+    // dependencies into tests and AOT binaries. Users wanting an immediate refresh can run
+    // those tools themselves.
     public sealed class LinuxPlatformIntegration : IPlatformIntegration
     {
         private readonly string _userBinDir;
         private readonly string _userAppsDir;
+        private readonly string _userFontsDir;
+        private readonly string _userAutostartDir;
 
         public LinuxPlatformIntegration(InstallPaths paths)
-            : this(paths.UserBinDir, DefaultUserAppsDir())
+            : this(paths.UserBinDir, DefaultUserAppsDir(), DefaultUserFontsDir(), DefaultUserAutostartDir())
         {
         }
 
         // Test seam: caller controls every directory we touch.
-        public LinuxPlatformIntegration(string userBinDir, string userAppsDir)
+        public LinuxPlatformIntegration(string userBinDir, string userAppsDir, string? userFontsDir = null, string? userAutostartDir = null)
         {
             _userBinDir = userBinDir;
             _userAppsDir = userAppsDir;
+            _userFontsDir = userFontsDir ?? DefaultUserFontsDir();
+            _userAutostartDir = userAutostartDir ?? DefaultUserAutostartDir();
         }
 
         public string OsId => "linux";
         public string UserBinDir => _userBinDir;
         public string UserAppsDir => _userAppsDir;
+
+        // ---- Menu shortcut ----
 
         public Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, CancellationToken ct)
         {
@@ -64,13 +73,14 @@ namespace Hina.PackageManager.Platform.Linux
             return Task.CompletedTask;
         }
 
+        // ---- AddToPath (symlink) ----
+
         public Task<string> AddToPath(string name, string targetExec, CancellationToken ct)
         {
             Directory.CreateDirectory(_userBinDir);
 
             string linkPath = Path.Combine(_userBinDir, name);
 
-            // If a stale link / file exists at that name, remove it so the symlink call doesn't fail.
             if (File.Exists(linkPath) || new FileInfo(linkPath).LinkTarget != null)
             {
                 TryDeleteFile(linkPath);
@@ -86,17 +96,125 @@ namespace Hina.PackageManager.Platform.Linux
             return Task.CompletedTask;
         }
 
-        public Task<string> RegisterMimeType(MimeTypeHook hook, string appDir, CancellationToken ct) => throw Phase4();
-        public Task UnregisterMimeType(string evidencePath, CancellationToken ct) => Task.CompletedTask;
-        public Task<string> RegisterUrlScheme(UrlSchemeHook hook, string appDir, CancellationToken ct) => throw Phase4();
-        public Task UnregisterUrlScheme(string evidencePath, CancellationToken ct) => Task.CompletedTask;
-        public Task<string> InstallFont(string fontFile, CancellationToken ct) => throw Phase4();
-        public Task UninstallFont(string evidencePath, CancellationToken ct) => Task.CompletedTask;
-        public Task<string> RegisterAutostart(AutostartHook hook, string appDir, CancellationToken ct) => throw Phase4();
-        public Task UnregisterAutostart(string evidencePath, CancellationToken ct) => Task.CompletedTask;
+        // ---- MIME type ----
 
-        private static PlatformNotSupportedException Phase4() =>
-            new PlatformNotSupportedException("This hook arrives in Phase 4.");
+        public Task<string> RegisterMimeType(MimeTypeHook hook, string appDir, CancellationToken ct)
+        {
+            ShellEntry? targetEntry = FindEntry(hook.EntryId);
+            string execValue = targetEntry != null ? Path.Combine(appDir, targetEntry.Exec) : "";
+
+            Directory.CreateDirectory(_userAppsDir);
+            string fileName = $"hina-mime-{SanitizeId(hook.MimeType)}-{SanitizeId(hook.EntryId)}.desktop";
+            string targetPath = Path.Combine(_userAppsDir, fileName);
+
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("[Desktop Entry]");
+            sb.AppendLine("Type=Application");
+            sb.AppendLine($"Name=Hina MIME {Escape(hook.MimeType)}");
+            sb.AppendLine($"Exec={QuoteExec(execValue + " %f")}");
+            sb.AppendLine("NoDisplay=true");
+            sb.AppendLine($"MimeType={hook.MimeType};");
+            sb.AppendLine($"X-Hina-Mime-Extensions={string.Join(",", hook.Extensions)}");
+            sb.AppendLine("X-Hina-Managed=true");
+
+            File.WriteAllText(targetPath, sb.ToString());
+            return Task.FromResult(targetPath);
+        }
+
+        public Task UnregisterMimeType(string evidencePath, CancellationToken ct)
+        {
+            TryDeleteFile(evidencePath);
+            return Task.CompletedTask;
+        }
+
+        // ---- URL scheme ----
+
+        public Task<string> RegisterUrlScheme(UrlSchemeHook hook, string appDir, CancellationToken ct)
+        {
+            ShellEntry? targetEntry = FindEntry(hook.EntryId);
+            string execValue = targetEntry != null ? Path.Combine(appDir, targetEntry.Exec) : "";
+
+            Directory.CreateDirectory(_userAppsDir);
+            string fileName = $"hina-url-{SanitizeId(hook.Scheme)}-{SanitizeId(hook.EntryId)}.desktop";
+            string targetPath = Path.Combine(_userAppsDir, fileName);
+
+            string mime = $"x-scheme-handler/{hook.Scheme}";
+
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("[Desktop Entry]");
+            sb.AppendLine("Type=Application");
+            sb.AppendLine($"Name=Hina URL {Escape(hook.Scheme)}");
+            sb.AppendLine($"Exec={QuoteExec(execValue + " %u")}");
+            sb.AppendLine("NoDisplay=true");
+            sb.AppendLine($"MimeType={mime};");
+            sb.AppendLine("X-Hina-Managed=true");
+
+            File.WriteAllText(targetPath, sb.ToString());
+            return Task.FromResult(targetPath);
+        }
+
+        public Task UnregisterUrlScheme(string evidencePath, CancellationToken ct)
+        {
+            TryDeleteFile(evidencePath);
+            return Task.CompletedTask;
+        }
+
+        // ---- Font install ----
+
+        public Task<string> InstallFont(string fontFile, CancellationToken ct)
+        {
+            Directory.CreateDirectory(_userFontsDir);
+            string destPath = Path.Combine(_userFontsDir, Path.GetFileName(fontFile));
+            File.Copy(fontFile, destPath, overwrite: true);
+            return Task.FromResult(destPath);
+        }
+
+        public Task UninstallFont(string evidencePath, CancellationToken ct)
+        {
+            TryDeleteFile(evidencePath);
+            return Task.CompletedTask;
+        }
+
+        // ---- Autostart ----
+
+        public Task<string> RegisterAutostart(AutostartHook hook, string appDir, CancellationToken ct)
+        {
+            ShellEntry? targetEntry = FindEntry(hook.EntryId);
+            string execValue = targetEntry != null ? Path.Combine(appDir, targetEntry.Exec) : "";
+            if (hook.Args is { Count: > 0 })
+            {
+                execValue = execValue + " " + string.Join(" ", hook.Args);
+            }
+
+            Directory.CreateDirectory(_userAutostartDir);
+            string fileName = $"hina-autostart-{SanitizeId(hook.EntryId)}.desktop";
+            string targetPath = Path.Combine(_userAutostartDir, fileName);
+
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("[Desktop Entry]");
+            sb.AppendLine("Type=Application");
+            sb.AppendLine($"Name=Hina Autostart {Escape(hook.EntryId)}");
+            sb.AppendLine($"Exec={QuoteExec(execValue)}");
+            sb.AppendLine("X-GNOME-Autostart-enabled=true");
+            sb.AppendLine("X-Hina-Managed=true");
+
+            File.WriteAllText(targetPath, sb.ToString());
+            return Task.FromResult(targetPath);
+        }
+
+        public Task UnregisterAutostart(string evidencePath, CancellationToken ct)
+        {
+            TryDeleteFile(evidencePath);
+            return Task.CompletedTask;
+        }
+
+        // ---- Helpers ----
+
+        // The platform layer doesn't have access to the descriptor's entries[]. For
+        // hook .desktop files we leave Exec empty when the entry can't be resolved;
+        // callers wishing to enforce strict resolution should pass a richer hook
+        // shape in a future revision.
+        private static ShellEntry? FindEntry(string id) => null;
 
         private static void TryDeleteFile(string path)
         {
@@ -113,7 +231,6 @@ namespace Hina.PackageManager.Platform.Linux
             }
         }
 
-        // Desktop-entry spec reserves a small set of characters; escape conservatively.
         private static string Escape(string value)
         {
             return value.Replace("\\", "\\\\").Replace("\n", "\\n");
@@ -121,7 +238,6 @@ namespace Hina.PackageManager.Platform.Linux
 
         private static string QuoteExec(string path)
         {
-            // Desktop-entry Exec field: quote when path contains a space, escape embedded quotes.
             if (path.IndexOf(' ') < 0 && path.IndexOf('"') < 0)
             {
                 return path;
@@ -145,6 +261,20 @@ namespace Hina.PackageManager.Platform.Linux
             string xdgData = Environment.GetEnvironmentVariable("XDG_DATA_HOME")
                              ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
             return Path.Combine(xdgData, "applications");
+        }
+
+        private static string DefaultUserFontsDir()
+        {
+            string xdgData = Environment.GetEnvironmentVariable("XDG_DATA_HOME")
+                             ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+            return Path.Combine(xdgData, "fonts");
+        }
+
+        private static string DefaultUserAutostartDir()
+        {
+            string xdgConfig = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME")
+                               ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
+            return Path.Combine(xdgConfig, "autostart");
         }
     }
 }

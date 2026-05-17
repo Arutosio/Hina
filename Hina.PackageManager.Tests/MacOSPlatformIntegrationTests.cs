@@ -1,0 +1,178 @@
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
+using Hina.PackageManager.Descriptor;
+using Hina.PackageManager.Platform.MacOS;
+
+namespace Hina.PackageManager.Tests
+{
+    // MacOSPlatformIntegration is pure-file-write — bundles, plists, symlinks. Tests
+    // run on Linux + macOS the same way, rooted at TempDir.
+    public class MacOSPlatformIntegrationTests : IDisposable
+    {
+        private readonly string _tempDir;
+        private readonly string _binDir;
+        private readonly string _appsDir;
+        private readonly string _fontsDir;
+        private readonly string _launchAgentsDir;
+        private readonly MacOSPlatformIntegration _platform;
+        private readonly bool _supportsSymlinks;
+
+        public MacOSPlatformIntegrationTests()
+        {
+            _tempDir = Path.Combine(Path.GetTempPath(), "hina-macos-" + Path.GetRandomFileName());
+            _binDir = Path.Combine(_tempDir, "bin");
+            _appsDir = Path.Combine(_tempDir, "Applications");
+            _fontsDir = Path.Combine(_tempDir, "Fonts");
+            _launchAgentsDir = Path.Combine(_tempDir, "LaunchAgents");
+            Directory.CreateDirectory(_tempDir);
+            _platform = new MacOSPlatformIntegration(_binDir, _appsDir, _fontsDir, _launchAgentsDir);
+            _supportsSymlinks = !RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(_tempDir))
+            {
+                try { Directory.Delete(_tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
+        public async Task CreateMenuShortcut_WritesAppBundleWithInfoPlist()
+        {
+            if (!_supportsSymlinks) return;
+
+            string appDir = Path.Combine(_tempDir, "payload");
+            string execAbs = Path.Combine(appDir, "bin", "demo");
+            Directory.CreateDirectory(Path.GetDirectoryName(execAbs)!);
+            File.WriteAllText(execAbs, "#!/bin/sh\necho hi\n");
+
+            ShellEntry entry = new ShellEntry { Id = "main", Name = "Demo App", Exec = "bin/demo" };
+            string bundlePath = await _platform.CreateMenuShortcut(entry, appDir, CancellationToken.None);
+
+            Assert.EndsWith(".app", bundlePath);
+            Assert.True(Directory.Exists(bundlePath));
+            Assert.True(File.Exists(Path.Combine(bundlePath, "Contents", "Info.plist")));
+
+            string plist = File.ReadAllText(Path.Combine(bundlePath, "Contents", "Info.plist"));
+            Assert.Contains("<key>CFBundleName</key>", plist);
+            Assert.Contains("Demo App", plist);
+            Assert.Contains("<key>CFBundleExecutable</key>", plist);
+            Assert.Contains("X-Hina-Managed", plist);
+
+            // Bundle's MacOS/<exec> symlinks to the real exec.
+            string bundleExec = Path.Combine(bundlePath, "Contents", "MacOS", "Demo App");
+            Assert.NotNull(new FileInfo(bundleExec).LinkTarget);
+        }
+
+        [Fact]
+        public async Task RemoveMenuShortcut_DeletesBundleRecursively_AndIsIdempotent()
+        {
+            if (!_supportsSymlinks) return;
+
+            string appDir = Path.Combine(_tempDir, "payload2");
+            string execAbs = Path.Combine(appDir, "exec");
+            Directory.CreateDirectory(appDir);
+            File.WriteAllText(execAbs, "x");
+
+            string bundlePath = await _platform.CreateMenuShortcut(
+                new ShellEntry { Id = "x", Name = "Removable", Exec = "exec" },
+                appDir,
+                CancellationToken.None);
+
+            await _platform.RemoveMenuShortcut(bundlePath, CancellationToken.None);
+            Assert.False(Directory.Exists(bundlePath));
+
+            await _platform.RemoveMenuShortcut(bundlePath, CancellationToken.None);
+        }
+
+        [Fact]
+        public async Task AddToPath_CreatesSymlinkInUserBinDir()
+        {
+            if (!_supportsSymlinks) return;
+
+            string targetExec = Path.Combine(_tempDir, "src", "demo");
+            Directory.CreateDirectory(Path.GetDirectoryName(targetExec)!);
+            File.WriteAllText(targetExec, "x");
+
+            string evidence = await _platform.AddToPath("demo", targetExec, CancellationToken.None);
+
+            Assert.Equal(Path.Combine(_binDir, "demo"), evidence);
+            Assert.Equal(targetExec, new FileInfo(evidence).LinkTarget);
+        }
+
+        [Fact]
+        public async Task RegisterMimeType_WritesHelperBundleWithDocumentTypes()
+        {
+            string bundlePath = await _platform.RegisterMimeType(
+                new MimeTypeHook { MimeType = "application/x-demo", Extensions = { ".demo" }, EntryId = "main" },
+                "/apps/demo",
+                CancellationToken.None);
+
+            Assert.EndsWith(".app", bundlePath);
+            string plist = File.ReadAllText(Path.Combine(bundlePath, "Contents", "Info.plist"));
+            Assert.Contains("<key>CFBundleDocumentTypes</key>", plist);
+            Assert.Contains("application/x-demo", plist);
+            Assert.Contains("<string>demo</string>", plist);  // extension without leading dot
+        }
+
+        [Fact]
+        public async Task RegisterUrlScheme_WritesHelperBundleWithUrlTypes()
+        {
+            string bundlePath = await _platform.RegisterUrlScheme(
+                new UrlSchemeHook { Scheme = "demoapp", EntryId = "main" },
+                "/apps/demo",
+                CancellationToken.None);
+
+            string plist = File.ReadAllText(Path.Combine(bundlePath, "Contents", "Info.plist"));
+            Assert.Contains("<key>CFBundleURLTypes</key>", plist);
+            Assert.Contains("<string>demoapp</string>", plist);
+        }
+
+        [Fact]
+        public async Task InstallFont_CopiesFileIntoFontsDir()
+        {
+            string src = Path.Combine(_tempDir, "src", "Foo.ttf");
+            Directory.CreateDirectory(Path.GetDirectoryName(src)!);
+            byte[] payload = new byte[] { 0xDE, 0xAD, 0xBE, 0xEF };
+            File.WriteAllBytes(src, payload);
+
+            string evidence = await _platform.InstallFont(src, CancellationToken.None);
+
+            Assert.Equal(Path.Combine(_fontsDir, "Foo.ttf"), evidence);
+            Assert.Equal(payload, File.ReadAllBytes(evidence));
+        }
+
+        [Fact]
+        public async Task RegisterAutostart_WritesLaunchAgentPlistWithRunAtLoad()
+        {
+            string evidence = await _platform.RegisterAutostart(
+                new AutostartHook { EntryId = "demo-daemon", Args = new() { "--quiet" } },
+                "/apps/demo",
+                CancellationToken.None);
+
+            Assert.Equal(_launchAgentsDir, Path.GetDirectoryName(evidence));
+            string plist = File.ReadAllText(evidence);
+            Assert.Contains("<key>Label</key>", plist);
+            Assert.Contains("com.hina.autostart.demo-daemon", plist);
+            Assert.Contains("<key>RunAtLoad</key>", plist);
+            Assert.Contains("<true/>", plist);
+            Assert.Contains("<string>--quiet</string>", plist);
+        }
+
+        [Fact]
+        public async Task UnregisterAutostart_DeletesPlist_AndIsIdempotent()
+        {
+            string evidence = await _platform.RegisterAutostart(
+                new AutostartHook { EntryId = "rm" }, "/apps/x", CancellationToken.None);
+
+            await _platform.UnregisterAutostart(evidence, CancellationToken.None);
+            Assert.False(File.Exists(evidence));
+
+            await _platform.UnregisterAutostart(evidence, CancellationToken.None);
+        }
+    }
+}

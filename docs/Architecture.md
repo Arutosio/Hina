@@ -6,26 +6,33 @@ This document describes the internal architecture of Hina, including the project
 
 ## Project Structure
 
-Hina is organized into four projects plus a test project:
+Hina is organized into five projects plus two test projects:
 
 | Project | Type | Description |
 |---------|------|-------------|
 | **Hina.Core** | Class Library | Core engine: patching, rsync matching, manifest handling, chunking, hashing, signing, compression, networking, configuration |
-| **Hina.CLI** | Console App | Command-line client patcher that wraps Hina.Core |
+| **Hina.PackageManager** | Class Library | Package-manager layer: descriptor schema, validator, signer/fetcher, install/uninstall/update/reinstall services, hook executor, per-OS shell integration, local registry |
+| **Hina.CLI** | Console App (NativeAOT) | End-user CLI (`hina install/update/uninstall/list/info/which/reinstall`) plus developer subcommands under `hina dev <cmd>` |
 | **Hina.Builder** | Console App | Manifest generator and chunk store builder |
 | **Hina.Host** | ASP.NET Core App | Lightweight static file server for serving patches |
-| **Hina.Core.Tests** | xUnit Test Project | Unit and integration tests for the core library |
+| **Hina.Core.Tests** | xUnit Test Project | Unit and integration tests for the core engine |
+| **Hina.PackageManager.Tests** | xUnit Test Project | Unit + cross-platform integration tests for the package-manager layer |
 
 ### Dependency Graph
 
 ```
-Hina.CLI ---------> Hina.Core
-Hina.Builder -----> Hina.Core
-Hina.Host           (standalone, serves static files)
-Hina.Core.Tests --> Hina.Core
+Hina.CLI ------------------> Hina.PackageManager ----> Hina.Core
+Hina.CLI ------------------> Hina.Core                 (also direct, for `hina dev`)
+Hina.Builder --------------> Hina.Core
+Hina.Host                     (standalone, serves static files)
+Hina.Core.Tests -----------> Hina.Core
+Hina.PackageManager.Tests -> Hina.PackageManager + Hina.Core
 ```
 
-Hina.CLI and Hina.Builder both depend on Hina.Core. Hina.Host is a standalone ASP.NET Core application that serves the build output as static files and has no dependency on Hina.Core.
+`Hina.CLI` references both `Hina.PackageManager` (for the top-level package commands)
+and `Hina.Core` directly (for the patcher subcommands surfaced under `hina dev`).
+`Hina.PackageManager` reuses `Hina.Core.PatchClient` for delta chunk downloads — no
+parallel engine. `Hina.Host` remains a standalone ASP.NET Core application.
 
 ---
 
@@ -111,14 +118,104 @@ Chunk store generation for the builder.
 
 | Class | Purpose |
 |-------|---------|
-| `PatcherConfig` | Immutable config object with all patcher settings (init-only properties) |
-| `PatcherConfigLoader` | Loads PatcherConfig from a JSON file using System.Text.Json |
+| `PatcherConfig` | Config object with all patcher settings (mutable `set` properties so source-generated JSON deserialization runs default-initializers correctly under NativeAOT) |
+| `PatcherConfigLoader` | Loads PatcherConfig from a JSON file using `System.Text.Json` source-generation |
 
 ### IO/
 
 | Class | Purpose |
 |-------|---------|
 | `PathUtils` | Internal helper for normalizing manifest paths and converting to OS paths |
+
+### Json/
+
+| Class | Purpose |
+|-------|---------|
+| `HinaCoreJsonContext` | Source-generated JSON metadata for `Manifest`, `PatcherConfig`, `PatchJournal`. Default-mode context used for reads (case-insensitive). |
+| `HinaCoreIndentedJsonContext` | Source-gen context with `WriteIndented = true` for human-readable writes. |
+| `HinaCoreCanonicalJsonContext` | Source-gen context for `ManifestSigner`'s canonical bytes (compact, null-ignoring) — keeps signatures byte-deterministic. |
+
+---
+
+## Hina.PackageManager Library Internals
+
+The `Hina.PackageManager` library layers a package-manager surface on top of `Hina.Core`. It does not implement its own patching engine — `InstallService` and `UpdateService` reuse `Hina.Core.PatchClient` directly.
+
+### Descriptor/
+
+The `hina.app.json` wire format authored by publishers.
+
+| Class | Purpose |
+|-------|---------|
+| `AppDescriptor` | Root type: name, version, publisher, baseUrl, channel, publicKey, exec map, entries, postInstall hooks, descriptorSignature |
+| `ExecMap` | Per-OS path to the app's main executable (`windows`, `linux`, `macos`) |
+| `ShellEntry` | A single shell-visible entry (Start Menu item / `.desktop` / macOS bundle alias) |
+| `HookAction` (+ subtypes) | Discriminated polymorphic hook with `AddToPathHook`, `MimeTypeHook`, `UrlSchemeHook`, `InstallFontHook`, `AutostartHook` |
+| `DescriptorSignature` | Ed25519 signature carrier on the descriptor itself (parallel to `ManifestSignature` on the manifest) |
+| `DescriptorParser` | Parse / serialize via source-gen JSON; produces canonical bytes for signing |
+| `DescriptorValidator` | Validates schema invariants (name regex, SemVer, HTTPS, path traversal, entry-id references) |
+| `DescriptorSigner` | Ed25519 sign / verify over canonical bytes (NSec, same algorithm as `ManifestSigner`) |
+| `DescriptorFetcher` | HTTP fetcher with size cap and read-stream limiter |
+
+### Registry/
+
+The local index of installed apps.
+
+| Class | Purpose |
+|-------|---------|
+| `Registry` | Root JSON object: `apps: Dictionary<name, InstalledApp>` |
+| `InstalledApp` | Per-app row: pinned baseUrl/publicKey/channel, install path, descriptorUrl, executed hooks, shell entries |
+| `HookEvidence` | What was actually written on disk by a hook — read at uninstall time |
+| `ShellEntryRecord` | Id-keyed pair so update-flow diff can replace renamed/removed entries |
+| `RegistryStore` | Atomic read/write (tmp + fsync + rename); uses source-gen JSON |
+| `LockManager` | `FileShare.None` exclusive lock on `registry.json.lock` with exponential-backoff retry |
+
+### Install/
+
+End-to-end orchestration services.
+
+| Class | Purpose |
+|-------|---------|
+| `InstallService` | `hina install <url>` flow: fetch → validate → verify signature → TOFU prompt → PatchClient.PatchAsync → shell entries → hooks → registry write |
+| `UninstallService` | `hina uninstall <name>` flow: replay hook evidence in reverse, remove shell entries, delete app dir + descriptor cache, update registry |
+| `UpdateService` | `hina update [name]` flow: re-fetch descriptor, verify against pinned key, diff hooks/entries by identity, delta-patch, apply diff |
+| `ReinstallService` | `hina reinstall <name>` flow: fetch + key-rotation check **before** uninstall, then uninstall + install |
+| `InstallTransaction` | Journals each side-effect so a mid-flight exception unwinds in reverse |
+| `InstallOptions` / `UpdateOptions` / `InstallResult` / `UpdateResult` / `UninstallResult` / `TrustPrompt` | Plain data shapes for service inputs / outputs |
+
+### Hooks/
+
+| Class | Purpose |
+|-------|---------|
+| `HookExecutor` | Dispatches `HookAction` to the active `IPlatformIntegration`; returns `HookEvidence` |
+| `HookIdentity` | Stable string identity per hook (action + key fields) — drives the update-flow diff |
+
+### Platform/
+
+Per-OS shell integration. Pure interface + factory + three implementations.
+
+| Class | Purpose |
+|-------|---------|
+| `IPlatformIntegration` | All shell-touching operations: shortcuts, AddToPath, MIME, URL scheme, font, autostart (+ `Remove`/`Unregister` counterparts). Returns "evidence" strings stored in the registry. |
+| `PlatformIntegrationFactory` | Picks the right impl via `RuntimeInformation.IsOSPlatform` |
+| `LinuxPlatformIntegration` | `.desktop` files in `~/.local/share/applications`, symlinks in `~/.local/bin`, fonts in `~/.local/share/fonts`, `~/.config/autostart/*.desktop` |
+| `WindowsPlatformIntegration` | `.lnk` shortcuts via COM `IShellLink`, `.cmd` shims in `%LOCALAPPDATA%\Hina\bin` (PATH-extended), HKCU registry for MIME/URL/autostart, per-user fonts |
+| `MacOSPlatformIntegration` | Minimal `.app` bundles in `~/Applications` with generated Info.plist, helper bundles with `CFBundleDocumentTypes` / `CFBundleURLTypes`, `~/Library/Fonts`, `~/Library/LaunchAgents/*.plist` |
+| `Windows/ShellLink.cs` | Hand-rolled COM interop (`IShellLinkW` + `IPersistFile`) using the `[CoClass]` idiom; AOT-compatible |
+
+### Paths/
+
+| Class | Purpose |
+|-------|---------|
+| `InstallPaths` | Per-OS roots (apps dir, registry file, descriptor cache, user bin dir). `ForCurrentOs()` for production, `ForRoot(temp)` for tests |
+
+### Json/
+
+| Class | Purpose |
+|-------|---------|
+| `PackageManagerJsonContext` | Source-gen JSON for `AppDescriptor`, polymorphic `HookAction` subtypes, `Registry`. Case-insensitive read + camelCase write naming policy. |
+| `PackageManagerIndentedJsonContext` | Same types but `WriteIndented = true` for `hina.app.json` / `registry.json` output |
+| `PackageManagerCanonicalJsonContext` | Canonical bytes for `DescriptorSigner` — kept stable across versions so existing signatures keep verifying |
 
 ---
 
@@ -231,6 +328,96 @@ The client (`PatchClient`) downloads the manifest, matches local data, and appli
  [2] Delete all *.hina.tmp files
  [3] Delete all *.hina.bak files
  [4] Delete .hina/journal.json
+```
+
+### Install Flow (Hina.PackageManager)
+
+```
+ hina install <url-to-hina.app.json>
+        |
+ [1] DescriptorFetcher.FetchAsync (5 MB cap, 30s timeout)
+        |
+ [2] DescriptorParser.Parse (source-gen JSON)
+        |
+ [3] DescriptorValidator.Validate (name/SemVer/HTTPS/no path traversal/entry refs)
+        |
+ [4] DescriptorSigner.Verify against descriptor.publicKey
+        |
+ [5] TOFU prompt: publisher + Ed25519 fingerprint → user accept/reject
+        |
+ [6] LockManager.AcquireAsync (registry-wide exclusive)
+        |
+ [7] If already installed → abort, suggest reinstall/update
+        |
+ [8] Create InstallPaths.AppDir(name) (must be empty)
+        |
+ [9] PatchClient.PatchAsync(appDir) — downloads chunks, verifies manifest signature with descriptor.publicKey
+        |
+ [10] Sanity check: descriptor.Exec[os] exists on disk
+        |
+ [11] CreateMenuShortcut for each entry → record evidence
+        |
+ [12] HookExecutor.ApplyAsync in declared order → record HookEvidence
+        |
+ [13] Write registry entry; cache descriptor
+        |
+ [14] Release lock
+
+ On any exception in [8]-[13]: InstallTransaction.RollbackAsync unwinds
+ in reverse — hooks undone, shortcuts removed, AppDir deleted, registry untouched.
+```
+
+### Update Flow (Hina.PackageManager)
+
+```
+ hina update [name]
+        |
+ For each app (one or all):
+        |
+ [1] Re-fetch descriptor from registry.descriptorUrl
+        |
+ [2] Validate; verify signature against REGISTRY publicKey (pin)
+     A mismatch is a potential key-rotation attack → fail unless --rotate-key
+     (handled by ReinstallService, not UpdateService)
+        |
+ [3] If descriptor.version == registry.installedVersion and not --force,
+     return AlreadyUpToDate
+        |
+ [4] Compute diffs by stable identity:
+        hooksToAdd      = descriptor.postInstall  \  registry.executedHooks
+        hooksToRemove   = registry.executedHooks  \  descriptor.postInstall
+        entriesToAdd / entriesToRemove similarly (by entry.id)
+        |
+ [5] Snapshot pre-update registry entry
+        |
+ [6] PatchClient.PatchAsync(appDir, Backup=true)
+     On failure → PatchClient.RollbackAsync + restore registry snapshot
+        |
+ [7] Apply hooksToRemove (Undo), entriesToRemove
+ [8] Apply hooksToAdd, entriesToAdd
+        |
+ [9] Update registry: installedVersion, lastUpdatedAt, hooks, entries
+ [10] Refresh descriptor cache
+```
+
+### Uninstall Flow (Hina.PackageManager)
+
+```
+ hina uninstall <name>
+        |
+ [1] LockManager.AcquireAsync
+ [2] Load registry; missing app → exit 0 (idempotent)
+ [3] For each entry in registry.executedHooks (REVERSE order):
+        HookExecutor.UndoAsync(evidence)            fail-soft
+ [4] For each entry in registry.shellEntries:
+        Platform.RemoveMenuShortcut(evidence)        fail-soft
+ [5] Delete AppDir recursively                       fail-soft
+ [6] Delete DescriptorCache(name)                    fail-soft
+ [7] Remove app from registry, write atomically
+ [8] Release lock
+
+ Critical: hook side-effects are read from the registry, NEVER from
+ the live descriptor — a newer descriptor might list different hooks.
 ```
 
 ---

@@ -1,6 +1,10 @@
 # Configuration Reference
 
-This document covers all configuration options for Hina, including the client patcher config, host config, config file resolution, and environment-specific examples.
+This document covers all configuration options for Hina, including the client patcher config (`hina.config.json`), host config (`hina.host.json`), config file resolution, and environment-specific examples.
+
+> The package-manager descriptor `hina.app.json` (the file a publisher hosts at the
+> URL `hina install` consumes) is a different file with its own schema. See the
+> [Package Manager Guide](PackageManager-Guide.md) for the descriptor reference.
 
 ---
 

@@ -348,6 +348,170 @@ Or create a `hina.config.json` with `baseUrl` and use `--dir` on the command lin
 
 ---
 
+## Package Manager Errors
+
+These cover the end-user `hina install / update / uninstall / reinstall` surface.
+For the patcher-level errors (which still apply to `hina dev <cmd>`), see the
+scenarios above.
+
+### PM1. Descriptor Signature Does Not Match Its Declared publicKey
+
+**Error:**
+
+```
+Install failed: Descriptor signature does not match its declared publicKey.
+```
+
+**Causes:**
+
+- The `hina.app.json` was signed with a different private key than the one declared
+  in its own `publicKey` field.
+- The descriptor was edited (BOM added, whitespace mangled, content re-flowed) by
+  a CDN or proxy after signing.
+
+**Solutions:**
+
+- Re-sign with the matching private key: `hina dev sign-descriptor --in hina.app.json --key <priv.b64>`.
+- Serve the descriptor with `Content-Type: application/json` and disable any
+  CDN-edge HTML rewriting / pretty-printing.
+
+---
+
+### PM2. Descriptor Signature Does Not Match the Pinned Publisher Key
+
+**Error:**
+
+```
+demo: Descriptor signature does not match the pinned publisher key. Use `hina reinstall --rotate-key` to accept a new key.
+```
+
+**Cause:**
+
+The publisher rotated their Ed25519 signing key. Hina pinned the original key at
+install time and refuses to silently accept a new one through `hina update`.
+
+**Solutions:**
+
+- If you trust the rotation, run `hina reinstall <name> --rotate-key` to accept
+  the new key explicitly. The new key is pinned in place of the old one.
+- If you did not expect a key rotation, **do not** rotate — verify with the
+  publisher through an out-of-band channel first.
+
+---
+
+### PM3. App Is Already Installed
+
+**Error:**
+
+```
+Install failed: 'demo' is already installed (version 1.0.0). Use `hina update` or `hina reinstall`.
+```
+
+**Cause:**
+
+`hina install` is the fresh-install path. It refuses to clobber an existing app.
+
+**Solutions:**
+
+- Update with `hina update <name>` to apply newer versions.
+- Use `hina reinstall <name>` to re-run the full install pipeline against the
+  cached descriptor URL.
+
+---
+
+### PM4. Install Directory Already Exists and Is Not Empty
+
+**Error:**
+
+```
+Install failed: Install directory '/Users/me/Library/Application Support/Hina/Apps/demo' already exists and is not empty.
+```
+
+**Cause:**
+
+A previous install or manual file placement left non-Hina files at the target
+location. Hina refuses to overwrite content it didn't create.
+
+**Solutions:**
+
+- Inspect the directory; if it's leftover from a crashed previous install, delete
+  it manually then re-run `hina install <url>`.
+- Confirm no other app or tool is using the same path.
+
+---
+
+### PM5. TOFU Rejection (User Declined the Publisher Key)
+
+**Symptom:**
+
+```
+Install cancelled.
+```
+
+The prompt was:
+
+```
+  App:        FooEdit
+  Publisher:  Foo Software Ltd.
+  Source:     https://foo.example/hina.app.json
+  Key fpr:    8e1f:a2c4:3b6d:5d09
+
+Trust this publisher and install? [y/N]
+```
+
+**Cause:**
+
+The user typed `n` (or anything other than `y` / `yes`) at the trust prompt.
+
+**Solutions:**
+
+- Re-run with confidence in the publisher's identity. Compare the fingerprint
+  against the value published on the vendor's official website.
+- For scripted / CI installs, redirect stdin or pre-accept programmatically
+  via the `InstallOptions.OnFirstTimeTrust` callback when embedding
+  `Hina.PackageManager` directly.
+
+---
+
+### PM6. Descriptor Validation Failed
+
+**Error:**
+
+```
+Descriptor validation failed:
+  - name 'Foo' must match ^[a-z][a-z0-9-]{1,63}$.
+  - baseUrl 'http://...' must be HTTPS (got 'http'). Pass --allow-insecure to permit HTTP.
+  - exec must define at least one platform.
+```
+
+**Cause:**
+
+The descriptor breaks the schema invariants documented in
+[Package Manager Guide](PackageManager-Guide.md).
+
+**Solutions:**
+
+- Fix the listed errors and re-sign with `hina dev sign-descriptor`.
+- For local-testing-only HTTP, pass `--allow-insecure` on `hina install` (do not
+  use in production).
+
+---
+
+### PM7. Update Reports "AlreadyUpToDate" but I Just Re-Built
+
+**Cause:**
+
+`UpdateService` skips work when `descriptor.version == registry.installedVersion`.
+If you re-built the app without bumping the version, no update is performed.
+
+**Solutions:**
+
+- Bump the descriptor `version` (SemVer) before each release.
+- For local iteration, run `hina update <name> --force` to re-run the patcher
+  regardless of version.
+
+---
+
 ## Reporting Bugs
 
 If you encounter an issue not covered here:

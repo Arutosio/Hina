@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Hina.Core.Json;
 
 namespace Hina.Core.Patching
 {
@@ -25,7 +26,7 @@ namespace Hina.Core.Patching
                 return null;
             }
             string json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<PatchJournal>(json);
+            return JsonSerializer.Deserialize(json, HinaCoreJsonContext.Default.PatchJournal);
         }
 
         public async Task SaveAsync(string path)
@@ -33,7 +34,7 @@ namespace Hina.Core.Patching
             Directory.CreateDirectory(Path.GetDirectoryName(path) ?? ".");
             using (FileStream fs = File.Create(path))
             {
-                await JsonSerializer.SerializeAsync(fs, this, new JsonSerializerOptions { WriteIndented = true });
+                await JsonSerializer.SerializeAsync(fs, this, HinaCoreIndentedJsonContext.Default.PatchJournal);
             }
         }
     }

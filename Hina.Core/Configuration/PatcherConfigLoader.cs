@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using Hina.Core.Json;
 
 namespace Hina.Core.Configuration
 {
@@ -9,11 +10,7 @@ namespace Hina.Core.Configuration
         public static PatcherConfig Load(string path)
         {
             string json = File.ReadAllText(path);
-            var options = new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            };
-            PatcherConfig? config = JsonSerializer.Deserialize<PatcherConfig>(json, options);
+            PatcherConfig? config = JsonSerializer.Deserialize(json, HinaCoreJsonContext.Default.PatcherConfig);
             return config ?? new PatcherConfig();
         }
     }

@@ -1,5 +1,6 @@
 using System;
 using System.Text.Json;
+using Hina.Core.Json;
 using NSec.Cryptography;
 
 namespace Hina.Core.Manifest
@@ -52,12 +53,7 @@ namespace Hina.Core.Manifest
                 Signature = null
             };
 
-            var options = new JsonSerializerOptions
-            {
-                WriteIndented = false,
-                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-            };
-            return JsonSerializer.SerializeToUtf8Bytes(unsigned, options);
+            return JsonSerializer.SerializeToUtf8Bytes(unsigned, HinaCoreCanonicalJsonContext.Default.Manifest);
         }
     }
 }

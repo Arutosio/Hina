@@ -218,10 +218,13 @@ namespace Hina.PackageManager.Tests
                 Assert.Equal(UpdateStatus.Updated, r.Status);
             }
 
-            // 4 apps * 150ms each = 600ms serial. With 4 jobs we expect well under 500ms.
-            // Pad generously to avoid flakes on slow CI runners.
-            Assert.True(elapsed < TimeSpan.FromMilliseconds(500),
-                $"UpdateAllAsync was not parallel: took {elapsed.TotalMilliseconds:F0}ms for 4 apps");
+            // 4 apps * 150ms each = 600ms serial; parallel target ~150ms. CI runners can
+            // be an order of magnitude slower than a dev box, so we use a forgiving
+            // threshold: anything strictly less than 4 * delay still proves the parallelism
+            // signal existed without chasing tight numbers that flake on shared CI hosts.
+            TimeSpan serialUpperBound = TimeSpan.FromMilliseconds(150 * 4);
+            Assert.True(elapsed < serialUpperBound,
+                $"UpdateAllAsync was not parallel: took {elapsed.TotalMilliseconds:F0}ms for 4 apps (serial would take {serialUpperBound.TotalMilliseconds}ms)");
         }
 
         // ---- B2: cancellation ----

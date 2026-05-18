@@ -133,9 +133,11 @@ jobs:
       # Windows: build a per-user .msi via WiX 4 (installed as a dotnet global tool).
       # Drops hina.exe into %LOCALAPPDATA%\Hina\bin and prepends that to user PATH.
       # No admin required (Scope="perUser" in packaging/wix/hina.wxs).
+      # WiX 5+ introduced the OSMF EULA acceptance requirement (error WIX7015) that
+      # breaks unattended CI builds. Pin to 4.x.
       - name: Install WiX 4
         if: matrix.os == 'windows-latest'
-        run: dotnet tool install --global wix
+        run: dotnet tool install --global wix --version 4.0.6
 
       - name: Build Windows .msi
         if: matrix.os == 'windows-latest'

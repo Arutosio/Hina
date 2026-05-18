@@ -6,12 +6,65 @@ This document describes Hina's security model in detail, including manifest sign
 
 ## Overview
 
-Hina provides two layers of integrity protection:
+Hina provides three layers of integrity protection:
 
-1. **Manifest signing** -- Ed25519 digital signatures ensure the manifest has not been tampered with since it was built.
-2. **Chunk and file hashing** -- SHA256 hashes verify that every chunk and every reconstructed file matches the original build output.
+1. **Descriptor signing** -- Ed25519 signatures on the publisher's `hina.app.json` descriptor. Trust-on-first-use (TOFU) on initial install, key-pinning on every subsequent update.
+2. **Manifest signing** -- Ed25519 digital signatures ensure the manifest has not been tampered with since it was built. The same publisher key signs both the descriptor and the manifest.
+3. **Chunk and file hashing** -- SHA256 hashes verify that every chunk and every reconstructed file matches the original build output.
 
-Together, these mechanisms protect against man-in-the-middle attacks, corrupted downloads, and partial update failures.
+Together, these mechanisms protect against man-in-the-middle attacks, corrupted downloads, partial update failures, and silent key-rotation attacks against installed apps.
+
+---
+
+## Ed25519 Descriptor Signing (Package Manager)
+
+When a user runs `hina install <descriptor-url>`, the descriptor (a small
+`hina.app.json` file the publisher hosts at any URL) is verified before any file
+is touched on disk.
+
+### The TOFU + Pinning Model
+
+```
+First install (`hina install <url>`):
+  1. Fetch descriptor.
+  2. Verify descriptorSignature against the descriptor's OWN declared publicKey.
+  3. Show the user: publisher name + Ed25519 key fingerprint.
+  4. On accept, pin the publicKey in the local registry.
+
+Every subsequent update (`hina update [name]`):
+  1. Re-fetch descriptor from registry.descriptorUrl.
+  2. Verify signature against the REGISTRY-PINNED publicKey (NOT the descriptor's).
+  3. Mismatch is REJECTED — potential silent key-rotation attack.
+
+Legitimate key rotation (`hina reinstall <name> --rotate-key`):
+  1. Fetch new descriptor, validate.
+  2. With --rotate-key the new declared publicKey replaces the pin.
+  3. Uninstall + fresh install bind the new key.
+```
+
+This means a publisher whose Ed25519 private key is later stolen cannot push a
+malicious update through `hina update` to existing installs — the pinned key acts
+as a tripwire. The user must consciously re-approve the new key.
+
+### Signing a Descriptor
+
+Use the CLI helper instead of writing your own signing tool:
+
+```shell
+hina dev sign-descriptor --in hina.app.json --key ./keys/myapp.key.b64
+```
+
+The command validates the descriptor, attaches an Ed25519 `descriptorSignature`,
+and rewrites the file in place (or to `--out <path>`). The signed payload is the
+descriptor with the `descriptorSignature` field stripped (canonical bytes), so
+sign and verify produce identical inputs.
+
+### Single Key, Two Layers
+
+The same Ed25519 key pair signs both the descriptor and the downstream
+`manifest.json`. The descriptor's `publicKey` field doubles as the
+`TrustedPublicKey` passed to `PatchClient` when downloading chunks. One key, one
+fingerprint to compare against the publisher's website, two signatures verified.
 
 ---
 

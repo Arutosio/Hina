@@ -34,6 +34,7 @@ Hina delivers fast, bandwidth-efficient updates by computing rolling checksums a
 For detailed guides beyond this README, see the [`docs/`](docs/) directory:
 
 - [Architecture](docs/Architecture.md) -- project structure, class diagrams, design decisions
+- [Package Manager Guide](docs/PackageManager-Guide.md) -- `hina install/update/uninstall`, descriptor schema, hooks, signature chain
 - [Configuration](docs/Configuration.md) -- full reference for all config properties
 - [Builder Guide](docs/Builder-Guide.md) -- manifest generation, CDC vs fixed chunking, CI/CD
 - [CLI Guide](docs/CLI-Guide.md) -- all commands, flags, exit codes, common workflows
@@ -88,7 +89,35 @@ Client startup
 
 ---
 
-## Quick Start
+## Installing the Hina CLI
+
+Each GitHub release ships:
+
+| OS | Recommended | Fallback |
+|----|-------------|----------|
+| **macOS** (Apple Silicon / Intel) | `Hina-macos-arm64.pkg` / `Hina-macos-x64.pkg` — double-click | `Hina-macos-*.tar.gz` + `./install.sh` |
+| **Debian / Ubuntu / derivatives** | `Hina-linux-x64.deb` — `sudo dpkg -i Hina-linux-x64.deb` | `Hina-linux-x64.tar.gz` + `./install.sh` |
+| **Arch / Fedora / openSUSE / any other Linux** | `Hina-linux-x64.tar.gz` + `./install.sh` (no root needed; lands in `~/.local/bin`) | — |
+| **Windows** (x64 / arm64) | `Hina-windows-x64.msi` (or `arm64.msi`) — double-click | `scoop install https://github.com/Arutosio/Hina/releases/latest/download/hina.json`, or `Hina-windows-*.zip` + `install.bat` |
+
+> On Arch Linux specifically there isn't (yet) a PKGBUILD on AUR; the
+> `.tar.gz + install.sh` flow works the same way as on every other distro and
+> requires no root.
+
+After install, verify with:
+
+```shell
+hina --help
+hina install <url-to-hina.app.json>
+```
+
+See the [Package Manager Guide](docs/PackageManager-Guide.md) for the full
+end-user workflow and the [CLI Guide](docs/CLI-Guide.md) for every command +
+flag.
+
+---
+
+## Quick Start (developer build)
 
 ```shell
 # 1. Build the solution

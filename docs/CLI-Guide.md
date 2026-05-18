@@ -1,307 +1,369 @@
 # CLI Guide
 
-The Hina CLI (`Hina.CLI`) is the client-side patcher. It downloads manifests, compares local files, downloads missing chunks, and applies updates. This document covers all commands, flags, exit codes, and common workflows.
+The Hina CLI (`Hina.CLI`) ships as a NativeAOT single-file binary (~7.5 MB) on Windows, Linux, and macOS. The top-level surface is the cross-platform package manager. The original patcher commands moved under `hina dev <subcommand>` for app developers, CI, and troubleshooting.
+
+For the end-user package-manager flow (install / update / uninstall / list / info / which / reinstall) see [Package Manager Guide](PackageManager-Guide.md). This document is the full CLI reference: every command, every flag, every exit code.
 
 ---
 
-## General Usage
+## Command Tree
 
 ```
-hina <command> --dir <path> --base <url> [options]
-```
+hina <command> [args] [global flags]
 
-The CLI requires at minimum a command, a target directory (`--dir`), and a patch server URL (either `--base` flag or `baseUrl` in config).
+Top-level (end-user package manager):
+  install <url>             Install an app from a hina.app.json URL
+  uninstall <name>          Remove an installed app
+  list                      List installed apps
+  info <name>               Show app details
+  which <name>              Print the install path of an app
+  update [name]             Update one app or every installed app
+  reinstall <name>          Reinstall an app
+  verify [name]             Reconcile registry against on-disk state
+
+hina dev <subcommand> (patcher engine + publisher helpers):
+  check       --dir <path> --base <url>
+  patch       --dir <path> --base <url>
+  verify      --dir <path> --base <url>
+  rollback    --dir <path> --base <url>
+  cleanup     --dir <path> --base <url>
+  sign-descriptor --in <hina.app.json> --key <ed25519.priv.b64> [--out <path>]
+
+Global flags:
+  -v, --verbose      Enable debug logging
+  --allow-insecure   Permit HTTP descriptor URLs (install only)
+  --help             Show help
+```
 
 ---
 
-## Commands
+## End-User Package Commands
 
-### check
+### install
 
-Compares local files against the remote manifest without downloading anything. Reports whether updates are available.
-
-**What it does:**
-
-1. Fetches the manifest from the server.
-2. Verifies the manifest signature (if `trustedPublicKey` is configured).
-3. For each file in the manifest, computes the local file's SHA-256 hash.
-4. If any file is missing or has a different hash, reports that an update is available.
+Install an app from the URL of its `hina.app.json` descriptor.
 
 ```shell
-hina check --dir ./client --base https://patch.example.com/
+hina install https://example.com/foo.app.json
 ```
 
-**Output:** Prints either "Already up to date." or "Missing files." / "Out of date files."
+On first install Hina prompts for trust-on-first-use (TOFU) approval of the publisher's Ed25519 key fingerprint. On accept the key is pinned in the local registry; subsequent updates verify against it.
 
----
+**Flags:** `--allow-insecure` (permit HTTP), global `-v`/`--verbose`.
 
-### patch
+**Exit codes:** `0` success, `1` user-cancelled, `2` failed.
 
-Downloads and applies all missing or changed files. This is the primary command for updating a client.
+### uninstall
 
-**What it does:**
-
-1. Fetches the manifest from the server.
-2. Verifies the manifest signature (if configured).
-3. Checks for an incomplete previous patch (journal). If found, rolls back first.
-4. Creates a new patch journal.
-5. For each file in the manifest:
-   - Skips files whose local hash already matches.
-   - Performs rsync rolling checksum matching against the local file.
-   - Builds the updated file from matched local chunks and downloaded remote chunks.
-   - Verifies the rebuilt file hash (if `verify` is enabled).
-   - Backs up the original file (if `backup` is enabled).
-   - Swaps the new file into place.
-6. On failure, rolls back all changes from backups.
+Remove an installed app and every side-effect Hina created.
 
 ```shell
-hina patch --dir ./client --base https://patch.example.com/
+hina uninstall foo
 ```
 
----
+Replays the registry's recorded hook evidence in reverse, removes shell entries, deletes the app dir + descriptor cache, and updates the registry. Idempotent: re-running on an already-removed name exits 0.
+
+### list
+
+List every installed app with its version and source URL.
+
+```shell
+hina list
+```
+
+### info
+
+Show detailed info for one installed app: install path, channel, pinned key fingerprint, hooks executed, shell entries created, timestamps.
+
+```shell
+hina info foo
+```
+
+### which
+
+Print the install directory of one installed app.
+
+```shell
+hina which foo
+```
+
+### update
+
+Update one app or every installed app. Each update re-fetches the descriptor, verifies the signature against the pinned key, computes hook/entry diffs, and runs a delta patch via `PatchClient` (reuses local chunks).
+
+```shell
+hina update          # all installed apps
+hina update foo      # just one
+hina update --force  # run patcher even if version unchanged
+```
+
+**Exit codes:** `0` all updated (or already up to date), `2` at least one failure.
+
+### reinstall
+
+Reinstall an app from its registered descriptor URL.
+
+```shell
+hina reinstall foo
+hina reinstall foo --rotate-key   # accept a publisher key change
+```
+
+Without `--rotate-key`, reinstall refuses to proceed if the new descriptor declares a different publisher key than the one pinned at original install time (silent key-rotation guard). The check happens before uninstall, so a refusal leaves the install intact.
 
 ### verify
 
-Verifies the integrity of all local files against the manifest hashes. Does not download or modify any files.
-
-**What it does:**
-
-1. Fetches the manifest from the server.
-2. Verifies the manifest signature (if configured).
-3. For each file in the manifest, computes the local file's SHA-256 hash.
-4. Reports any missing files or hash mismatches.
+Reconcile the local registry against on-disk state. Detects orphans created when
+the user manually deletes an app directory, breaks a symlink, or removes a
+shortcut. `--repair` cleans the orphans.
 
 ```shell
-hina verify --dir ./client --base https://patch.example.com/
+hina verify                # report orphans across all apps
+hina verify foo            # one app
+hina verify --repair       # report + clean
 ```
 
-**Output:** Prints "OK" if all files match, or "Broken files detected." with details.
+Detection is read-only; only `--repair` mutates anything. Exit code `0` when all
+inspected apps are healthy or when `--repair` succeeds; `1` when orphans were
+found and not repaired; `2` on internal error.
 
 ---
 
-### rollback
+## hina dev — Developer / Publisher Subcommands
 
-Restores files from backups created during the last patch operation.
+The original patcher engine commands. End users of an app should not normally need these — they're for app developers building releases, CI, troubleshooting, and signing descriptors.
 
-**What it does:**
+### dev check
 
-1. Loads the patch journal from `.hina/journal.json` in the target directory.
-2. For each journal entry, copies the `.hina.bak` file back to the original path.
-3. Deletes the backup files and the journal.
+Compare local files against a remote manifest without downloading.
 
 ```shell
-hina rollback --dir ./client --base https://patch.example.com/
+hina dev check --dir ./client --base https://patch.example.com/
 ```
 
-If no journal exists, rollback completes silently with no changes.
+**Exit codes:** `0` up to date, `1` updates available, `2` missing args.
+
+### dev patch
+
+Download and apply all missing or changed files.
+
+```shell
+hina dev patch --dir ./client --base https://patch.example.com/
+```
+
+Behavior:
+
+1. Fetch manifest; verify signature if `--pubkey` or config `trustedPublicKey` is set.
+2. Roll back any incomplete previous patch (journal recovery).
+3. For each file: skip if hash matches, rsync-match against local chunks, download missing chunks, verify rebuilt file, backup original, atomic swap.
+
+**Exit codes:** `0` success, `2` failure (automatic rollback attempted).
+
+### dev verify
+
+Verify integrity of all local files against the manifest. No downloads, no modifications.
+
+```shell
+hina dev verify --dir ./client --base https://patch.example.com/
+```
+
+**Exit codes:** `0` all good, `3` broken files detected.
+
+### dev rollback
+
+Restore files from backups created during the last `patch` operation.
+
+```shell
+hina dev rollback --dir ./client --base https://patch.example.com/
+```
+
+No-op if no journal exists.
+
+### dev cleanup
+
+Remove leftover `*.hina.tmp`, `*.hina.bak`, and `.hina/journal.json`.
+
+```shell
+hina dev cleanup --dir ./client --base https://patch.example.com/
+```
+
+### dev sign-descriptor
+
+Publisher-side helper to attach an Ed25519 signature to a `hina.app.json`.
+
+```shell
+hina dev sign-descriptor --in hina.app.json --key ./keys/myapp.key.b64
+hina dev sign-descriptor --in hina.app.json --key ./keys/myapp.key.b64 --out signed.json
+```
+
+Validates the descriptor against the schema, attaches `descriptorSignature`, writes back (in-place if `--out` is omitted). Generate the key pair with `Hina.Builder keygen`.
 
 ---
 
-### cleanup
+## Flags Reference
 
-Removes leftover temporary and backup files from a previous patch.
+### Top-level package commands
 
-**What it does:**
+| Flag | Applies to | Description |
+|------|------------|-------------|
+| `--allow-insecure` | `install` | Permit HTTP descriptor URLs (default: HTTPS only) |
+| `--rotate-key` | `reinstall` | Accept a publisher key change |
+| `--force` | `update` | Re-run patcher even if descriptor version unchanged |
+| `--jobs N` | `update` | Update N apps concurrently (default 4) |
+| `--repair` | `verify` | Remove orphan registry entries + dangling side-effects |
+| `--retries N` | `install`, `update` | Max retry attempts per HTTP request (default 8) |
+| `--connect-timeout SEC` | `install`, `update` | TCP connect timeout in seconds (default 10) |
+| `--request-timeout SEC` | `install`, `update` | Overall request timeout in seconds (default 60) |
+| `-v`, `--verbose` | all | Enable debug logging |
 
-1. Recursively scans the target directory.
-2. Deletes all files ending in `.hina.tmp`.
-3. Deletes all files ending in `.hina.bak`.
-4. Deletes the patch journal (`.hina/journal.json`).
+### Network knobs
+
+The three network flags exist for flaky / mobile / changing-IP connections where
+the engine's defaults bail too early. Hina already pools and recycles its HTTP
+connections every 60 s (forces DNS refresh after an IP change), but you can push
+the retry budget higher and the timeouts tighter when packets get lost
+frequently:
 
 ```shell
-hina cleanup --dir ./client --base https://patch.example.com/
+hina install <url> --retries 20 --connect-timeout 5 --request-timeout 30
+hina update      --retries 20 --connect-timeout 5 --request-timeout 30
 ```
 
-Use this after a successful patch to reclaim disk space from backup files, or after a failed patch when you do not want to rollback.
+Smaller timeouts = faster failure = faster retry against the next route.
 
----
+### Cancellation (Ctrl-C)
 
-## Flags
+Every long-running command honours Ctrl-C cooperatively:
+
+- **First press**: cancellation token fires. In-flight install / update rolls
+  back via PatchClient + InstallTransaction; the registry is left in its
+  pre-operation state. You should see "Cancellation requested. Press Ctrl-C
+  again to force-exit." in stderr.
+- **Second press**: the runtime kills the process. The journal at
+  `<appDir>/.hina/journal.json` is left in place; the next `hina update` /
+  `hina install` detects it, rolls back any partial changes, and the rsync
+  matcher reuses every chunk that already made it to disk — effectively a
+  free resume.
+
+### hina dev patch / check / verify / rollback / cleanup
 
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
-| `--dir` | Yes | -- | Target directory to patch. This is the root of your application or game installation. |
-| `--base` | Conditional | From config | Patch server base URL. Required if not set in the config file. Must include a trailing slash. |
-| `--channel` | No | `"stable"` | Release channel. Determines which manifest to fetch (`manifest.json` for stable, `manifest.<channel>.json` for others). |
-| `--config` | No | -- | Path to a `hina.config.json` file. If not provided, the CLI looks for `hina.config.json` in the current working directory. |
-| `--pubkey` | No | -- | Path to an Ed25519 public key file (`.pub.b64`) for manifest signature verification. Overrides `trustedPublicKey` in config. |
-| `-v`, `--verbose` | No | off | Enable debug-level logging. Shows detailed output for each step of the patch process. |
-| `--help` | No | -- | Display help information and exit. |
+| `--dir <path>` | Yes | — | Target directory to operate on |
+| `--base <url>` | Yes if not in config | From config | Patch server base URL (trailing slash required) |
+| `--channel <name>` | No | `stable` | Release channel — selects `manifest.json` or `manifest.<channel>.json` |
+| `--config <path>` | No | `hina.config.json` in cwd | JSON config file path |
+| `--pubkey <b64>` | No | From config | Trusted Ed25519 public key for manifest verification |
+| `-v`, `--verbose` | No | off | Debug logging |
 
-### Flag Precedence
+### hina dev sign-descriptor
 
-Command-line flags override config file values:
-
-| Setting | Resolution order |
-|---------|-----------------|
-| Base URL | `--base` flag > `baseUrl` in config > default (`http://localhost/`) |
-| Channel | `--channel` flag > `channel` in config > default (`"stable"`) |
-| Public key | `--pubkey` flag > `trustedPublicKey` in config > none |
-| Config file | `--config` flag > `hina.config.json` in cwd > defaults |
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--in <path>` | Yes | Input `hina.app.json` |
+| `--key <path>` | Yes | Ed25519 private key file (base64) |
+| `--out <path>` | No | Output path (default: overwrite input) |
 
 ---
 
-## Exit Codes
+## Exit Codes (Summary)
 
 | Code | Command | Meaning |
 |------|---------|---------|
-| `0` | `check` | No updates available (already up to date) |
-| `1` | `check` | Updates are available |
-| `0` | `patch` | Patch applied successfully |
-| `2` | `patch` | Patch failed |
-| `0` | `verify` | All files verified successfully |
-| `3` | `verify` | Verification failed (broken files detected) |
-| `0` | `rollback` | Rollback completed successfully |
-| `0` | `cleanup` | Cleanup completed successfully |
-| `2` | (any) | Missing required arguments or unknown command |
-
-These exit codes can be used in scripts and CI/CD pipelines to branch on the result.
+| `0` | any | Success |
+| `0` | `dev check` | Already up to date |
+| `1` | `dev check` | Updates available |
+| `1` | `install` | User cancelled at TOFU prompt |
+| `1` | `info` / `which` | App not installed |
+| `2` | any | Missing required args, invalid input, or operation failed |
+| `3` | `dev verify` | Verification failed (broken files detected) |
 
 ---
 
-## Verbose Mode and Debugging
+## Verbose Mode
 
-Pass `-v` or `--verbose` to enable debug-level log output. This reveals:
+`-v` or `--verbose` sets the log level to `Debug`. Useful for diagnosing install /
+update failures and seeing rsync match counts during `dev patch`.
 
-- Each file being checked or patched.
-- Rsync match results (how many chunks matched locally vs. needed download).
-- Individual chunk download events.
-- Hash verification results.
-- Backup and journal operations.
-- Retry attempts with delay information.
-
-**Example verbose output:**
+Example verbose output:
 
 ```
-info: Hina.CLI[0] Starting patch in ./client
-dbug: Hina.CLI[0] File already up to date, skipping data/config.json
-info: Hina.CLI[0] Patching file game.exe
-dbug: Hina.CLI[0] Rsync matched 14/16 chunks for game.exe
-dbug: Hina.CLI[0] Downloading chunk 3 for game.exe
-dbug: Hina.CLI[0] Downloading chunk 11 for game.exe
-dbug: Hina.CLI[0] Verification passed for game.exe
-info: Hina.CLI[0] Patch completed successfully, 1 files applied
+info: hina[0] Fetching descriptor https://example.com/foo.app.json
+dbug: Hina.Core.Patching.PatchClient[0] Starting patch in /Users/me/.../Apps/foo
+dbug: Hina.Core.Patching.PatchClient[0] Rsync matched 14/16 chunks for bin/foo
+dbug: Hina.Core.Patching.PatchClient[0] Downloading chunk 3 for bin/foo
+info: hina[0] Installed foo 1.0.0 → /Users/me/.../Apps/foo
 ```
 
 ---
 
 ## Common Workflows
 
-### First Install (No Local Files)
-
-When patching a fresh directory with no existing files, every chunk is downloaded from the server. No rsync matching occurs because there are no local files to match against.
+### Install a published app (end user)
 
 ```shell
-mkdir ./client
-hina patch --dir ./client --base https://patch.example.com/ --pubkey ./keys/myapp.pub.b64
+hina install https://foo.example/hina.app.json
+hina list
+hina info fooedit
 ```
 
-### Regular Update
-
-For subsequent updates, the patcher compares local files against the new manifest. Matching chunks are reused from local files, and only changed chunks are downloaded.
+### Update everything once a day (cron)
 
 ```shell
-hina patch --dir ./client --base https://patch.example.com/ --pubkey ./keys/myapp.pub.b64
+hina update
 ```
 
-### Check Before Patching
+Exit code 2 means at least one app failed; check per-app messages in stderr.
 
-Use `check` in a launcher UI to show whether an update is available before prompting the user.
+### Build, sign, and ship a release (publisher)
 
 ```shell
-hina check --dir ./client --base https://patch.example.com/
-# Exit code 0 = up to date, 1 = update available
+# 1. Build the chunk store + manifest with the private key
+dotnet run --project Hina.Builder -- build \
+  --input ./build \
+  --out ./patch \
+  --base https://cdn.foo.example/foo/ \
+  --version 1.0.0 \
+  --sign-key ./keys/foo.key.b64
+
+# 2. Upload ./patch to your CDN at https://cdn.foo.example/foo/
+
+# 3. Author and sign the descriptor
+hina dev sign-descriptor --in hina.app.json --key ./keys/foo.key.b64
+
+# 4. Host hina.app.json at any URL. Tell users:
+#    hina install https://foo.example/hina.app.json
 ```
 
-### Verify and Repair
+### Verify and repair a corrupted install (advanced)
 
-Run `verify` to detect corrupted files, then `patch` to repair them.
+`hina` doesn't expose `verify` at the top level for installed apps — use the
+patcher engine directly with the app's recorded baseUrl from `hina info`:
 
 ```shell
-# Step 1: Check integrity
-hina verify --dir ./client --base https://patch.example.com/
-# Exit code 3 means broken files
-
-# Step 2: Repair by re-patching (will download only broken chunks)
-hina patch --dir ./client --base https://patch.example.com/
+hina info foo                                  # note the BaseUrl
+hina dev verify --dir <install path> --base <BaseUrl>
+hina dev patch  --dir <install path> --base <BaseUrl>   # re-patch only broken chunks
 ```
 
-### Rollback a Bad Update
+### Scripted update with error handling
 
-If an update causes problems, rollback to the previous version from backups.
-
-```shell
-hina rollback --dir ./client --base https://patch.example.com/
-```
-
-This restores all files that were backed up during the last patch. Rollback is only available if `backup` was enabled in the configuration (it is by default).
-
-### Clean Up After a Successful Patch
-
-After confirming an update works, remove backup files to save disk space.
-
-```shell
-hina cleanup --dir ./client --base https://patch.example.com/
-```
-
-### Using a Config File
-
-Instead of passing flags on every invocation, create a config file.
-
-```shell
-# Create hina.config.json in the working directory
-cat > hina.config.json << 'EOF'
-{
-  "baseUrl": "https://patch.example.com/",
-  "trustedPublicKey": "BASE64_ED25519_PUBLIC_KEY",
-  "concurrency": 4,
-  "verify": true,
-  "backup": true
-}
-EOF
-
-# Now commands only need --dir
-hina check --dir ./client
-hina patch --dir ./client
-hina verify --dir ./client
-```
-
-### Beta Channel
-
-Test pre-release updates by specifying a channel.
-
-```shell
-hina patch --dir ./client --base https://patch.example.com/ --channel beta
-```
-
-This fetches `manifest.beta.json` instead of `manifest.json`. The builder must have produced a separate manifest for the beta channel.
-
-### Scripted Update with Error Handling
-
-```shell
+```bash
 #!/bin/bash
 set -e
 
-CLIENT_DIR="./client"
-BASE_URL="https://patch.example.com/"
-PUBKEY="./keys/myapp.pub.b64"
-
-# Check for updates
-hina check --dir "$CLIENT_DIR" --base "$BASE_URL" --pubkey "$PUBKEY"
-CHECK_EXIT=$?
-
-if [ $CHECK_EXIT -eq 0 ]; then
-    echo "Already up to date."
-    exit 0
-fi
-
-# Apply patch
-if hina patch --dir "$CLIENT_DIR" --base "$BASE_URL" --pubkey "$PUBKEY"; then
-    echo "Patch applied successfully."
-    hina cleanup --dir "$CLIENT_DIR" --base "$BASE_URL"
-else
-    echo "Patch failed, rolling back."
-    hina rollback --dir "$CLIENT_DIR" --base "$BASE_URL"
+if ! hina update; then
+    echo "One or more updates failed; see above."
     exit 1
 fi
+echo "All apps up to date."
 ```
+
+---
+
+## See Also
+
+- [Package Manager Guide](PackageManager-Guide.md) — descriptor schema, hooks, signature chain, per-OS install paths, troubleshooting
+- [Builder Guide](Builder-Guide.md) — `dotnet run --project Hina.Builder -- build/keygen` details
+- [Configuration](Configuration.md) — `hina.config.json` reference for `hina dev <cmd>` flows
+- [Security](Security.md) — Ed25519 chain, TOFU + pinning, threat model
+- [Troubleshooting](Troubleshooting.md) — error scenarios with causes and fixes

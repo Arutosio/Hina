@@ -1,0 +1,211 @@
+using System;
+using System.IO;
+using System.Threading;
+using Hina.Core.Configuration;
+using Hina.Core.Patching;
+using Hina.PackageManager.Descriptor;
+using Microsoft.Extensions.Logging;
+
+namespace Hina.CLI.Commands
+{
+    // `hina dev <subcommand>` — original patcher operations, hidden from end-user help
+    // but still available for app developers, CI, and troubleshooting.
+    internal static class DevCommand
+    {
+        public static int Run(string[] args, ILoggerFactory loggerFactory, ILogger logger, CancellationToken ct = default)
+        {
+            if (args.Length < 2)
+            {
+                PrintHelp();
+                return 2;
+            }
+
+            string subcommand = args[1].ToLowerInvariant();
+            string? root = Args.GetValue(args, "--dir");
+            string? baseUrl = Args.GetValue(args, "--base");
+            string? configPath = Args.GetValue(args, "--config");
+            string? trustedKey = Args.GetValue(args, "--pubkey");
+            string? channel = Args.GetValue(args, "--channel");
+
+            if (subcommand == "help" || subcommand == "--help" || subcommand == "-h")
+            {
+                PrintHelp();
+                return 0;
+            }
+
+            // sign-descriptor doesn't operate on a patch dir; route it before the --dir check.
+            if (subcommand == "sign-descriptor")
+            {
+                return RunSignDescriptor(args, logger);
+            }
+
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                logger.LogError("Missing required --dir <path>");
+                return 2;
+            }
+
+            PatcherConfig config = LoadConfigOrDefault(configPath);
+            if (!string.IsNullOrWhiteSpace(baseUrl)) config = ApplyOverrides(config, new Uri(baseUrl), null, null);
+            if (!string.IsNullOrWhiteSpace(trustedKey)) config = ApplyOverrides(config, null, trustedKey, null);
+            if (!string.IsNullOrWhiteSpace(channel)) config = ApplyOverrides(config, null, null, channel);
+
+            if (string.IsNullOrWhiteSpace(config.BaseUrl?.ToString()))
+            {
+                logger.LogError("Missing required --base <url> or config baseUrl");
+                return 2;
+            }
+
+            ILogger<PatchClient> clientLogger = loggerFactory.CreateLogger<PatchClient>();
+            PatchClient client = new PatchClient(config, clientLogger);
+
+            switch (subcommand)
+            {
+                case "check":
+                    {
+                        var res = client.CheckAsync(root, ct).Result;
+                        logger.LogInformation("{Message}", res.Message);
+                        return res.IsUpdateAvailable ? 1 : 0;
+                    }
+                case "patch":
+                    {
+                        var res = client.PatchAsync(root, ct).Result;
+                        logger.LogInformation("{Message}", res.Message);
+                        return res.Success ? 0 : 2;
+                    }
+                case "verify":
+                    {
+                        var res = client.VerifyAsync(root, ct).Result;
+                        logger.LogInformation("{Message}", res.Message);
+                        return res.Success ? 0 : 3;
+                    }
+                case "rollback":
+                    client.RollbackAsync(root, ct).Wait();
+                    logger.LogInformation("Rollback complete");
+                    return 0;
+                case "cleanup":
+                    PatchCleanup.Cleanup(root);
+                    logger.LogInformation("Cleanup complete");
+                    return 0;
+                default:
+                    logger.LogError("Unknown dev subcommand: {Sub}", subcommand);
+                    PrintHelp();
+                    return 2;
+            }
+        }
+
+        private static void PrintHelp()
+        {
+            Console.WriteLine("hina dev <subcommand> [options]");
+            Console.WriteLine();
+            Console.WriteLine("Patcher subcommands (require --dir <path> --base <url>):");
+            Console.WriteLine("  check                Check for updates against a manifest");
+            Console.WriteLine("  patch                Apply updates from a manifest");
+            Console.WriteLine("  verify               Verify local files against a manifest");
+            Console.WriteLine("  rollback             Restore from the most recent backup");
+            Console.WriteLine("  cleanup              Remove leftover .hina.tmp/.bak files");
+            Console.WriteLine();
+            Console.WriteLine("Publisher subcommands:");
+            Console.WriteLine("  sign-descriptor --in <hina.app.json> --key <ed25519.priv.b64> [--out <path>]");
+            Console.WriteLine("                       Attach an Ed25519 signature to a descriptor file.");
+        }
+
+        // `hina dev sign-descriptor --in hina.app.json --key priv.b64 [--out path]`
+        // Publisher-side helper so the workflow doesn't require a custom signing tool.
+        // Generate the key pair with `dotnet run --project Hina.Builder -- keygen`.
+        private static int RunSignDescriptor(string[] args, ILogger logger)
+        {
+            string? inPath = Args.GetValue(args, "--in");
+            string? keyPath = Args.GetValue(args, "--key");
+            string? outPath = Args.GetValue(args, "--out");
+
+            if (string.IsNullOrWhiteSpace(inPath))
+            {
+                logger.LogError("Missing required --in <hina.app.json>");
+                return 2;
+            }
+            if (string.IsNullOrWhiteSpace(keyPath))
+            {
+                logger.LogError("Missing required --key <ed25519.priv.b64>");
+                return 2;
+            }
+            if (!File.Exists(inPath))
+            {
+                logger.LogError("Descriptor not found: {Path}", inPath);
+                return 2;
+            }
+            if (!File.Exists(keyPath))
+            {
+                logger.LogError("Private key not found: {Path}", keyPath);
+                return 2;
+            }
+
+            string target = string.IsNullOrWhiteSpace(outPath) ? inPath : outPath;
+
+            string json;
+            try { json = File.ReadAllText(inPath); }
+            catch (Exception ex) { logger.LogError("Read descriptor failed: {Message}", ex.Message); return 2; }
+
+            AppDescriptor descriptor;
+            try { descriptor = DescriptorParser.Parse(json); }
+            catch (Exception ex) { logger.LogError("Parse descriptor failed: {Message}", ex.Message); return 2; }
+
+            // Validate before signing so publishers get clear errors instead of shipping
+            // garbage that fails at install time.
+            ValidationResult v = DescriptorValidator.Validate(descriptor, new ValidationContext { AllowInsecure = true });
+            if (!v.IsValid)
+            {
+                logger.LogError("Descriptor validation failed:\n  - {Errors}", string.Join("\n  - ", v.Errors));
+                return 2;
+            }
+
+            byte[] privateKey;
+            try { privateKey = Convert.FromBase64String(File.ReadAllText(keyPath).Trim()); }
+            catch (Exception ex) { logger.LogError("Decode key failed: {Message}", ex.Message); return 2; }
+
+            try
+            {
+                DescriptorSigner.AttachSignature(descriptor, privateKey);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError("Sign failed: {Message}", ex.Message);
+                return 2;
+            }
+
+            try
+            {
+                File.WriteAllText(target, DescriptorParser.Serialize(descriptor));
+            }
+            catch (Exception ex)
+            {
+                logger.LogError("Write descriptor failed: {Message}", ex.Message);
+                return 2;
+            }
+
+            Console.WriteLine($"Signed descriptor → {target}");
+            return 0;
+        }
+
+        private static PatcherConfig LoadConfigOrDefault(string? configPath)
+        {
+            if (!string.IsNullOrWhiteSpace(configPath) && File.Exists(configPath)) return PatcherConfigLoader.Load(configPath);
+            if (File.Exists("hina.config.json")) return PatcherConfigLoader.Load("hina.config.json");
+            return new PatcherConfig();
+        }
+
+        private static PatcherConfig ApplyOverrides(PatcherConfig current, Uri? baseUrl, string? trustedKey, string? channel)
+        {
+            return new PatcherConfig
+            {
+                BaseUrl = baseUrl ?? current.BaseUrl,
+                Channel = channel ?? current.Channel,
+                Concurrency = current.Concurrency,
+                ChunkSize = current.ChunkSize,
+                Verify = current.Verify,
+                Backup = current.Backup,
+                TrustedPublicKey = trustedKey ?? current.TrustedPublicKey
+            };
+        }
+    }
+}

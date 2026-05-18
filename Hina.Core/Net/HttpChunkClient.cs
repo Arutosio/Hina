@@ -1,9 +1,11 @@
 using System;
 using System.IO;
 using System.Net.Http;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Hina.Core.Compression;
+using Hina.Core.Json;
 using Hina.Core.Manifest;
 using Microsoft.Extensions.Logging;
 
@@ -41,7 +43,7 @@ namespace Hina.Core.Net
                 {
                     using (Stream stream = await _http.GetStreamAsync(manifestUrl, token))
                     {
-                        Manifest.Manifest? manifest = await System.Text.Json.JsonSerializer.DeserializeAsync<Manifest.Manifest>(stream, cancellationToken: token);
+                        Manifest.Manifest? manifest = await JsonSerializer.DeserializeAsync(stream, HinaCoreJsonContext.Default.Manifest, token);
                         return manifest ?? new Manifest.Manifest();
                     }
                 }, ct);
@@ -49,7 +51,7 @@ namespace Hina.Core.Net
 
             using (Stream stream = await _http.GetStreamAsync(manifestUrl, ct))
             {
-                Manifest.Manifest? manifest = await System.Text.Json.JsonSerializer.DeserializeAsync<Manifest.Manifest>(stream, cancellationToken: ct);
+                Manifest.Manifest? manifest = await JsonSerializer.DeserializeAsync(stream, HinaCoreJsonContext.Default.Manifest, ct);
                 return manifest ?? new Manifest.Manifest();
             }
         }

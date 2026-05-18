@@ -4,9 +4,90 @@ All notable changes to Hina are documented in this file.
 
 ---
 
-## Current Version
+## Network Resilience (Round 3)
 
-Initial release of Hina, an rsync-like patcher for game clients and desktop applications.
+Targeted at flaky / mobile / changing-IP connections.
+
+- `RetryPolicy` gains a `maxDelayMs` cap (default 30 s); exponential backoff
+  no longer reaches multi-hour delays and the bit-shift no longer overflows
+  at attempt 32.
+- `PatcherConfig` defaults: `MaxRetries` 3 → 8. New `MaxRetryDelayMs`,
+  `ConnectTimeoutMs` (10 s), `RequestTimeoutMs` (60 s),
+  `PooledConnectionLifetimeMs` (60 s).
+- `PatchClient` and `SharedHttp` both build their `HttpClient` on a
+  `SocketsHttpHandler` so stale TCP sockets are recycled on schedule
+  (forces DNS refresh after an IP change) and the TCP handshake fails fast
+  on a black-holed route.
+- `DescriptorFetcher` default retries 3 → 5 with its own max-delay cap.
+- New `NetworkOptions` struct surfaces all four knobs through
+  `InstallOptions` and `UpdateOptions`.
+- New CLI flags `--retries N`, `--connect-timeout SEC`, `--request-timeout
+  SEC` on `install` and `update`. `hina --help` lists them.
+- Coverage: +7 NetworkResilienceTests (suite 208 → 215).
+
+## Stability Hardening (Round 2)
+
+Audit pass before round 3 closed six more issues.
+
+- `UpdateService` brackets the hook + entry add loops in a try/catch that
+  unwinds applied additions in reverse, best-effort re-applies the items it
+  removed at the start of the update, rolls back the patch via
+  `PatchClient.RollbackAsync`, and restores the previous registry snapshot.
+  Previously a hook failure mid-update (e.g. `registerAutostart` perm
+  denied) left the registry un-saved with the app dir patched and the
+  side-effects partially applied.
+- `Program.cs` wires Ctrl-C to a `CancellationTokenSource`. First press
+  signals cooperative cancellation (services unwind cleanly); a second
+  press lets the runtime kill the process.
+- `SharedHttp` singleton replaces per-service `new HttpClient()` calls,
+  killing the per-instance socket-exhaustion risk under high concurrency.
+- `DescriptorFetcher` retries transient HTTP failures (5xx / network) and
+  rejects non-http(s) schemes (`file://`, `ftp://`) up front.
+- `UninstallService` detects when `InstallPath` is a symlink and deletes
+  only the link, never walks into the target. Previously
+  `Directory.Delete(recursive: true)` on a symlink would wipe the target's
+  contents.
+- `UpdateService.UpdateAsync` narrows its registry-lock window so
+  `UpdateAllAsync` runs N updates in parallel (default 4) instead of
+  serialising on the lock. CLI flag `--jobs N` overrides.
+- Coverage: +9 Round2AuditTests (suite 199 → 208).
+
+## Package-Manager Release
+
+Hina pivots from a pure rsync-like patcher into a cross-platform package manager (Windows / Linux / macOS) built on top of the existing patching engine.
+
+### Package-Manager Surface (new)
+
+- **End-user CLI**: `hina install <url>`, `hina uninstall <name>`, `hina list`, `hina info <name>`, `hina which <name>`, `hina update [name]`, `hina reinstall <name>`. Per-user install (no admin / no sudo) into OS-standard directories.
+- **Publisher descriptor (`hina.app.json`)**: small JSON file the publisher hosts at any URL. Carries `name`, `version`, `baseUrl`, `publicKey`, `exec`, `entries`, `postInstall`, and a self-contained Ed25519 `descriptorSignature`.
+- **`hina dev sign-descriptor`**: CLI helper that signs a descriptor with an Ed25519 private key. Validates the descriptor before signing.
+- **Whitelisted declarative hooks**: `addToPath`, `registerMimeType`, `registerUrlScheme`, `installFont`, `registerAutostart` — all user-scope, no arbitrary scripts (no RCE from a compromised publisher).
+- **Shell integration** automatic on every OS: Start Menu shortcuts on Windows, `.desktop` files on Linux, minimal `.app` bundles on macOS.
+- **TOFU signature pinning**: first install prompts the user with the publisher's name and Ed25519 key fingerprint; the key is then pinned in the local registry. `hina update` verifies against the pinned key. `hina reinstall --rotate-key` is required to accept a publisher key change.
+- **Decentralized update model**: each installed app records its descriptor URL, baseUrl, channel, and public key in the local registry; `hina update` re-fetches descriptors and delta-patches via the existing rsync engine.
+
+### Internals
+
+- **New project**: `Hina.PackageManager` library — descriptor model, validator, signer, fetcher, install/uninstall/update/reinstall services, hook executor with reverse-order rollback, local registry with atomic JSON writes and file-locking, per-OS `IPlatformIntegration` (Windows / Linux / macOS).
+- **Hina.CLI verb tree**: top-level is now end-user package commands. The original patcher commands (`check`, `patch`, `verify`, `rollback`, `cleanup`) plus the new `sign-descriptor` live under `hina dev <subcommand>`.
+- **Hina.Core**: all JSON I/O migrated to `JsonSerializerContext` source-generation for NativeAOT compatibility. `PatcherConfig` switched from `init` to `set` properties for the same reason.
+
+### Build & Release
+
+- **NativeAOT**: `Hina.CLI` publishes as a single-file native binary (~7.5 MB on osx-arm64) with `InvariantGlobalization` and `StripSymbols`. No .NET runtime required on user machines.
+- **Per-OS release matrix**: `.github/workflows/release.yml` now uses `windows-latest`/`ubuntu-latest`/`macos-latest` runners for AOT cross-compile that's impossible across OS families. `Hina.Builder` and `Hina.Host` stay plain self-contained and continue to cross-compile from a single host.
+- **Publish scripts**: `scripts/publish-cli.sh` for Linux/macOS hosts, `scripts/publish-cli.ps1` for Windows hosts; each only emits artifacts the host can natively link.
+
+### Tests
+
+- Total suite: **186 tests** (102 Hina.Core + 84 Hina.PackageManager).
+- New coverage: descriptor parsing/validation, polymorphic hook deserialization round-trip, signer sign/verify/tamper, registry atomic write + lock contention, install transaction reverse-order rollback, hook executor dispatch + undo, Linux/macOS/Windows platform integration (the cross-platform-safe portions run on every CI runner), end-to-end install/uninstall through `InstallService`/`UninstallService` with a fake `PatchClient`, update flow with hook diff and key pinning, reinstall happy path + key-rotation refusal + opt-in accept.
+
+---
+
+## Initial Patcher Release
+
+Initial release of Hina as an rsync-like patcher for game clients and desktop applications.
 
 ### Core Patching Engine
 

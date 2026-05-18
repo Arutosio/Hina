@@ -5,12 +5,18 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$winOut = Join-Path $OutputRoot "win-x64"
-$linuxOut = Join-Path $OutputRoot "linux-x64"
+# Hina.CLI is NativeAOT — only RIDs the host can natively link are built here.
+# Use scripts/publish-cli.sh on Linux/macOS hosts.
+$rids = @("win-x64", "win-arm64")
 
-dotnet publish "Hina.CLI/Hina.CLI.csproj" -c $Configuration -r win-x64 -o $winOut
-dotnet publish "Hina.CLI/Hina.CLI.csproj" -c $Configuration -r linux-x64 -o $linuxOut
+foreach ($rid in $rids) {
+    $out = Join-Path $OutputRoot $rid
+    Write-Host "==> Publishing Hina.CLI for $rid -> $out"
+    dotnet publish "Hina.CLI/Hina.CLI.csproj" -c $Configuration -r $rid --self-contained -o $out
+}
 
+Write-Host ""
 Write-Host "Published:"
-Write-Host "  $winOut"
-Write-Host "  $linuxOut"
+foreach ($rid in $rids) {
+    Write-Host "  $(Join-Path $OutputRoot $rid)"
+}

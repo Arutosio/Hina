@@ -48,6 +48,20 @@ dotnet run --project Hina.Builder -- keygen --out ./keys --name myapp
 - **Rotate keys** by generating a new pair and rebuilding. Clients must be updated with the new public key.
 - **Use separate keys for staging and production** to prevent staging builds from being applied to production clients.
 
+### Signing a Package-Manager Descriptor
+
+The same Ed25519 key pair signs both the manifest (via `--sign-key` on `build`) and
+the publisher's `hina.app.json` descriptor. After generating keys with `keygen`, sign
+the descriptor with the CLI helper:
+
+```shell
+hina dev sign-descriptor --in hina.app.json --key ./keys/myapp.key.b64
+```
+
+This validates the descriptor, attaches an Ed25519 `descriptorSignature`, and rewrites
+the file in place (or to `--out <path>`). See the
+[Package Manager Guide](PackageManager-Guide.md) for the full publisher workflow.
+
 ---
 
 ## build Command

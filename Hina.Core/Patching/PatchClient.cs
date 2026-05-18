@@ -29,8 +29,29 @@ namespace Hina.Core.Patching
             Config = config;
             _hasher = new Sha256Hasher();
             _logger = logger ?? NullLogger<PatchClient>.Instance;
-            var retryPolicy = new RetryPolicy(config.MaxRetries, config.RetryBaseDelayMs, _logger);
-            _http = new HttpChunkClient(new HttpClient(), retryPolicy);
+            var retryPolicy = new RetryPolicy(config.MaxRetries, config.RetryBaseDelayMs, config.MaxRetryDelayMs, _logger);
+            _http = new HttpChunkClient(BuildHttpClient(config), retryPolicy);
+        }
+
+        // Build a fresh HttpClient with the connection knobs from PatcherConfig.
+        // SocketsHttpHandler.PooledConnectionLifetime forces the underlying socket to
+        // be torn down and rebuilt on a schedule — this is what makes the client cope
+        // with IP changes / mobile-network hand-offs / DNS shifts mid-session without
+        // the user noticing. ConnectTimeout caps the TCP handshake separately from the
+        // overall request timeout so a stalled SYN fails fast and retry kicks in.
+        private static HttpClient BuildHttpClient(PatcherConfig config)
+        {
+            SocketsHttpHandler handler = new SocketsHttpHandler
+            {
+                PooledConnectionLifetime = TimeSpan.FromMilliseconds(config.PooledConnectionLifetimeMs),
+                ConnectTimeout = TimeSpan.FromMilliseconds(config.ConnectTimeoutMs),
+                AutomaticDecompression = System.Net.DecompressionMethods.All,
+                EnableMultipleHttp2Connections = true
+            };
+            return new HttpClient(handler, disposeHandler: true)
+            {
+                Timeout = TimeSpan.FromMilliseconds(config.RequestTimeoutMs)
+            };
         }
 
         public async Task<CheckResult> CheckAsync(string rootDir, CancellationToken ct)

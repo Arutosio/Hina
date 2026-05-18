@@ -19,7 +19,198 @@ jobs:
       - run: dotnet build --no-restore -c Release
       - run: dotnet test --no-build -c Release --verbosity normal
 
-  build:
+  # Hina.CLI is NativeAOT — must build on the matching host OS family.
+  # Hina.Builder / Hina.Host are plain self-contained and cross-compile from any host.
+  build-cli:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: windows-latest
+            rid: win-arm64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: ubuntu-latest
+            rid: linux-arm64
+          - os: macos-latest
+            rid: osx-x64
+          - os: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      # macOS NativeAOT links against system OpenSSL + Brotli, both supplied by Homebrew.
+      - name: Install brew libs for macOS AOT
+        if: matrix.os == 'macos-latest'
+        run: brew install openssl@3 brotli
+
+      # linux-arm64 cross-compile from x64 needs the cross-arch sysroot package.
+      - name: Install linux-arm64 cross toolchain
+        if: matrix.rid == 'linux-arm64'
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs) main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs)-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+          sudo apt-get update
+          sudo apt-get install -y clang llvm binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu zlib1g-dev:arm64
+
+      - name: Publish Hina.CLI (${{ matrix.rid }}, AOT)
+        run: dotnet publish Hina.CLI/Hina.CLI.csproj -c Release -r ${{ matrix.rid }} --self-contained -o artifacts/cli
+
+      # Rename the published binary so users see `hina` / `hina.exe` rather than
+      # `Hina.CLI`. Matches what scripts/release.sh does locally.
+      - name: Rename binary to hina
+        shell: bash
+        run: |
+          set -e
+          if [[ "${{ matrix.rid }}" == win-* ]]; then
+            [[ -f artifacts/cli/Hina.CLI.exe ]] && mv artifacts/cli/Hina.CLI.exe artifacts/cli/hina.exe
+          else
+            [[ -f artifacts/cli/Hina.CLI ]] && mv artifacts/cli/Hina.CLI artifacts/cli/hina
+            chmod +x artifacts/cli/hina
+          fi
+
+      - name: Package Hina.CLI archive
+        shell: bash
+        run: |
+          set -e
+          mkdir -p dist
+          friendly_rid() {
+            case "$1" in
+              win-x64) echo "windows-x64" ;;
+              win-arm64) echo "windows-arm64" ;;
+              linux-x64) echo "linux-x64" ;;
+              linux-arm64) echo "linux-arm64" ;;
+              osx-x64) echo "macos-x64" ;;
+              osx-arm64) echo "macos-arm64" ;;
+            esac
+          }
+          base="Hina-$(friendly_rid "${{ matrix.rid }}")"
+          if [[ "${{ matrix.rid }}" == win-* ]]; then
+            (cd artifacts/cli && 7z a -tzip "../../dist/$base.zip" . > /dev/null)
+          else
+            tar -C artifacts/cli -czf "dist/$base.tar.gz" .
+          fi
+          ls -la dist
+
+      # macOS: build a .pkg installer that drops `hina` into /usr/local/bin.
+      # productbuild + pkgbuild ship with Xcode CLT (present on macos-latest).
+      # The .pkg is signed only if APPLE_DEV_ID_INSTALLER_CERT is configured;
+      # otherwise it's unsigned (user has to right-click → Open the first time).
+      - name: Build macOS .pkg installer
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          set -e
+          friendly_rid() {
+            case "$1" in
+              osx-x64) echo "macos-x64" ;;
+              osx-arm64) echo "macos-arm64" ;;
+            esac
+          }
+          name="Hina-$(friendly_rid "${{ matrix.rid }}")"
+          mkdir -p pkgroot/usr/local/bin
+          cp artifacts/cli/hina pkgroot/usr/local/bin/hina
+          chmod +x pkgroot/usr/local/bin/hina
+
+          pkgbuild \
+            --root pkgroot \
+            --identifier "com.hina.cli" \
+            --version "1.0.0" \
+            --install-location "/" \
+            "dist/${name}.pkg"
+
+          ls -la dist
+
+      # Windows: build a per-user .msi via WiX 4 (installed as a dotnet global tool).
+      # Drops hina.exe into %LOCALAPPDATA%\Hina\bin and prepends that to user PATH.
+      # No admin required (Scope="perUser" in packaging/wix/hina.wxs).
+      - name: Install WiX 4
+        if: matrix.os == 'windows-latest'
+        run: dotnet tool install --global wix
+
+      - name: Build Windows .msi
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          set -e
+          friendly_rid() {
+            case "$1" in
+              win-x64) echo "windows-x64" ;;
+              win-arm64) echo "windows-arm64" ;;
+            esac
+          }
+          arch=$([[ "${{ matrix.rid }}" == "win-x64" ]] && echo "x64" || echo "arm64")
+          name="Hina-$(friendly_rid "${{ matrix.rid }}")"
+
+          # WiX needs an absolute path to the bin source; the wxs file lives at
+          # packaging/wix/hina.wxs but the source file lives in artifacts/cli.
+          wix build packaging/wix/hina.wxs \
+            -arch "$arch" \
+            -d "HinaBin=$(pwd)/artifacts/cli/hina.exe" \
+            -d "HinaVersion=1.0.0" \
+            -out "dist/${name}.msi"
+
+          ls -la dist
+
+      # Linux: build a .deb that drops `hina` into /usr/local/bin via dpkg-deb.
+      # No external tooling needed on ubuntu-latest beyond dpkg-deb (present by default).
+      - name: Build Linux .deb package
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -e
+          friendly_rid() {
+            case "$1" in
+              linux-x64) echo "linux-x64" ;;
+              linux-arm64) echo "linux-arm64" ;;
+            esac
+          }
+          deb_arch() {
+            case "$1" in
+              linux-x64) echo "amd64" ;;
+              linux-arm64) echo "arm64" ;;
+            esac
+          }
+          name="Hina-$(friendly_rid "${{ matrix.rid }}")"
+          arch=$(deb_arch "${{ matrix.rid }}")
+
+          # dpkg-deb expects a specific layout under <pkgroot>/.
+          mkdir -p debroot/DEBIAN debroot/usr/local/bin
+          cp artifacts/cli/hina debroot/usr/local/bin/hina
+          chmod 0755 debroot/usr/local/bin/hina
+
+          cat > debroot/DEBIAN/control <<EOF
+          Package: hina
+          Version: 1.0.0
+          Section: utils
+          Priority: optional
+          Architecture: ${arch}
+          Maintainer: Hina <https://github.com/Arutosio/Hina>
+          Description: Cross-platform package manager (hina install <url>)
+           Cross-platform package manager + rsync-style patcher.
+           See https://github.com/Arutosio/Hina
+          EOF
+
+          dpkg-deb --build --root-owner-group debroot "dist/${name}.deb"
+          ls -la dist
+
+      - name: Upload Hina.CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hina-cli-${{ matrix.rid }}
+          path: dist/*
+          if-no-files-found: error
+
+  build-builder-host:
     needs: test
     runs-on: ubuntu-latest
     strategy:
@@ -32,8 +223,6 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Publish Hina.CLI (${{ matrix.rid }})
-        run: dotnet publish Hina.CLI/Hina.CLI.csproj -c Release -r ${{ matrix.rid }} --self-contained -o artifacts/cli
       - name: Publish Hina.Builder (${{ matrix.rid }})
         run: dotnet publish Hina.Builder/Hina.Builder.csproj -c Release -r ${{ matrix.rid }} --self-contained -o artifacts/builder
       - name: Publish Hina.Host (${{ matrix.rid }})
@@ -43,9 +232,8 @@ jobs:
         run: |
           set -e
           mkdir -p dist
-          for project in cli builder host; do
+          for project in builder host; do
             case "$project" in
-              cli) name=Hina.CLI ;;
               builder) name=Hina.Builder ;;
               host) name=Hina.Host ;;
             esac
@@ -61,12 +249,12 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hina-${{ matrix.rid }}
+          name: hina-builder-host-${{ matrix.rid }}
           path: dist/*
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [build-cli, build-builder-host]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -86,8 +274,31 @@ jobs:
         id: version
         run: |
           TAG="v1.0.0-$(git rev-parse --short HEAD)"
+          VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Generated tag: $TAG"
+
+      # Generate the Scoop manifest from the template, substituting version + tag +
+      # SHA256 of the windows .zip artifacts. End-users install via:
+      #   scoop install https://github.com/Arutosio/Hina/releases/latest/download/hina.json
+      - name: Generate Scoop manifest
+        run: |
+          set -e
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          HASH_X64="$(sha256sum dist/Hina-windows-x64.zip | cut -d' ' -f1)"
+          HASH_ARM64="$(sha256sum dist/Hina-windows-arm64.zip | cut -d' ' -f1)"
+
+          sed \
+            -e "s|__VERSION__|${VERSION}|g" \
+            -e "s|__TAG__|${TAG}|g" \
+            -e "s|__HASH_X64__|${HASH_X64}|g" \
+            -e "s|__HASH_ARM64__|${HASH_ARM64}|g" \
+            packaging/scoop/hina.json.template > dist/hina.json
+
+          echo "Scoop manifest:"
+          cat dist/hina.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

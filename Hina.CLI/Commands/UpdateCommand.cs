@@ -16,10 +16,17 @@ namespace Hina.CLI.Commands
             string? name = Args.FirstPositional(args, startIndex: 1);
             bool force = Args.HasFlag(args, "--force");
 
+            int jobs = 4;
+            string? jobsArg = Args.GetValue(args, "--jobs");
+            if (jobsArg != null && int.TryParse(jobsArg, out int parsed) && parsed > 0)
+            {
+                jobs = parsed;
+            }
+
             InstallPaths paths = InstallPaths.ForCurrentOs();
             IPlatformIntegration platform = PlatformIntegrationFactory.Current(paths);
             UpdateService service = new UpdateService(paths, platform);
-            UpdateOptions options = new UpdateOptions { Force = force };
+            UpdateOptions options = new UpdateOptions { Force = force, MaxParallelism = jobs };
 
             try
             {

@@ -1,26 +1,75 @@
 using System;
 using System.IO;
+using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Hina.PackageManager.Net;
 
 namespace Hina.PackageManager.Descriptor
 {
-    // Fetches a hina.app.json descriptor over HTTP. Capped at 5 MB to fail fast against
-    // hostile/misconfigured servers serving giant payloads.
+    // Fetches a hina.app.json descriptor over HTTP. Capped at 5 MB to fail fast
+    // against hostile/misconfigured servers serving giant payloads. Retries on
+    // transient failures (5xx / network) with exponential backoff so a flaky CDN
+    // doesn't break `hina install` on the first try.
     public class DescriptorFetcher
     {
         public const long MaxDescriptorBytes = 5 * 1024 * 1024;
         public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+        public const int DefaultMaxRetries = 3;
+        public static readonly TimeSpan DefaultRetryBaseDelay = TimeSpan.FromMilliseconds(500);
 
         private readonly HttpClient _http;
+        private readonly int _maxRetries;
+        private readonly TimeSpan _retryBaseDelay;
 
-        public DescriptorFetcher(HttpClient? http = null)
+        public DescriptorFetcher(HttpClient? http = null, int maxRetries = DefaultMaxRetries, TimeSpan? retryBaseDelay = null)
         {
-            _http = http ?? new HttpClient { Timeout = DefaultTimeout };
+            _http = http ?? SharedHttp.Instance;
+            _maxRetries = Math.Max(1, maxRetries);
+            _retryBaseDelay = retryBaseDelay ?? DefaultRetryBaseDelay;
         }
 
         public virtual async Task<AppDescriptor> FetchAsync(Uri url, CancellationToken ct)
+        {
+            // Reject schemes that aren't network-fetchable. HttpClient throws an obscure
+            // PlatformNotSupportedException or NotSupportedException on file:// /
+            // ftp:// etc.; a clear error up front beats that.
+            if (url.Scheme != Uri.UriSchemeHttp && url.Scheme != Uri.UriSchemeHttps)
+            {
+                throw new InvalidOperationException(
+                    $"Descriptor URL must use http:// or https://; got '{url.Scheme}'.");
+            }
+
+            Exception? lastError = null;
+            for (int attempt = 0; attempt < _maxRetries; attempt++)
+            {
+                if (attempt > 0)
+                {
+                    TimeSpan delay = TimeSpan.FromMilliseconds(_retryBaseDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
+                    await Task.Delay(delay, ct);
+                }
+
+                try
+                {
+                    return await FetchOnceAsync(url, ct);
+                }
+                catch (HttpRequestException ex) when (IsTransient(ex))
+                {
+                    lastError = ex;
+                }
+                catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+                {
+                    // Per-request timeout (HttpClient cancels its own token). User-driven
+                    // cancellation falls through unwrapped.
+                    lastError = ex;
+                }
+            }
+            throw new HttpRequestException(
+                $"Descriptor fetch failed after {_maxRetries} attempts: {lastError?.Message}", lastError);
+        }
+
+        private async Task<AppDescriptor> FetchOnceAsync(Uri url, CancellationToken ct)
         {
             using HttpResponseMessage response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
             response.EnsureSuccessStatusCode();
@@ -34,6 +83,17 @@ namespace Hina.PackageManager.Descriptor
             using Stream stream = await response.Content.ReadAsStreamAsync(ct);
             using LimitedReadStream limited = new LimitedReadStream(stream, MaxDescriptorBytes);
             return await DescriptorParser.ReadAsync(limited, ct);
+        }
+
+        private static bool IsTransient(HttpRequestException ex)
+        {
+            // 5xx and "no status code" (DNS / TCP) are transient. 4xx is not — re-fetching
+            // a 404 just wastes time.
+            if (ex.StatusCode is HttpStatusCode code)
+            {
+                return (int)code >= 500;
+            }
+            return true;
         }
 
         private sealed class LimitedReadStream : Stream

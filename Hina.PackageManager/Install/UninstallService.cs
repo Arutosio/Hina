@@ -55,12 +55,25 @@ namespace Hina.PackageManager.Install
                 catch { /* fail-soft */ }
             }
 
-            // App directory: retry-on-busy is left to OS for now.
+            // App directory: refuse to follow a symlink. If a user (or a previous Hina
+            // install with --portable or similar) made InstallPath a symlink pointing at
+            // their actual data dir, Directory.Delete(recursive: true) on a symlink walks
+            // INTO the target and wipes its contents. We delete only the link, leaving
+            // the original directory intact.
             try
             {
                 if (Directory.Exists(app.InstallPath))
                 {
-                    Directory.Delete(app.InstallPath, recursive: true);
+                    DirectoryInfo info = new DirectoryInfo(app.InstallPath);
+                    if (info.LinkTarget != null)
+                    {
+                        // It's a symlink — File.Delete removes the link without touching the target.
+                        File.Delete(app.InstallPath);
+                    }
+                    else
+                    {
+                        Directory.Delete(app.InstallPath, recursive: true);
+                    }
                 }
             }
             catch { /* fail-soft */ }

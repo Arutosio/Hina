@@ -9,6 +9,11 @@ namespace Hina.PackageManager.Install
         // Force PatchClient to run even when the descriptor version hasn't changed (useful
         // when you suspect the local install is corrupted).
         public bool Force { get; init; }
+
+        // How many apps UpdateAllAsync updates concurrently. Each per-app update is
+        // still serial within itself; this just lets the registry-of-N walk overlap
+        // network and disk I/O across apps. Default 4 mirrors PatchClient.Concurrency.
+        public int MaxParallelism { get; init; } = 4;
     }
 
     public sealed class UpdateResult

@@ -25,7 +25,22 @@ namespace Hina.CLI
             });
 
             ILogger logger = loggerFactory.CreateLogger("hina");
-            CancellationToken ct = CancellationToken.None;
+
+            // B2: wire Ctrl-C to cooperative cancellation. First press signals the
+            // CancellationToken so install/update/etc. can roll back cleanly; a second
+            // press lets the runtime's default handler kill the process (escape hatch
+            // if cancellation is stuck).
+            using CancellationTokenSource cts = new CancellationTokenSource();
+            bool cancelOnce = false;
+            Console.CancelKeyPress += (s, e) =>
+            {
+                if (cancelOnce) return;       // let the second Ctrl-C terminate
+                cancelOnce = true;
+                e.Cancel = true;
+                logger.LogWarning("Cancellation requested. Press Ctrl-C again to force-exit.");
+                cts.Cancel();
+            };
+            CancellationToken ct = cts.Token;
 
             string command = args[0].ToLowerInvariant();
 
@@ -49,7 +64,7 @@ namespace Hina.CLI
                 case "verify":
                     return VerifyCommand.RunAsync(args, logger, ct);
                 case "dev":
-                    return Task.FromResult(DevCommand.Run(args, loggerFactory, logger));
+                    return Task.FromResult(DevCommand.Run(args, loggerFactory, logger, ct));
                 default:
                     logger.LogError("Unknown command: {Cmd}", command);
                     PrintHelp();

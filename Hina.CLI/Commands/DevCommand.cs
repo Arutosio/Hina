@@ -12,7 +12,7 @@ namespace Hina.CLI.Commands
     // but still available for app developers, CI, and troubleshooting.
     internal static class DevCommand
     {
-        public static int Run(string[] args, ILoggerFactory loggerFactory, ILogger logger)
+        public static int Run(string[] args, ILoggerFactory loggerFactory, ILogger logger, CancellationToken ct = default)
         {
             if (args.Length < 2)
             {
@@ -58,7 +58,6 @@ namespace Hina.CLI.Commands
 
             ILogger<PatchClient> clientLogger = loggerFactory.CreateLogger<PatchClient>();
             PatchClient client = new PatchClient(config, clientLogger);
-            CancellationToken ct = CancellationToken.None;
 
             switch (subcommand)
             {

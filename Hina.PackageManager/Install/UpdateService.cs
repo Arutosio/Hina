@@ -45,15 +45,21 @@ namespace Hina.PackageManager.Install
         {
             options ??= new UpdateOptions();
 
+            // O2: hold the registry lock only for the brief read/write windows so
+            // parallel UpdateAllAsync isn't serialized by lock contention. The slow
+            // work (descriptor fetch, PatchClient, hook application) runs lock-free.
             LockManager locks = new LockManager(_paths.LockFile);
-            using RegistryLock l = await locks.AcquireAsync(ct);
-
             RegistryStore store = new RegistryStore(_paths.RegistryFile);
-            Registry.Registry registry = store.Load();
-
-            if (!registry.Apps.TryGetValue(name, out InstalledApp? app))
+            Registry.Registry registry;
+            InstalledApp app;
             {
-                return new UpdateResult { Name = name, Status = UpdateStatus.Failed, Message = $"'{name}' is not installed." };
+                using RegistryLock l = await locks.AcquireAsync(ct);
+                registry = store.Load();
+                if (!registry.Apps.TryGetValue(name, out InstalledApp? found))
+                {
+                    return new UpdateResult { Name = name, Status = UpdateStatus.Failed, Message = $"'{name}' is not installed." };
+                }
+                app = found;
             }
 
             // [1] Re-fetch descriptor.
@@ -220,25 +226,79 @@ namespace Hina.PackageManager.Install
                 ShellEntries = SurvivingEntries(app.ShellEntries, entriesToRemove)
             };
 
-            // Apply additions, recording fresh evidence.
-            foreach (ShellEntry entry in entriesToAdd)
-            {
-                string evidence = await _platform.CreateMenuShortcut(entry, app.InstallPath, ct);
-                updated.ShellEntries.Add(new ShellEntryRecord { Id = entry.Id, Evidence = evidence });
-            }
-            foreach (HookAction hook in hooksToAdd)
-            {
-                HookEvidence evidence = await hooks.ApplyAsync(hook, app.InstallPath, app.Name, ct);
-                updated.ExecutedHooks.Add(evidence);
-            }
+            // B1: bracket the additions so a mid-flight failure (e.g. registerAutostart
+            // perm denied) doesn't leak half-applied hooks. On failure we undo what we
+            // just added in reverse, best-effort re-restore what we just removed, and
+            // restore the pre-update registry snapshot so the user sees a clean rollback.
+            List<ShellEntryRecord> addedEntries = new List<ShellEntryRecord>();
+            List<HookEvidence> addedHooks = new List<HookEvidence>();
 
-            registry.Apps[name] = updated;
-            // H1: at this point the patch + diff is on disk. If the registry write itself
-            // fails (disk full, perm denied), the FS state is newer than what the registry
-            // knows. Surface a clear error AND dump the would-be registry to a sibling
-            // .recovery.json so a human can rename it once the underlying issue is fixed.
             try
             {
+                foreach (ShellEntry entry in entriesToAdd)
+                {
+                    string evidence = await _platform.CreateMenuShortcut(entry, app.InstallPath, ct);
+                    ShellEntryRecord rec = new ShellEntryRecord { Id = entry.Id, Evidence = evidence };
+                    addedEntries.Add(rec);
+                    updated.ShellEntries.Add(rec);
+                }
+                foreach (HookAction hook in hooksToAdd)
+                {
+                    HookEvidence evidence = await hooks.ApplyAsync(hook, app.InstallPath, app.Name, ct);
+                    addedHooks.Add(evidence);
+                    updated.ExecutedHooks.Add(evidence);
+                }
+            }
+            catch (Exception addEx)
+            {
+                _logger.LogError(addEx, "Hook/entry add failed for {Name}; rolling back update.", name);
+
+                for (int i = addedHooks.Count - 1; i >= 0; i--)
+                {
+                    try { await hooks.UndoAsync(addedHooks[i], CancellationToken.None); } catch { /* fail-soft */ }
+                }
+                for (int i = addedEntries.Count - 1; i >= 0; i--)
+                {
+                    try { await _platform.RemoveMenuShortcut(addedEntries[i].Evidence, CancellationToken.None); } catch { /* fail-soft */ }
+                }
+                // Best-effort: re-apply the hooks/entries we removed at step [7] so the
+                // app comes back to its pre-update side-effect set. May silently fail
+                // (e.g. target re-exists, race) — we proceed regardless.
+                foreach (ShellEntryRecord r in entriesToRemove)
+                {
+                    foreach (ShellEntry orig in descriptor.Entries)
+                    {
+                        if (orig.Id != r.Id) continue;
+                        try { await _platform.CreateMenuShortcut(orig, app.InstallPath, CancellationToken.None); } catch { /* fail-soft */ }
+                        break;
+                    }
+                }
+                // Patch on disk also needs to roll back; PatchClient already journaled
+                // backups when Backup=true so RollbackAsync restores them.
+                try { await patcher.RollbackAsync(app.InstallPath, CancellationToken.None); } catch { /* fail-soft */ }
+
+                registry.Apps[name] = previousSnapshot;
+                try { await store.SaveAsync(registry, CancellationToken.None); } catch { /* fail-soft */ }
+
+                return new UpdateResult
+                {
+                    Name = name,
+                    FromVersion = app.InstalledVersion,
+                    ToVersion = descriptor.Version,
+                    Status = UpdateStatus.Failed,
+                    Message = $"Update rolled back: {addEx.Message}"
+                };
+            }
+
+            // O2: re-acquire the lock briefly to write. Re-read the registry first
+            // so we merge with any changes other concurrent operations made to OTHER
+            // apps; we then overwrite our own app's row with the updated entry.
+            // H1: if SaveAsync still fails, dump a recovery snapshot.
+            try
+            {
+                using RegistryLock writeLock = await locks.AcquireAsync(ct);
+                registry = store.Load();
+                registry.Apps[name] = updated;
                 await store.SaveAsync(registry, ct);
             }
             catch (Exception saveEx)
@@ -289,6 +349,9 @@ namespace Hina.PackageManager.Install
 
         public async Task<List<UpdateResult>> UpdateAllAsync(UpdateOptions? options, CancellationToken ct)
         {
+            options ??= new UpdateOptions();
+            int parallelism = Math.Clamp(options.MaxParallelism, 1, 16);
+
             RegistryStore store = new RegistryStore(_paths.RegistryFile);
             List<string> names;
             {
@@ -299,12 +362,30 @@ namespace Hina.PackageManager.Install
                 names = new List<string>(registry.Apps.Keys);
             }
 
-            List<UpdateResult> results = new List<UpdateResult>(names.Count);
-            foreach (string name in names)
+            // O2: run N updates concurrently. Each per-app UpdateAsync still serializes
+            // its own registry-lock window so a parallel update of B doesn't see a
+            // half-committed A. The semaphore bounds concurrent network + disk pressure.
+            UpdateResult[] results = new UpdateResult[names.Count];
+            using SemaphoreSlim gate = new SemaphoreSlim(parallelism);
+            Task[] tasks = new Task[names.Count];
+            for (int i = 0; i < names.Count; i++)
             {
-                results.Add(await UpdateAsync(name, options, ct));
+                int idx = i;
+                tasks[i] = Task.Run(async () =>
+                {
+                    await gate.WaitAsync(ct);
+                    try
+                    {
+                        results[idx] = await UpdateAsync(names[idx], options, ct);
+                    }
+                    finally
+                    {
+                        gate.Release();
+                    }
+                }, ct);
             }
-            return results;
+            await Task.WhenAll(tasks);
+            return new List<UpdateResult>(results);
         }
 
         private static InstalledApp CloneInstalledApp(InstalledApp src) => new InstalledApp

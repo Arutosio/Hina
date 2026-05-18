@@ -8,6 +8,33 @@ This guide covers the user-facing CLI and the wire format publishers author.
 
 ---
 
+## Installing the Hina CLI
+
+GitHub releases ship one or more artifacts per platform. Pick the one that
+matches your OS:
+
+| OS | File | How to install |
+|----|------|----------------|
+| macOS (Apple Silicon) | `Hina-macos-arm64.pkg` | double-click; the first time, right-click → Open to bypass Gatekeeper (the `.pkg` is unsigned until we wire up an Apple Developer cert) |
+| macOS (Intel) | `Hina-macos-x64.pkg` | same |
+| Debian / Ubuntu / derivatives | `Hina-linux-x64.deb` / `Hina-linux-arm64.deb` | `sudo dpkg -i Hina-linux-*.deb` |
+| **Arch / Fedora / openSUSE / any other Linux** | `Hina-linux-x64.tar.gz` / `Hina-linux-arm64.tar.gz` | `tar -xzf ...tar.gz && cd Hina-linux-* && ./install.sh` — lands in `~/.local/bin/hina`, no root needed |
+| Windows (x64 / arm64) | `Hina-windows-x64.zip` / `Hina-windows-arm64.zip` | extract, run `install.bat` |
+
+The `.tar.gz` + `install.sh` flow is the universal fallback and works on every
+Linux distribution (including Arch — there is no AUR PKGBUILD yet). It installs
+into `~/.local/bin/hina` without root; make sure that directory is on your
+`PATH` (most shells put it there by default).
+
+After install:
+
+```shell
+hina --help
+hina install <url-to-hina.app.json>
+```
+
+---
+
 ## End-User CLI
 
 | Command | What it does |

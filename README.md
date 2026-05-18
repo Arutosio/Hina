@@ -89,7 +89,35 @@ Client startup
 
 ---
 
-## Quick Start
+## Installing the Hina CLI
+
+Each GitHub release ships:
+
+| OS | Recommended | Fallback |
+|----|-------------|----------|
+| **macOS** (Apple Silicon / Intel) | `Hina-macos-arm64.pkg` / `Hina-macos-x64.pkg` — double-click | `Hina-macos-*.tar.gz` + `./install.sh` |
+| **Debian / Ubuntu / derivatives** | `Hina-linux-x64.deb` — `sudo dpkg -i Hina-linux-x64.deb` | `Hina-linux-x64.tar.gz` + `./install.sh` |
+| **Arch / Fedora / openSUSE / any other Linux** | `Hina-linux-x64.tar.gz` + `./install.sh` (no root needed; lands in `~/.local/bin`) | — |
+| **Windows** (x64 / arm64) | `Hina-windows-x64.zip` → extract → run `install.bat` | — |
+
+> On Arch Linux specifically there isn't (yet) a PKGBUILD on AUR; the
+> `.tar.gz + install.sh` flow works the same way as on every other distro and
+> requires no root.
+
+After install, verify with:
+
+```shell
+hina --help
+hina install <url-to-hina.app.json>
+```
+
+See the [Package Manager Guide](docs/PackageManager-Guide.md) for the full
+end-user workflow and the [CLI Guide](docs/CLI-Guide.md) for every command +
+flag.
+
+---
+
+## Quick Start (developer build)
 
 ```shell
 # 1. Build the solution

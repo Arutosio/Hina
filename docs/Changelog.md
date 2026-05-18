@@ -4,6 +4,54 @@ All notable changes to Hina are documented in this file.
 
 ---
 
+## Network Resilience (Round 3)
+
+Targeted at flaky / mobile / changing-IP connections.
+
+- `RetryPolicy` gains a `maxDelayMs` cap (default 30 s); exponential backoff
+  no longer reaches multi-hour delays and the bit-shift no longer overflows
+  at attempt 32.
+- `PatcherConfig` defaults: `MaxRetries` 3 → 8. New `MaxRetryDelayMs`,
+  `ConnectTimeoutMs` (10 s), `RequestTimeoutMs` (60 s),
+  `PooledConnectionLifetimeMs` (60 s).
+- `PatchClient` and `SharedHttp` both build their `HttpClient` on a
+  `SocketsHttpHandler` so stale TCP sockets are recycled on schedule
+  (forces DNS refresh after an IP change) and the TCP handshake fails fast
+  on a black-holed route.
+- `DescriptorFetcher` default retries 3 → 5 with its own max-delay cap.
+- New `NetworkOptions` struct surfaces all four knobs through
+  `InstallOptions` and `UpdateOptions`.
+- New CLI flags `--retries N`, `--connect-timeout SEC`, `--request-timeout
+  SEC` on `install` and `update`. `hina --help` lists them.
+- Coverage: +7 NetworkResilienceTests (suite 208 → 215).
+
+## Stability Hardening (Round 2)
+
+Audit pass before round 3 closed six more issues.
+
+- `UpdateService` brackets the hook + entry add loops in a try/catch that
+  unwinds applied additions in reverse, best-effort re-applies the items it
+  removed at the start of the update, rolls back the patch via
+  `PatchClient.RollbackAsync`, and restores the previous registry snapshot.
+  Previously a hook failure mid-update (e.g. `registerAutostart` perm
+  denied) left the registry un-saved with the app dir patched and the
+  side-effects partially applied.
+- `Program.cs` wires Ctrl-C to a `CancellationTokenSource`. First press
+  signals cooperative cancellation (services unwind cleanly); a second
+  press lets the runtime kill the process.
+- `SharedHttp` singleton replaces per-service `new HttpClient()` calls,
+  killing the per-instance socket-exhaustion risk under high concurrency.
+- `DescriptorFetcher` retries transient HTTP failures (5xx / network) and
+  rejects non-http(s) schemes (`file://`, `ftp://`) up front.
+- `UninstallService` detects when `InstallPath` is a symlink and deletes
+  only the link, never walks into the target. Previously
+  `Directory.Delete(recursive: true)` on a symlink would wipe the target's
+  contents.
+- `UpdateService.UpdateAsync` narrows its registry-lock window so
+  `UpdateAllAsync` runs N updates in parallel (default 4) instead of
+  serialising on the lock. CLI flag `--jobs N` overrides.
+- Coverage: +9 Round2AuditTests (suite 199 → 208).
+
 ## Package-Manager Release
 
 Hina pivots from a pure rsync-like patcher into a cross-platform package manager (Windows / Linux / macOS) built on top of the existing patching engine.

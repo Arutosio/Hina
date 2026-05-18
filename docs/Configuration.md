@@ -33,8 +33,12 @@ Command-line flags (`--base`, `--pubkey`, `--channel`) override values from the 
 | `verify` | `bool` | `true` | Whether to verify file hashes after patching. Disabling this is not recommended. |
 | `backup` | `bool` | `true` | Whether to keep backups of original files for rollback. When disabled, rollback is not available. |
 | `trustedPublicKey` | `string?` | `null` | Base64-encoded Ed25519 public key for manifest signature verification. When set, the patcher rejects manifests with invalid or missing signatures. |
-| `maxRetries` | `int` | `3` | Maximum number of retry attempts on transient errors (HTTP 5xx, network failures, timeouts). |
+| `maxRetries` | `int` | `8` | Maximum number of retry attempts on transient errors (HTTP 5xx, network failures, timeouts). |
 | `retryBaseDelayMs` | `int` | `1000` | Base delay in milliseconds for exponential backoff. Actual delay doubles on each attempt with added jitter. |
+| `maxRetryDelayMs` | `int` | `30000` | Hard cap on a single retry sleep. Without this, retry 11 would wait ~17 minutes; the cap keeps the backoff sane on long flaky stretches. |
+| `connectTimeoutMs` | `int` | `10000` | TCP handshake timeout. Short on purpose so a stalled SYN fails fast and retry kicks in instead of sitting on the default 100 s wall. |
+| `requestTimeoutMs` | `int` | `60000` | Overall per-request timeout (`HttpClient.Timeout`). Caps how long a single chunk / manifest fetch can hang before being treated as transient. |
+| `pooledConnectionLifetimeMs` | `int` | `60000` | After this, the underlying TCP socket is torn down and a fresh DNS + connect runs on the next request. Matters on flaky / mobile / changing-IP links. |
 | `chunkingMode` | `string` | `"fixed"` | Chunking strategy. `"fixed"` for fixed-size chunking, `"cdc"` for content-defined chunking. |
 | `minChunkSize` | `int` | `2048` | Minimum chunk size in bytes. CDC mode only. |
 | `maxChunkSize` | `int` | `65536` | Maximum chunk size in bytes. CDC mode only. |

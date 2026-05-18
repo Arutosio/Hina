@@ -217,6 +217,23 @@ Per-OS shell integration. Pure interface + factory + three implementations.
 | `PackageManagerIndentedJsonContext` | Same types but `WriteIndented = true` for `hina.app.json` / `registry.json` output |
 | `PackageManagerCanonicalJsonContext` | Canonical bytes for `DescriptorSigner` — kept stable across versions so existing signatures keep verifying |
 
+### Net/
+
+| Class | Purpose |
+|-------|---------|
+| `SharedHttp` | Process-wide `HttpClient` singleton built on a `SocketsHttpHandler` with `PooledConnectionLifetime=60s` (forces DNS refresh on IP change), `ConnectTimeout=10s`, automatic decompression, and a `Hina/<version>` user-agent. Used by `DescriptorFetcher` and any other PM-side HTTP code path. |
+
+### Diagnostics/
+
+| Class | Purpose |
+|-------|---------|
+| `RegistryVerifier` | Reconciles the local registry against on-disk state. `Inspect` reports orphans (missing AppDir, dangling shell entries, dangling hook evidence); `RepairAsync` calls the platform `Unregister*` / `Remove*` and rewrites the registry. Used by `hina verify [--repair]`. |
+| `AppDiagnostic` / `AppRepairResult` | Plain data shapes for the verifier's output. |
+
+`InstallOptions` and `UpdateOptions` carry a `NetworkOptions` struct that
+threads `MaxRetries`, `MaxRetryDelayMs`, `ConnectTimeoutMs`, and
+`RequestTimeoutMs` into the `PatcherConfig` for the per-call `PatchClient`.
+
 ---
 
 ## Data Flow

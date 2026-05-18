@@ -208,8 +208,41 @@ Validates the descriptor against the schema, attaches `descriptorSignature`, wri
 | `--allow-insecure` | `install` | Permit HTTP descriptor URLs (default: HTTPS only) |
 | `--rotate-key` | `reinstall` | Accept a publisher key change |
 | `--force` | `update` | Re-run patcher even if descriptor version unchanged |
+| `--jobs N` | `update` | Update N apps concurrently (default 4) |
 | `--repair` | `verify` | Remove orphan registry entries + dangling side-effects |
+| `--retries N` | `install`, `update` | Max retry attempts per HTTP request (default 8) |
+| `--connect-timeout SEC` | `install`, `update` | TCP connect timeout in seconds (default 10) |
+| `--request-timeout SEC` | `install`, `update` | Overall request timeout in seconds (default 60) |
 | `-v`, `--verbose` | all | Enable debug logging |
+
+### Network knobs
+
+The three network flags exist for flaky / mobile / changing-IP connections where
+the engine's defaults bail too early. Hina already pools and recycles its HTTP
+connections every 60 s (forces DNS refresh after an IP change), but you can push
+the retry budget higher and the timeouts tighter when packets get lost
+frequently:
+
+```shell
+hina install <url> --retries 20 --connect-timeout 5 --request-timeout 30
+hina update      --retries 20 --connect-timeout 5 --request-timeout 30
+```
+
+Smaller timeouts = faster failure = faster retry against the next route.
+
+### Cancellation (Ctrl-C)
+
+Every long-running command honours Ctrl-C cooperatively:
+
+- **First press**: cancellation token fires. In-flight install / update rolls
+  back via PatchClient + InstallTransaction; the registry is left in its
+  pre-operation state. You should see "Cancellation requested. Press Ctrl-C
+  again to force-exit." in stderr.
+- **Second press**: the runtime kills the process. The journal at
+  `<appDir>/.hina/journal.json` is left in place; the next `hina update` /
+  `hina install` detects it, rolls back any partial changes, and the rsync
+  matcher reuses every chunk that already made it to disk — effectively a
+  free resume.
 
 ### hina dev patch / check / verify / rollback / cleanup
 

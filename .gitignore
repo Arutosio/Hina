@@ -387,3 +387,4 @@ MigrationBackup/
 
 # Release script output (scripts/release.sh)
 dist/
+.DS_Store

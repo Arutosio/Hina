@@ -1,0 +1,30 @@
+{
+  "version": "__VERSION__",
+  "description": "Cross-platform package manager + rsync-style patcher",
+  "homepage": "https://github.com/Arutosio/Hina",
+  "license": "Apache-2.0",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/Arutosio/Hina/releases/download/__TAG__/Hina-windows-x64.zip",
+      "hash": "__HASH_X64__",
+      "extract_dir": "Hina-windows-x64"
+    },
+    "arm64": {
+      "url": "https://github.com/Arutosio/Hina/releases/download/__TAG__/Hina-windows-arm64.zip",
+      "hash": "__HASH_ARM64__",
+      "extract_dir": "Hina-windows-arm64"
+    }
+  },
+  "bin": "hina.exe",
+  "checkver": "github",
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/Arutosio/Hina/releases/download/v$version/Hina-windows-x64.zip"
+      },
+      "arm64": {
+        "url": "https://github.com/Arutosio/Hina/releases/download/v$version/Hina-windows-arm64.zip"
+      }
+    }
+  }
+}

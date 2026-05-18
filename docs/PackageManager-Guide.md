@@ -19,7 +19,9 @@ matches your OS:
 | macOS (Intel) | `Hina-macos-x64.pkg` | same |
 | Debian / Ubuntu / derivatives | `Hina-linux-x64.deb` / `Hina-linux-arm64.deb` | `sudo dpkg -i Hina-linux-*.deb` |
 | **Arch / Fedora / openSUSE / any other Linux** | `Hina-linux-x64.tar.gz` / `Hina-linux-arm64.tar.gz` | `tar -xzf ...tar.gz && cd Hina-linux-* && ./install.sh` — lands in `~/.local/bin/hina`, no root needed |
-| Windows (x64 / arm64) | `Hina-windows-x64.zip` / `Hina-windows-arm64.zip` | extract, run `install.bat` |
+| Windows (x64 / arm64) — preferred | `Hina-windows-x64.msi` / `Hina-windows-arm64.msi` | double-click; installs to `%LOCALAPPDATA%\Hina\bin` and prepends to user `PATH` (no admin) |
+| Windows — via Scoop | `hina.json` from the same release | `scoop install https://github.com/Arutosio/Hina/releases/latest/download/hina.json` (auto-update via `scoop update` after that) |
+| Windows — fallback | `Hina-windows-x64.zip` / `Hina-windows-arm64.zip` | extract, run `install.bat` |
 
 The `.tar.gz` + `install.sh` flow is the universal fallback and works on every
 Linux distribution (including Arch — there is no AUR PKGBUILD yet). It installs

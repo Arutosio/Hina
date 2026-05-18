@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WiX 4 source for the Hina CLI MSI installer. Per-user scope so install
+  never requires admin (matches install.bat's behaviour). The MSI drops
+  hina.exe into %LOCALAPPDATA%\Hina\bin and prepends that directory to
+  the user's PATH.
+
+  Built by .github/workflows/release.yml via:
+    wix build packaging/wix/hina.wxs -arch <x64|arm64>
+        -d HinaBin=<absolute path to hina.exe>
+        -d HinaVersion=<semver>
+        -out dist/Hina-<rid>.msi
+
+  UpgradeCode must NEVER change between releases — it's the identity the
+  Windows installer uses to recognise an existing install and trigger an
+  in-place upgrade instead of a side-by-side install.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="Hina"
+      Manufacturer="Hina Project"
+      Version="$(var.HinaVersion)"
+      UpgradeCode="D6455D4C-3DE2-40AD-8048-70B340C47E3C"
+      Scope="perUser"
+      Compressed="yes"
+      InstallerVersion="500">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Hina is already installed." />
+
+    <Feature Id="Main" Title="Hina CLI" Level="1">
+      <ComponentGroupRef Id="HinaFiles" />
+    </Feature>
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="HinaRoot" Name="Hina">
+        <Directory Id="BinFolder" Name="bin" />
+      </Directory>
+    </StandardDirectory>
+
+    <ComponentGroup Id="HinaFiles">
+      <Component Id="HinaExe" Directory="BinFolder" Guid="*">
+        <File Id="HinaExeFile" Source="$(var.HinaBin)" KeyPath="yes" />
+        <!--
+          Prepend BinFolder to the per-user PATH so `hina` is reachable
+          from a fresh terminal after install. Part="last" appends (we use
+          Part="last" intentionally — putting Hina at PATH HEAD would
+          shadow any user-managed binary called hina).
+        -->
+        <Environment
+            Id="PathEntry"
+            Name="PATH"
+            Value="[BinFolder]"
+            Permanent="no"
+            Part="last"
+            Action="set"
+            System="no" />
+      </Component>
+    </ComponentGroup>
+  </Package>
+</Wix>

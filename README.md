@@ -98,7 +98,7 @@ Each GitHub release ships:
 | **macOS** (Apple Silicon / Intel) | `Hina-macos-arm64.pkg` / `Hina-macos-x64.pkg` — double-click | `Hina-macos-*.tar.gz` + `./install.sh` |
 | **Debian / Ubuntu / derivatives** | `Hina-linux-x64.deb` — `sudo dpkg -i Hina-linux-x64.deb` | `Hina-linux-x64.tar.gz` + `./install.sh` |
 | **Arch / Fedora / openSUSE / any other Linux** | `Hina-linux-x64.tar.gz` + `./install.sh` (no root needed; lands in `~/.local/bin`) | — |
-| **Windows** (x64 / arm64) | `Hina-windows-x64.zip` → extract → run `install.bat` | — |
+| **Windows** (x64 / arm64) | `Hina-windows-x64.msi` (or `arm64.msi`) — double-click | `scoop install https://github.com/Arutosio/Hina/releases/latest/download/hina.json`, or `Hina-windows-*.zip` + `install.bat` |
 
 > On Arch Linux specifically there isn't (yet) a PKGBUILD on AUR; the
 > `.tar.gz + install.sh` flow works the same way as on every other distro and

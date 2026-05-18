@@ -130,6 +130,37 @@ jobs:
 
           ls -la dist
 
+      # Windows: build a per-user .msi via WiX 4 (installed as a dotnet global tool).
+      # Drops hina.exe into %LOCALAPPDATA%\Hina\bin and prepends that to user PATH.
+      # No admin required (Scope="perUser" in packaging/wix/hina.wxs).
+      - name: Install WiX 4
+        if: matrix.os == 'windows-latest'
+        run: dotnet tool install --global wix
+
+      - name: Build Windows .msi
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          set -e
+          friendly_rid() {
+            case "$1" in
+              win-x64) echo "windows-x64" ;;
+              win-arm64) echo "windows-arm64" ;;
+            esac
+          }
+          arch=$([[ "${{ matrix.rid }}" == "win-x64" ]] && echo "x64" || echo "arm64")
+          name="Hina-$(friendly_rid "${{ matrix.rid }}")"
+
+          # WiX needs an absolute path to the bin source; the wxs file lives at
+          # packaging/wix/hina.wxs but the source file lives in artifacts/cli.
+          wix build packaging/wix/hina.wxs \
+            -arch "$arch" \
+            -d "HinaBin=$(pwd)/artifacts/cli/hina.exe" \
+            -d "HinaVersion=1.0.0" \
+            -out "dist/${name}.msi"
+
+          ls -la dist
+
       # Linux: build a .deb that drops `hina` into /usr/local/bin via dpkg-deb.
       # No external tooling needed on ubuntu-latest beyond dpkg-deb (present by default).
       - name: Build Linux .deb package
@@ -243,8 +274,31 @@ jobs:
         id: version
         run: |
           TAG="v1.0.0-$(git rev-parse --short HEAD)"
+          VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Generated tag: $TAG"
+
+      # Generate the Scoop manifest from the template, substituting version + tag +
+      # SHA256 of the windows .zip artifacts. End-users install via:
+      #   scoop install https://github.com/Arutosio/Hina/releases/latest/download/hina.json
+      - name: Generate Scoop manifest
+        run: |
+          set -e
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          HASH_X64="$(sha256sum dist/Hina-windows-x64.zip | cut -d' ' -f1)"
+          HASH_ARM64="$(sha256sum dist/Hina-windows-arm64.zip | cut -d' ' -f1)"
+
+          sed \
+            -e "s|__VERSION__|${VERSION}|g" \
+            -e "s|__TAG__|${TAG}|g" \
+            -e "s|__HASH_X64__|${HASH_X64}|g" \
+            -e "s|__HASH_ARM64__|${HASH_ARM64}|g" \
+            packaging/scoop/hina.json.template > dist/hina.json
+
+          echo "Scoop manifest:"
+          cat dist/hina.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

@@ -384,3 +384,6 @@ MigrationBackup/
 # OMC local state and shell artifacts
 .omc/
 *.stackdump
+
+# Release script output (scripts/release.sh)
+dist/

@@ -65,17 +65,111 @@ jobs:
       - name: Publish Hina.CLI (${{ matrix.rid }}, AOT)
         run: dotnet publish Hina.CLI/Hina.CLI.csproj -c Release -r ${{ matrix.rid }} --self-contained -o artifacts/cli
 
+      # Rename the published binary so users see `hina` / `hina.exe` rather than
+      # `Hina.CLI`. Matches what scripts/release.sh does locally.
+      - name: Rename binary to hina
+        shell: bash
+        run: |
+          set -e
+          if [[ "${{ matrix.rid }}" == win-* ]]; then
+            [[ -f artifacts/cli/Hina.CLI.exe ]] && mv artifacts/cli/Hina.CLI.exe artifacts/cli/hina.exe
+          else
+            [[ -f artifacts/cli/Hina.CLI ]] && mv artifacts/cli/Hina.CLI artifacts/cli/hina
+            chmod +x artifacts/cli/hina
+          fi
+
       - name: Package Hina.CLI archive
         shell: bash
         run: |
           set -e
           mkdir -p dist
-          base="Hina.CLI-${{ matrix.rid }}"
+          friendly_rid() {
+            case "$1" in
+              win-x64) echo "windows-x64" ;;
+              win-arm64) echo "windows-arm64" ;;
+              linux-x64) echo "linux-x64" ;;
+              linux-arm64) echo "linux-arm64" ;;
+              osx-x64) echo "macos-x64" ;;
+              osx-arm64) echo "macos-arm64" ;;
+            esac
+          }
+          base="Hina-$(friendly_rid "${{ matrix.rid }}")"
           if [[ "${{ matrix.rid }}" == win-* ]]; then
             (cd artifacts/cli && 7z a -tzip "../../dist/$base.zip" . > /dev/null)
           else
             tar -C artifacts/cli -czf "dist/$base.tar.gz" .
           fi
+          ls -la dist
+
+      # macOS: build a .pkg installer that drops `hina` into /usr/local/bin.
+      # productbuild + pkgbuild ship with Xcode CLT (present on macos-latest).
+      # The .pkg is signed only if APPLE_DEV_ID_INSTALLER_CERT is configured;
+      # otherwise it's unsigned (user has to right-click → Open the first time).
+      - name: Build macOS .pkg installer
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          set -e
+          friendly_rid() {
+            case "$1" in
+              osx-x64) echo "macos-x64" ;;
+              osx-arm64) echo "macos-arm64" ;;
+            esac
+          }
+          name="Hina-$(friendly_rid "${{ matrix.rid }}")"
+          mkdir -p pkgroot/usr/local/bin
+          cp artifacts/cli/hina pkgroot/usr/local/bin/hina
+          chmod +x pkgroot/usr/local/bin/hina
+
+          pkgbuild \
+            --root pkgroot \
+            --identifier "com.hina.cli" \
+            --version "1.0.0" \
+            --install-location "/" \
+            "dist/${name}.pkg"
+
+          ls -la dist
+
+      # Linux: build a .deb that drops `hina` into /usr/local/bin via dpkg-deb.
+      # No external tooling needed on ubuntu-latest beyond dpkg-deb (present by default).
+      - name: Build Linux .deb package
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -e
+          friendly_rid() {
+            case "$1" in
+              linux-x64) echo "linux-x64" ;;
+              linux-arm64) echo "linux-arm64" ;;
+            esac
+          }
+          deb_arch() {
+            case "$1" in
+              linux-x64) echo "amd64" ;;
+              linux-arm64) echo "arm64" ;;
+            esac
+          }
+          name="Hina-$(friendly_rid "${{ matrix.rid }}")"
+          arch=$(deb_arch "${{ matrix.rid }}")
+
+          # dpkg-deb expects a specific layout under <pkgroot>/.
+          mkdir -p debroot/DEBIAN debroot/usr/local/bin
+          cp artifacts/cli/hina debroot/usr/local/bin/hina
+          chmod 0755 debroot/usr/local/bin/hina
+
+          cat > debroot/DEBIAN/control <<EOF
+          Package: hina
+          Version: 1.0.0
+          Section: utils
+          Priority: optional
+          Architecture: ${arch}
+          Maintainer: Hina <https://github.com/Arutosio/Hina>
+          Description: Cross-platform package manager (hina install <url>)
+           Cross-platform package manager + rsync-style patcher.
+           See https://github.com/Arutosio/Hina
+          EOF
+
+          dpkg-deb --build --root-owner-group debroot "dist/${name}.deb"
           ls -la dist
 
       - name: Upload Hina.CLI artifact

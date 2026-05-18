@@ -19,6 +19,7 @@ Top-level (end-user package manager):
   which <name>              Print the install path of an app
   update [name]             Update one app or every installed app
   reinstall <name>          Reinstall an app
+  verify [name]             Reconcile registry against on-disk state
 
 hina dev <subcommand> (patcher engine + publisher helpers):
   check       --dir <path> --base <url>
@@ -109,6 +110,22 @@ hina reinstall foo --rotate-key   # accept a publisher key change
 
 Without `--rotate-key`, reinstall refuses to proceed if the new descriptor declares a different publisher key than the one pinned at original install time (silent key-rotation guard). The check happens before uninstall, so a refusal leaves the install intact.
 
+### verify
+
+Reconcile the local registry against on-disk state. Detects orphans created when
+the user manually deletes an app directory, breaks a symlink, or removes a
+shortcut. `--repair` cleans the orphans.
+
+```shell
+hina verify                # report orphans across all apps
+hina verify foo            # one app
+hina verify --repair       # report + clean
+```
+
+Detection is read-only; only `--repair` mutates anything. Exit code `0` when all
+inspected apps are healthy or when `--repair` succeeds; `1` when orphans were
+found and not repaired; `2` on internal error.
+
 ---
 
 ## hina dev — Developer / Publisher Subcommands
@@ -191,6 +208,7 @@ Validates the descriptor against the schema, attaches `descriptorSignature`, wri
 | `--allow-insecure` | `install` | Permit HTTP descriptor URLs (default: HTTPS only) |
 | `--rotate-key` | `reinstall` | Accept a publisher key change |
 | `--force` | `update` | Re-run patcher even if descriptor version unchanged |
+| `--repair` | `verify` | Remove orphan registry entries + dangling side-effects |
 | `-v`, `--verbose` | all | Enable debug logging |
 
 ### hina dev patch / check / verify / rollback / cleanup

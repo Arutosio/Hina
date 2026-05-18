@@ -200,13 +200,18 @@ namespace Hina.PackageManager.Descriptor
                 errors.Add($"{field} '{value}' must be relative.");
                 return;
             }
-            // Reject path traversal regardless of separator style.
+            // Reject path traversal AND no-op segments regardless of separator style.
             string normalized = value.Replace('\\', '/');
             foreach (string segment in normalized.Split('/'))
             {
                 if (segment == "..")
                 {
                     errors.Add($"{field} '{value}' must not contain '..' segments.");
+                    return;
+                }
+                if (segment == ".")
+                {
+                    errors.Add($"{field} '{value}' must not contain '.' segments; use the plain relative path.");
                     return;
                 }
             }

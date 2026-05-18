@@ -46,6 +46,8 @@ namespace Hina.CLI
                     return UpdateCommand.RunAsync(args, logger, ct);
                 case "reinstall":
                     return ReinstallCommand.RunAsync(args, logger, ct);
+                case "verify":
+                    return VerifyCommand.RunAsync(args, logger, ct);
                 case "dev":
                     return Task.FromResult(DevCommand.Run(args, loggerFactory, logger));
                 default:
@@ -69,6 +71,7 @@ namespace Hina.CLI
             Console.WriteLine("  which <name>           Print the install path of an app");
             Console.WriteLine("  update [name]          Update one app or all installed apps");
             Console.WriteLine("  reinstall <name>       Reinstall an app (use --rotate-key for key change)");
+            Console.WriteLine("  verify [name]          Reconcile registry against on-disk state (--repair to clean orphans)");
             Console.WriteLine("  dev <subcommand>       Advanced patcher commands");
             Console.WriteLine();
             Console.WriteLine("Global flags:");

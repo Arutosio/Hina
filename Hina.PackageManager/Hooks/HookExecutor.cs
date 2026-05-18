@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 using Hina.PackageManager.Descriptor;
 using Hina.PackageManager.Platform;
 using Hina.PackageManager.Registry;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Hina.PackageManager.Hooks
 {
@@ -14,13 +16,15 @@ namespace Hina.PackageManager.Hooks
     public sealed class HookExecutor
     {
         private readonly IPlatformIntegration _platform;
+        private readonly ILogger _logger;
 
-        public HookExecutor(IPlatformIntegration platform)
+        public HookExecutor(IPlatformIntegration platform, ILogger? logger = null)
         {
             _platform = platform;
+            _logger = logger ?? NullLogger.Instance;
         }
 
-        public async Task<HookEvidence> ApplyAsync(HookAction hook, string appDir, CancellationToken ct)
+        public async Task<HookEvidence> ApplyAsync(HookAction hook, string appDir, string appName, CancellationToken ct)
         {
             string identity = HookIdentity.For(hook);
             switch (hook)
@@ -50,12 +54,13 @@ namespace Hina.PackageManager.Hooks
                     {
                         throw new InvalidOperationException("installFont hook requires at least one file.");
                     }
-                    // installFont evidence is a |-joined list of absolute installed-font paths.
+                    // Per-app font install: appName is prefixed onto the destination filename
+                    // so two apps can ship the same font filename without collision (H4).
                     List<string> installed = new List<string>(f.Files.Count);
                     foreach (string rel in f.Files)
                     {
                         string abs = Path.Combine(appDir, rel);
-                        installed.Add(await _platform.InstallFont(abs, ct));
+                        installed.Add(await _platform.InstallFont(abs, appName, ct));
                     }
                     return new HookEvidence { Action = "installFont", Identity = identity, Evidence = string.Join("|", installed) };
                 }
@@ -94,7 +99,11 @@ namespace Hina.PackageManager.Hooks
                     await _platform.UnregisterAutostart(evidence.Evidence, ct);
                     break;
                 default:
-                    // Unknown action recorded by a future Hina version: leave on disk, no-op.
+                    // Unknown action recorded by a future Hina version: log so the user
+                    // knows the uninstall may leave residue, but don't throw — uninstall
+                    // must be fail-soft.
+                    _logger.LogWarning("Skipping unknown hook action '{Action}'; uninstall may leave residue at {Evidence}.",
+                        evidence.Action, evidence.Evidence);
                     break;
             }
         }

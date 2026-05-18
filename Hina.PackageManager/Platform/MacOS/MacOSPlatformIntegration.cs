@@ -125,8 +125,17 @@ namespace Hina.PackageManager.Platform.MacOS
 
         public Task<string> InstallFont(string fontFile, CancellationToken ct)
         {
+            // Legacy overload — new code paths use the (file, appName, ct) overload.
             Directory.CreateDirectory(_userFontsDir);
             string destPath = Path.Combine(_userFontsDir, Path.GetFileName(fontFile));
+            File.Copy(fontFile, destPath, overwrite: true);
+            return Task.FromResult(destPath);
+        }
+
+        public Task<string> InstallFont(string fontFile, string appName, CancellationToken ct)
+        {
+            Directory.CreateDirectory(_userFontsDir);
+            string destPath = Path.Combine(_userFontsDir, $"hina-{SanitizeId(appName)}-{Path.GetFileName(fontFile)}");
             File.Copy(fontFile, destPath, overwrite: true);
             return Task.FromResult(destPath);
         }
@@ -135,6 +144,39 @@ namespace Hina.PackageManager.Platform.MacOS
         {
             TryDeleteFile(evidencePath);
             return Task.CompletedTask;
+        }
+
+        public bool IsEvidenceDangling(string action, string evidence)
+        {
+            switch (action)
+            {
+                case "addToPath":
+                    if (!File.Exists(evidence) && new FileInfo(evidence).LinkTarget == null) return true;
+                    string? target = new FileInfo(evidence).LinkTarget;
+                    return target != null && !File.Exists(target);
+
+                case "installFont":
+                    foreach (string p in evidence.Split('|', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        if (!File.Exists(p)) return true;
+                    }
+                    return false;
+
+                case "shellEntry":
+                    // macOS shell entries are .app bundles (directories).
+                    return !Directory.Exists(evidence);
+
+                case "registerMimeType":
+                case "registerUrlScheme":
+                    // Helper .app bundle.
+                    return !Directory.Exists(evidence);
+
+                case "registerAutostart":
+                    return !File.Exists(evidence);
+
+                default:
+                    return !File.Exists(evidence) && !Directory.Exists(evidence);
+            }
         }
 
         // ---- Autostart: ~/Library/LaunchAgents/*.plist ----

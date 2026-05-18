@@ -163,8 +163,18 @@ namespace Hina.PackageManager.Platform.Linux
 
         public Task<string> InstallFont(string fontFile, CancellationToken ct)
         {
+            // Legacy overload — no app context, so the file lands at its raw name.
+            // New code paths route through the (file, appName, ct) overload below.
             Directory.CreateDirectory(_userFontsDir);
             string destPath = Path.Combine(_userFontsDir, Path.GetFileName(fontFile));
+            File.Copy(fontFile, destPath, overwrite: true);
+            return Task.FromResult(destPath);
+        }
+
+        public Task<string> InstallFont(string fontFile, string appName, CancellationToken ct)
+        {
+            Directory.CreateDirectory(_userFontsDir);
+            string destPath = Path.Combine(_userFontsDir, $"hina-{SanitizeId(appName)}-{Path.GetFileName(fontFile)}");
             File.Copy(fontFile, destPath, overwrite: true);
             return Task.FromResult(destPath);
         }
@@ -173,6 +183,34 @@ namespace Hina.PackageManager.Platform.Linux
         {
             TryDeleteFile(evidencePath);
             return Task.CompletedTask;
+        }
+
+        public bool IsEvidenceDangling(string action, string evidence)
+        {
+            switch (action)
+            {
+                case "addToPath":
+                    // Symlink missing OR its target file is gone.
+                    if (!File.Exists(evidence) && new FileInfo(evidence).LinkTarget == null) return true;
+                    string? target = new FileInfo(evidence).LinkTarget;
+                    return target != null && !File.Exists(target);
+
+                case "installFont":
+                    foreach (string p in evidence.Split('|', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        if (!File.Exists(p)) return true;
+                    }
+                    return false;
+
+                case "registerMimeType":
+                case "registerUrlScheme":
+                case "registerAutostart":
+                case "shellEntry":
+                    return !File.Exists(evidence);
+
+                default:
+                    return !File.Exists(evidence);
+            }
         }
 
         // ---- Autostart ----

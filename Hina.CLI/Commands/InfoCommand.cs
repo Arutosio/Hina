@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using Hina.PackageManager.Install;
 using Hina.PackageManager.Paths;
 using Hina.PackageManager.Registry;
@@ -26,10 +27,12 @@ namespace Hina.CLI.Commands
                 return 1;
             }
 
+            string installSuffix = Directory.Exists(app.InstallPath) ? "" : "   [missing]";
+
             Console.WriteLine($"Name:           {app.Name}");
             Console.WriteLine($"Version:        {app.InstalledVersion}");
             Console.WriteLine($"Channel:        {app.Channel}");
-            Console.WriteLine($"Install path:   {app.InstallPath}");
+            Console.WriteLine($"Install path:   {app.InstallPath}{installSuffix}");
             Console.WriteLine($"Descriptor URL: {app.DescriptorUrl}");
             Console.WriteLine($"Base URL:       {app.BaseUrl}");
             Console.WriteLine($"Public key fpr: {InstallService.ComputeFingerprint(app.PublicKey)}");
@@ -45,6 +48,11 @@ namespace Hina.CLI.Commands
             {
                 Console.WriteLine("Hooks:");
                 foreach (HookEvidence h in app.ExecutedHooks) Console.WriteLine($"  - {h.Action}: {h.Evidence}");
+            }
+            if (!string.IsNullOrEmpty(installSuffix))
+            {
+                Console.WriteLine();
+                Console.WriteLine("Install directory is missing. Run `hina verify --repair` to clean up registry + side-effects.");
             }
             return 0;
         }

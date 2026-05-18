@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using Hina.PackageManager.Paths;
 using Hina.PackageManager.Registry;
@@ -22,10 +23,22 @@ namespace Hina.CLI.Commands
             int verWidth = Math.Max(7, registry.Apps.Values.Max(a => a.InstalledVersion.Length));
 
             Console.WriteLine($"{"NAME".PadRight(nameWidth)}  {"VERSION".PadRight(verWidth)}  SOURCE");
+            bool anyMissing = false;
             foreach (var kv in registry.Apps)
             {
                 InstalledApp app = kv.Value;
-                Console.WriteLine($"{app.Name.PadRight(nameWidth)}  {app.InstalledVersion.PadRight(verWidth)}  {app.BaseUrl}");
+                string suffix = "";
+                if (!Directory.Exists(app.InstallPath))
+                {
+                    suffix = "  [missing]";
+                    anyMissing = true;
+                }
+                Console.WriteLine($"{app.Name.PadRight(nameWidth)}  {app.InstalledVersion.PadRight(verWidth)}  {app.BaseUrl}{suffix}");
+            }
+            if (anyMissing)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Some apps are missing their install directory. Run `hina verify --repair` to clean up.");
             }
             return 0;
         }

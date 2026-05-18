@@ -70,6 +70,20 @@ namespace Hina.PackageManager.Install
             // [2] Validate + signature pinning.
             DescriptorValidator.Validate(descriptor).EnsureValid();
 
+            // [2a] Same minHinaVersion gate as InstallService — block an update that would
+            //      drag the install into a state this Hina can't drive.
+            if (!string.IsNullOrWhiteSpace(descriptor.MinHinaVersion) && !HinaVersion.IsSatisfiedBy(descriptor.MinHinaVersion))
+            {
+                return new UpdateResult
+                {
+                    Name = name,
+                    FromVersion = app.InstalledVersion,
+                    ToVersion = descriptor.Version,
+                    Status = UpdateStatus.Failed,
+                    Message = $"App requires Hina {descriptor.MinHinaVersion} or newer; running {HinaVersion.Current}. Upgrade Hina first."
+                };
+            }
+
             string verifyingKey = options.AllowRotateKey ? descriptor.PublicKey : app.PublicKey;
             if (!DescriptorSigner.Verify(descriptor, verifyingKey))
             {
@@ -96,12 +110,19 @@ namespace Hina.PackageManager.Install
                     Status = UpdateStatus.AlreadyUpToDate
                 };
             }
+            // M5: when sameVersion && Force, we fall through. For an unchanged descriptor
+            // the diff below is empty, so this is effectively a re-patch + registry refresh.
 
             // [4] Compute diffs (by hook identity and entry id).
+            // H2: HookEvidence.Identity was added in Phase 3; registry rows written by
+            // an earlier Hina have an empty Identity. ResolveIdentity synthesizes one
+            // so the diff stays stable on those legacy rows (addToPath recovers exact
+            // identity; other actions get a deterministic synthetic and self-heal on
+            // the first update).
             HashSet<string> existingHookIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (HookEvidence ev in app.ExecutedHooks)
             {
-                if (!string.IsNullOrEmpty(ev.Identity)) existingHookIds.Add(ev.Identity);
+                existingHookIds.Add(ResolveIdentity(ev));
             }
             HashSet<string> newHookIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (HookAction hook in descriptor.PostInstall) newHookIds.Add(HookIdentity.For(hook));
@@ -109,7 +130,7 @@ namespace Hina.PackageManager.Install
             List<HookEvidence> hooksToRemove = new();
             foreach (HookEvidence ev in app.ExecutedHooks)
             {
-                if (!newHookIds.Contains(ev.Identity)) hooksToRemove.Add(ev);
+                if (!newHookIds.Contains(ResolveIdentity(ev))) hooksToRemove.Add(ev);
             }
             List<HookAction> hooksToAdd = new();
             foreach (HookAction hook in descriptor.PostInstall)
@@ -172,7 +193,7 @@ namespace Hina.PackageManager.Install
             }
 
             // [7] Apply diffs. Remove first (so an addToPath with the same target name doesn't collide).
-            HookExecutor hooks = new HookExecutor(_platform);
+            HookExecutor hooks = new HookExecutor(_platform, _logger);
 
             foreach (HookEvidence ev in hooksToRemove)
             {
@@ -207,12 +228,47 @@ namespace Hina.PackageManager.Install
             }
             foreach (HookAction hook in hooksToAdd)
             {
-                HookEvidence evidence = await hooks.ApplyAsync(hook, app.InstallPath, ct);
+                HookEvidence evidence = await hooks.ApplyAsync(hook, app.InstallPath, app.Name, ct);
                 updated.ExecutedHooks.Add(evidence);
             }
 
             registry.Apps[name] = updated;
-            await store.SaveAsync(registry, ct);
+            // H1: at this point the patch + diff is on disk. If the registry write itself
+            // fails (disk full, perm denied), the FS state is newer than what the registry
+            // knows. Surface a clear error AND dump the would-be registry to a sibling
+            // .recovery.json so a human can rename it once the underlying issue is fixed.
+            try
+            {
+                await store.SaveAsync(registry, ct);
+            }
+            catch (Exception saveEx)
+            {
+                string recoveryPath = _paths.RegistryFile + ".recovery.json";
+                try
+                {
+                    await File.WriteAllTextAsync(
+                        recoveryPath,
+                        System.Text.Json.JsonSerializer.Serialize(
+                            registry,
+                            Hina.PackageManager.Json.PackageManagerIndentedJsonContext.Default.Registry),
+                        CancellationToken.None);
+                }
+                catch { /* best-effort dump; original failure is what matters */ }
+
+                _logger.LogError(saveEx,
+                    "Update of {Name} patched files on disk but the registry write failed. " +
+                    "A recovery snapshot was written to {RecoveryPath}.", name, recoveryPath);
+
+                return new UpdateResult
+                {
+                    Name = name,
+                    FromVersion = app.InstalledVersion,
+                    ToVersion = descriptor.Version,
+                    Status = UpdateStatus.Failed,
+                    Message = $"Files updated but registry could not be saved: {saveEx.Message}. " +
+                              $"Recovery snapshot at {recoveryPath}; rename it over registry.json after fixing the underlying issue."
+                };
+            }
 
             // [8] Refresh descriptor cache.
             try
@@ -269,14 +325,44 @@ namespace Hina.PackageManager.Install
         private static List<HookEvidence> SurvivingHooks(List<HookEvidence> existing, List<HookEvidence> removed)
         {
             HashSet<string> removedIds = new HashSet<string>(StringComparer.Ordinal);
-            foreach (HookEvidence r in removed) removedIds.Add(r.Identity);
+            foreach (HookEvidence r in removed) removedIds.Add(ResolveIdentity(r));
 
             List<HookEvidence> kept = new List<HookEvidence>();
             foreach (HookEvidence ev in existing)
             {
-                if (!removedIds.Contains(ev.Identity)) kept.Add(ev);
+                if (!removedIds.Contains(ResolveIdentity(ev))) kept.Add(ev);
             }
             return kept;
+        }
+
+        // H2 helper. Falls back to a derived identity for legacy registry rows that
+        // were written before HookEvidence.Identity existed (Phase 3). Public so tests
+        // (which live in a separate assembly) can exercise the legacy-mapping rules.
+        public static string ResolveIdentity(HookEvidence ev)
+        {
+            if (!string.IsNullOrEmpty(ev.Identity)) return ev.Identity;
+            switch (ev.Action)
+            {
+                case "addToPath":
+                    // Evidence is "<binDir>/<name>" (Linux/macOS) or "<binDir>\\<name>.cmd"
+                    // (Windows). Strip directory + extension manually to recover the original
+                    // AddToPathHook.Name regardless of which OS originally wrote the row.
+                    string basename = ev.Evidence;
+                    int lastSep = basename.LastIndexOfAny(new[] { '/', '\\' });
+                    if (lastSep >= 0) basename = basename.Substring(lastSep + 1);
+                    int lastDot = basename.LastIndexOf('.');
+                    if (lastDot > 0) basename = basename.Substring(0, lastDot);
+                    return "addToPath:" + basename;
+                default:
+                    // Exact reconstruction isn't possible for these actions from evidence
+                    // alone. Use a deterministic synthetic so legacy rows remain stable
+                    // within this single update; the next update will see proper Identity
+                    // values written by the new HookExecutor.
+                    return "legacy:" + ev.Action + ":" + Convert.ToHexString(
+                        System.Security.Cryptography.SHA256.HashData(
+                            System.Text.Encoding.UTF8.GetBytes(ev.Evidence)))
+                        .Substring(0, 8);
+            }
         }
 
         private static List<ShellEntryRecord> SurvivingEntries(List<ShellEntryRecord> existing, List<ShellEntryRecord> removed)

@@ -147,30 +147,62 @@ namespace Hina.PackageManager.Platform.Windows
 
         public Task<string> InstallFont(string fontFile, CancellationToken ct)
         {
+            // Legacy overload — new code paths use the (file, appName, ct) overload.
+            return InstallFontInternal(fontFile, appPrefix: null);
+        }
+
+        public Task<string> InstallFont(string fontFile, string appName, CancellationToken ct)
+        {
+            return InstallFontInternal(fontFile, appPrefix: SanitizeRegId(appName));
+        }
+
+        // ASCII unit-separator. Used in font evidence so a pipe in the filename
+        // (legal on some Windows FS) doesn't corrupt the split. Back-compat with
+        // pre-existing "|"-separated evidence is preserved in UninstallFont.
+        private const char EvidenceSeparator = '';
+
+        private Task<string> InstallFontInternal(string fontFile, string? appPrefix)
+        {
             Directory.CreateDirectory(_userFontsDir);
-            string destPath = Path.Combine(_userFontsDir, Path.GetFileName(fontFile));
+
+            string filename = appPrefix == null
+                ? Path.GetFileName(fontFile)
+                : $"hina-{appPrefix}-{Path.GetFileName(fontFile)}";
+            string destPath = Path.Combine(_userFontsDir, filename);
             File.Copy(fontFile, destPath, overwrite: true);
 
             // Per-user Fonts registry key — surfaces the font to the user session without
             // running as admin. Value name = display name + " (TrueType)" by convention.
-            string fontName = Path.GetFileNameWithoutExtension(fontFile);
+            string fontName = Path.GetFileNameWithoutExtension(filename);
             string regSubKey = "Software\\Microsoft\\Windows NT\\CurrentVersion\\Fonts";
             using (RegistryKey k = Reg.CurrentUser.CreateSubKey(regSubKey))
             {
                 k.SetValue(fontName + " (TrueType)", destPath);
             }
 
-            // Evidence carries both the file path and the registry value name so uninstall
-            // can clean both. Pipe-separated to match the InstallFont evidence shape
-            // used elsewhere in the codebase.
-            return Task.FromResult(destPath + "|" + fontName);
+            return Task.FromResult(destPath + EvidenceSeparator + fontName);
         }
 
         public Task UninstallFont(string evidencePath, CancellationToken ct)
         {
-            int pipe = evidencePath.IndexOf('|');
-            string filePath = pipe > 0 ? evidencePath.Substring(0, pipe) : evidencePath;
-            string? fontName = pipe > 0 ? evidencePath.Substring(pipe + 1) : null;
+            // Accept both the new US-separated shape and the legacy pipe-separated one.
+            char sep = evidencePath.Contains(EvidenceSeparator) ? EvidenceSeparator
+                     : evidencePath.Contains('|') ? '|'
+                     : (char)0;
+
+            string filePath;
+            string? fontName;
+            if (sep == 0)
+            {
+                filePath = evidencePath;
+                fontName = null;
+            }
+            else
+            {
+                int idx = evidencePath.IndexOf(sep);
+                filePath = evidencePath.Substring(0, idx);
+                fontName = evidencePath.Substring(idx + 1);
+            }
 
             TryDeleteFile(filePath);
 
@@ -185,6 +217,60 @@ namespace Hina.PackageManager.Platform.Windows
                 catch { }
             }
             return Task.CompletedTask;
+        }
+
+        public bool IsEvidenceDangling(string action, string evidence)
+        {
+            switch (action)
+            {
+                case "addToPath":
+                    // .cmd shim file
+                    return !File.Exists(evidence);
+
+                case "installFont":
+                    // Evidence is "<filePath><sep><fontName>"; check the file part.
+                    char sep = evidence.Contains(EvidenceSeparator) ? EvidenceSeparator
+                             : evidence.Contains('|') ? '|'
+                             : (char)0;
+                    string filePart = sep == 0 ? evidence : evidence.Substring(0, evidence.IndexOf(sep));
+                    return !File.Exists(filePart);
+
+                case "registerMimeType":
+                case "registerUrlScheme":
+                    // Evidence shape: "hkcu:<subkey>". Probe the subkey.
+                    return IsHkcuSubkeyMissing(evidence, "hkcu:");
+
+                case "registerAutostart":
+                    // Evidence shape: "hkcu-run:<valueName>". Probe the value.
+                    if (!evidence.StartsWith("hkcu-run:")) return false;
+                    string valueName = evidence.Substring("hkcu-run:".Length);
+                    try
+                    {
+                        using RegistryKey? k = Reg.CurrentUser.OpenSubKey(
+                            "Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+                        return k?.GetValue(valueName) == null;
+                    }
+                    catch { return true; }
+
+                case "shellEntry":
+                    // .lnk file
+                    return !File.Exists(evidence);
+
+                default:
+                    return !File.Exists(evidence);
+            }
+        }
+
+        private static bool IsHkcuSubkeyMissing(string evidence, string prefix)
+        {
+            if (!evidence.StartsWith(prefix)) return false;
+            string subKey = evidence.Substring(prefix.Length);
+            try
+            {
+                using RegistryKey? k = Reg.CurrentUser.OpenSubKey(subKey);
+                return k == null;
+            }
+            catch { return true; }
         }
 
         // ---- Autostart: HKCU\Software\Microsoft\Windows\CurrentVersion\Run ----

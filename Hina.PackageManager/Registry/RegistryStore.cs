@@ -3,6 +3,8 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Hina.PackageManager.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Hina.PackageManager.Registry
 {
@@ -11,10 +13,12 @@ namespace Hina.PackageManager.Registry
     public sealed class RegistryStore
     {
         private readonly string _path;
+        private readonly ILogger _logger;
 
-        public RegistryStore(string path)
+        public RegistryStore(string path, ILogger? logger = null)
         {
             _path = path;
+            _logger = logger ?? NullLogger.Instance;
         }
 
         public Registry Load()
@@ -27,6 +31,12 @@ namespace Hina.PackageManager.Registry
             string json = File.ReadAllText(_path);
             if (string.IsNullOrWhiteSpace(json))
             {
+                // M1: file exists but is empty — likely a partial write or truncation.
+                // Don't silently pretend nothing is installed; surface a warning so the
+                // user can spot the corruption and run `hina verify --repair`.
+                _logger.LogWarning(
+                    "Registry at {Path} is empty; treating as new. If you expected installed apps to be listed, run `hina verify` to inspect on-disk state.",
+                    _path);
                 return new Registry();
             }
 

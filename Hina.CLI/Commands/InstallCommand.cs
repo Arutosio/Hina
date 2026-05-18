@@ -36,6 +36,21 @@ namespace Hina.CLI.Commands
                 AllowInsecure = allowInsecure,
                 OnFirstTimeTrust = prompt =>
                 {
+                    // M2: detect non-interactive stdin (cron, systemd, `ssh -T`, piped
+                    // input). Console.ReadLine() returns null there and we'd otherwise
+                    // silently reject the install with no useful diagnostic.
+                    if (Console.IsInputRedirected)
+                    {
+                        Console.Error.WriteLine();
+                        Console.Error.WriteLine($"  App:        {prompt.AppName}");
+                        Console.Error.WriteLine($"  Publisher:  {prompt.Publisher}");
+                        Console.Error.WriteLine($"  Source:     {prompt.DescriptorUrl}");
+                        Console.Error.WriteLine($"  Key fpr:    {prompt.PublicKeyFingerprint}");
+                        Console.Error.WriteLine();
+                        Console.Error.WriteLine("Refusing to install: TOFU approval needs an interactive terminal. Re-run `hina install` from a TTY.");
+                        return false;
+                    }
+
                     Console.WriteLine();
                     Console.WriteLine($"  App:        {prompt.AppName}");
                     Console.WriteLine($"  Publisher:  {prompt.Publisher}");

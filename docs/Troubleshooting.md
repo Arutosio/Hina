@@ -419,6 +419,31 @@ Install failed: 'demo' is already installed (version 1.0.0). Use `hina update` o
 
 ---
 
+### PM3b. App Folder Manually Deleted
+
+**Symptom:**
+
+`hina list` shows the app with a trailing `[missing]` marker; `hina update`
+fails the patch (no files to delta against); `hina info` prints a hint to run
+`hina verify`.
+
+**Cause:**
+
+The user (or another tool) `rm -rf`d the app directory but the registry entry
+remains, plus shortcuts/symlinks created at install time still point at the
+vanished target.
+
+**Solutions:**
+
+```shell
+hina verify          # see exactly what's dangling
+hina verify --repair # clean orphan registry entry + dangling side-effects
+```
+
+`hina verify --repair` is idempotent and safe to run from cron.
+
+---
+
 ### PM4. Install Directory Already Exists and Is Not Empty
 
 **Error:**

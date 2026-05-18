@@ -53,6 +53,14 @@ namespace Hina.PackageManager.Install
             AppDescriptor descriptor = await _fetcher.FetchAsync(descriptorUrl, ct);
             DescriptorValidator.Validate(descriptor, new ValidationContext { AllowInsecure = options.AllowInsecure }).EnsureValid();
 
+            // [3a] Enforce descriptor.minHinaVersion against the running binary so an app
+            //      requiring features from a newer Hina cannot be installed by an older one.
+            if (!string.IsNullOrWhiteSpace(descriptor.MinHinaVersion) && !HinaVersion.IsSatisfiedBy(descriptor.MinHinaVersion))
+            {
+                throw new InvalidOperationException(
+                    $"App '{descriptor.Name}' requires Hina {descriptor.MinHinaVersion} or newer; running {HinaVersion.Current}. Upgrade Hina first.");
+            }
+
             // [4] Signature: descriptor must be signed; the same publicKey it claims must verify it.
             if (descriptor.DescriptorSignature == null)
             {
@@ -102,7 +110,7 @@ namespace Hina.PackageManager.Install
             }
 
             // [9-15] Stage everything under a transaction so any failure rolls back.
-            HookExecutor hooks = new HookExecutor(_platform);
+            HookExecutor hooks = new HookExecutor(_platform, _logger);
             InstallTransaction tx = new InstallTransaction(_platform, hooks);
             InstalledApp newApp = new InstalledApp
             {
@@ -161,7 +169,7 @@ namespace Hina.PackageManager.Install
                 // [13] Post-install hooks in declared order.
                 foreach (HookAction hook in descriptor.PostInstall)
                 {
-                    HookEvidence evidence = await hooks.ApplyAsync(hook, appDir, ct);
+                    HookEvidence evidence = await hooks.ApplyAsync(hook, appDir, descriptor.Name, ct);
                     tx.RecordHook(evidence);
                     newApp.ExecutedHooks.Add(evidence);
                 }

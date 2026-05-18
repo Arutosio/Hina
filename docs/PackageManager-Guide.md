@@ -19,6 +19,7 @@ This guide covers the user-facing CLI and the wire format publishers author.
 | `hina which <name>` | Print the install path of an app |
 | `hina update [name]` | Update one app or all installed apps |
 | `hina reinstall <name>` | Reinstall (use `--rotate-key` to accept a new publisher key) |
+| `hina verify [name] [--repair]` | Reconcile registry against on-disk state; detect orphans (missing dirs, dangling shortcuts) and optionally clean them |
 | `hina dev <subcommand>` | Advanced patcher / publisher commands (`check`, `patch`, `verify`, `rollback`, `cleanup`, `sign-descriptor`) |
 
 Global flags:
@@ -217,6 +218,28 @@ End-to-end:
    `descriptorSignature`, and writes the result in place (or to `--out <path>`).
 5. Host the descriptor at any URL you control. Tell users to run
    `hina install <descriptor-url>`.
+
+---
+
+## Recovery: detecting orphans
+
+If you (or another tool) manually delete an installed app directory or move
+Hina's data dir, the registry will still reference the missing app. `hina list`
+flags the row with `[missing]` and points at:
+
+```shell
+hina verify            # report orphans across all installed apps
+hina verify --repair   # remove orphan registry entries + dangling shortcuts/symlinks
+```
+
+The verifier checks each installed app's:
+
+- Install directory presence
+- Each recorded shell entry's evidence (symlink target, .lnk, .app bundle, .desktop)
+- Each recorded hook's evidence (`addToPath` symlink targets, `installFont` files, MIME/URL/autostart artifacts)
+
+`--repair` is fail-soft: it logs and continues on individual failures. Safe to
+run from cron.
 
 ---
 

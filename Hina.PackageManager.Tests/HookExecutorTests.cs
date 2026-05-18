@@ -17,6 +17,7 @@ namespace Hina.PackageManager.Tests
             HookEvidence ev = await exec.ApplyAsync(
                 new AddToPathHook { Name = "demo", Target = "bin/demo" },
                 "/apps/demo",
+                "demo",
                 CancellationToken.None);
 
             Assert.Equal("addToPath", ev.Action);
@@ -33,6 +34,7 @@ namespace Hina.PackageManager.Tests
             HookEvidence ev = await exec.ApplyAsync(
                 new InstallFontHook { Files = { "fonts/A.ttf", "fonts/B.ttf" } },
                 "/apps/demo",
+                "demo",
                 CancellationToken.None);
 
             Assert.Equal("installFont", ev.Action);
@@ -45,9 +47,9 @@ namespace Hina.PackageManager.Tests
             FakePlatformIntegration p = new();
             HookExecutor exec = new(p);
 
-            await exec.ApplyAsync(new MimeTypeHook { MimeType = "application/x-foo", Extensions = { ".foo" }, EntryId = "main" }, "/apps/x", CancellationToken.None);
-            await exec.ApplyAsync(new UrlSchemeHook { Scheme = "foo", EntryId = "main" }, "/apps/x", CancellationToken.None);
-            await exec.ApplyAsync(new AutostartHook { EntryId = "main" }, "/apps/x", CancellationToken.None);
+            await exec.ApplyAsync(new MimeTypeHook { MimeType = "application/x-foo", Extensions = { ".foo" }, EntryId = "main" }, "/apps/x", "x", CancellationToken.None);
+            await exec.ApplyAsync(new UrlSchemeHook { Scheme = "foo", EntryId = "main" }, "/apps/x", "x", CancellationToken.None);
+            await exec.ApplyAsync(new AutostartHook { EntryId = "main" }, "/apps/x", "x", CancellationToken.None);
 
             Assert.Single(p.MimeTypesRegistered);
             Assert.Single(p.UrlSchemesRegistered);

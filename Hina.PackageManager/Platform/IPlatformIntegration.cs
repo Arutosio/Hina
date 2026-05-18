@@ -27,9 +27,21 @@ namespace Hina.PackageManager.Platform
         Task UnregisterUrlScheme(string evidencePath, CancellationToken ct);
 
         Task<string> InstallFont(string fontFile, CancellationToken ct);
+        // Per-app font install: the destination filename is prefixed with the app
+        // name so two apps shipping `Foo.ttf` no longer collide and uninstall of
+        // one cannot remove the other's font. Default impl forwards to the legacy
+        // overload so existing platforms don't break — each impl overrides.
+        Task<string> InstallFont(string fontFile, string appName, CancellationToken ct) => InstallFont(fontFile, ct);
         Task UninstallFont(string evidencePath, CancellationToken ct);
 
         Task<string> RegisterAutostart(AutostartHook hook, string appDir, CancellationToken ct);
         Task UnregisterAutostart(string evidencePath, CancellationToken ct);
+
+        // Used by `hina verify`. Returns true if the recorded evidence no longer
+        // describes a live side-effect (file missing, symlink target gone, registry
+        // key absent). action is the HookEvidence.Action discriminator or one of
+        // the shellEntry / shellEntryLink synthetic actions documented in
+        // RegistryVerifier.
+        bool IsEvidenceDangling(string action, string evidence) => false;
     }
 }

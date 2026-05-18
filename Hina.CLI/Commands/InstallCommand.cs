@@ -34,6 +34,7 @@ namespace Hina.CLI.Commands
             InstallOptions options = new InstallOptions
             {
                 AllowInsecure = allowInsecure,
+                Network = NetworkArgs.FromArgs(args),
                 OnFirstTimeTrust = prompt =>
                 {
                     // M2: detect non-interactive stdin (cron, systemd, `ssh -T`, piped

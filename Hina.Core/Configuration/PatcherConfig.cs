@@ -12,8 +12,22 @@ namespace Hina.Core.Configuration
         public bool Verify { get; set; } = true;
         public bool Backup { get; set; } = true;
         public string? TrustedPublicKey { get; set; }
-        public int MaxRetries { get; set; } = 3;
+        public int MaxRetries { get; set; } = 8;
         public int RetryBaseDelayMs { get; set; } = 1000;
+        public int MaxRetryDelayMs { get; set; } = 30_000;
+
+        // Per-TCP-connect timeout. Short so a stalled handshake fails fast and the
+        // retry policy kicks in (vs. waiting for the default HttpClient 100s wall).
+        public int ConnectTimeoutMs { get; set; } = 10_000;
+
+        // Per-HTTP-request timeout (overall). Bounds how long a single chunk/manifest
+        // fetch can hang before being treated as transient and retried.
+        public int RequestTimeoutMs { get; set; } = 60_000;
+
+        // Connection pool lifetime. After this, the underlying socket is closed and
+        // a fresh DNS lookup + connect runs on the next request. Matters on flaky /
+        // mobile / changing-IP links so we don't reuse a dead socket forever.
+        public int PooledConnectionLifetimeMs { get; set; } = 60_000;
 
         // Chunking mode: "fixed" (default) or "cdc" (content-defined chunking).
         public string ChunkingMode { get; set; } = "fixed";

@@ -16,18 +16,22 @@ namespace Hina.PackageManager.Descriptor
     {
         public const long MaxDescriptorBytes = 5 * 1024 * 1024;
         public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
-        public const int DefaultMaxRetries = 3;
+        public const int DefaultMaxRetries = 5;
         public static readonly TimeSpan DefaultRetryBaseDelay = TimeSpan.FromMilliseconds(500);
+        public static readonly TimeSpan DefaultMaxRetryDelay = TimeSpan.FromSeconds(15);
 
         private readonly HttpClient _http;
         private readonly int _maxRetries;
         private readonly TimeSpan _retryBaseDelay;
 
-        public DescriptorFetcher(HttpClient? http = null, int maxRetries = DefaultMaxRetries, TimeSpan? retryBaseDelay = null)
+        private readonly TimeSpan _maxRetryDelay;
+
+        public DescriptorFetcher(HttpClient? http = null, int maxRetries = DefaultMaxRetries, TimeSpan? retryBaseDelay = null, TimeSpan? maxRetryDelay = null)
         {
             _http = http ?? SharedHttp.Instance;
             _maxRetries = Math.Max(1, maxRetries);
             _retryBaseDelay = retryBaseDelay ?? DefaultRetryBaseDelay;
+            _maxRetryDelay = maxRetryDelay ?? DefaultMaxRetryDelay;
         }
 
         public virtual async Task<AppDescriptor> FetchAsync(Uri url, CancellationToken ct)
@@ -46,7 +50,10 @@ namespace Hina.PackageManager.Descriptor
             {
                 if (attempt > 0)
                 {
-                    TimeSpan delay = TimeSpan.FromMilliseconds(_retryBaseDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
+                    // Exponential backoff capped at _maxRetryDelay so we don't sleep
+                    // for hours on retry 10+ over a flaky connection.
+                    double rawMs = _retryBaseDelay.TotalMilliseconds * Math.Pow(2, attempt - 1);
+                    TimeSpan delay = TimeSpan.FromMilliseconds(Math.Min(rawMs, _maxRetryDelay.TotalMilliseconds));
                     await Task.Delay(delay, ct);
                 }
 

@@ -92,6 +92,11 @@ namespace Hina.CLI
             Console.WriteLine("Global flags:");
             Console.WriteLine("  -v, --verbose          Enable debug logging");
             Console.WriteLine("  --allow-insecure       Permit HTTP descriptor URLs (install only)");
+            Console.WriteLine();
+            Console.WriteLine("Network tuning (install + update; raise these on flaky / mobile connections):");
+            Console.WriteLine("  --retries N              Max retry attempts per request (default 8)");
+            Console.WriteLine("  --connect-timeout SEC    TCP connect timeout in seconds (default 10)");
+            Console.WriteLine("  --request-timeout SEC    Overall request timeout in seconds (default 60)");
         }
     }
 }

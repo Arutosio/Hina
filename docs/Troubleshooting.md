@@ -522,6 +522,45 @@ The descriptor breaks the schema invariants documented in
 
 ---
 
+### PM6b. Flaky / Mobile / Changing-IP Network
+
+**Symptoms:**
+
+- `hina install` or `hina update` fails with `HttpRequestException: Request failed
+  after N attempts` mid-download, especially after the connection drops, the laptop
+  changes Wi-Fi, the modem reconnects, the carrier hands off to a new IP, etc.
+- Long stalls (~100s) before any error, on a slow or congested link.
+
+**What Hina already does:**
+
+- Retries each chunk and the descriptor up to 8 times with exponential backoff
+  capped at 30 s, so a 30-second outage no longer kills the install.
+- Tears down stale TCP sockets every 60 s (`PooledConnectionLifetimeMs`) and
+  re-resolves DNS, so a fresh IP / route is picked up automatically.
+- Caps the TCP handshake at 10 s (`ConnectTimeoutMs`) so a black-holed route fails
+  fast and retry kicks in, instead of sitting on the default 100 s wall.
+- On Ctrl-C, cooperative cancellation rolls back any in-flight patch and leaves a
+  journal; the next `hina update` or `hina install` finds the journal, rolls it
+  back, and the rsync matcher reuses every chunk that already made it to disk —
+  effectively a resume.
+
+**Knobs if defaults aren't aggressive enough:**
+
+```
+hina install <url> --retries 20 --connect-timeout 5 --request-timeout 30
+hina update --retries 20 --connect-timeout 5 --request-timeout 30
+```
+
+- `--retries N` raises the per-request retry budget (default 8).
+- `--connect-timeout SEC` shortens the TCP handshake timeout (default 10).
+- `--request-timeout SEC` shortens the overall request timeout (default 60).
+
+Smaller timeouts mean faster failure → faster retry on a bad route. Raise
+`--retries` until the operation completes during your typical reconnection
+window.
+
+---
+
 ### PM7. Update Reports "AlreadyUpToDate" but I Just Re-Built
 
 **Cause:**

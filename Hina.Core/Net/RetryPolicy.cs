@@ -13,15 +13,19 @@ namespace Hina.Core.Net
     /// </summary>
     public sealed class RetryPolicy
     {
+        public const int DefaultMaxDelayMs = 30_000;
+
         private readonly int _maxRetries;
         private readonly int _baseDelayMs;
+        private readonly int _maxDelayMs;
         private readonly ILogger _logger;
         private readonly Random _jitterRng;
 
-        public RetryPolicy(int maxRetries, int baseDelayMs, ILogger? logger = null, Random? jitterRng = null)
+        public RetryPolicy(int maxRetries, int baseDelayMs, int maxDelayMs = DefaultMaxDelayMs, ILogger? logger = null, Random? jitterRng = null)
         {
             _maxRetries = maxRetries;
             _baseDelayMs = baseDelayMs;
+            _maxDelayMs = Math.Max(baseDelayMs, maxDelayMs);
             _logger = logger ?? NullLogger.Instance;
             _jitterRng = jitterRng ?? Random.Shared;
         }
@@ -56,10 +60,14 @@ namespace Hina.Core.Net
 
         public int CalculateDelay(int attempt)
         {
-            // Exponential backoff: baseDelay * 2^(attempt-1) + jitter
-            int exponentialMs = _baseDelayMs * (1 << (attempt - 1));
+            // Exponential backoff: baseDelay * 2^(attempt-1) + jitter, capped at maxDelay
+            // so retry 20 doesn't become a multi-hour wait (and so the shift doesn't
+            // overflow at attempt 32). Cap is applied to the pre-jitter exponential so
+            // jitter still stays sub-cap.
+            long exponential = (long)_baseDelayMs * (1L << Math.Min(attempt - 1, 30));
+            int exponentialMs = exponential > _maxDelayMs ? _maxDelayMs : (int)exponential;
             int jitterMs = _jitterRng.Next(0, Math.Max(1, exponentialMs / 4));
-            return exponentialMs + jitterMs;
+            return Math.Min(exponentialMs + jitterMs, _maxDelayMs);
         }
 
         public static bool IsTransient(Exception ex)

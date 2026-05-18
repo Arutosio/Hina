@@ -26,7 +26,12 @@ namespace Hina.CLI.Commands
             InstallPaths paths = InstallPaths.ForCurrentOs();
             IPlatformIntegration platform = PlatformIntegrationFactory.Current(paths);
             UpdateService service = new UpdateService(paths, platform);
-            UpdateOptions options = new UpdateOptions { Force = force, MaxParallelism = jobs };
+            UpdateOptions options = new UpdateOptions
+            {
+                Force = force,
+                MaxParallelism = jobs,
+                Network = NetworkArgs.FromArgs(args)
+            };
 
             try
             {

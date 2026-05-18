@@ -137,7 +137,12 @@ namespace Hina.PackageManager.Install
                     Channel = descriptor.Channel,
                     TrustedPublicKey = descriptor.PublicKey,
                     Verify = true,
-                    Backup = false
+                    Backup = false,
+                    MaxRetries = options.Network.MaxRetries,
+                    RetryBaseDelayMs = options.Network.RetryBaseDelayMs,
+                    MaxRetryDelayMs = options.Network.MaxRetryDelayMs,
+                    ConnectTimeoutMs = options.Network.ConnectTimeoutMs,
+                    RequestTimeoutMs = options.Network.RequestTimeoutMs
                 };
                 IPatchClient patcher = _patchClientFactory(patchCfg);
                 PatchResult patchResult = await patcher.PatchAsync(appDir, ct);

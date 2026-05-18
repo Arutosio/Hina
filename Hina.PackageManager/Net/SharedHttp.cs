@@ -19,7 +19,18 @@ namespace Hina.PackageManager.Net
 
         private static HttpClient BuildClient()
         {
-            HttpClient client = new HttpClient
+            // SocketsHttpHandler with PooledConnectionLifetime=60s makes the client
+            // tolerate IP changes / mobile-network hand-offs / flaky DNS: a stale
+            // socket is closed on schedule and a fresh DNS+connect runs on the next
+            // request. ConnectTimeout caps the TCP handshake so a stalled SYN fails
+            // fast instead of stretching to the default 100s wall.
+            SocketsHttpHandler handler = new SocketsHttpHandler
+            {
+                PooledConnectionLifetime = TimeSpan.FromSeconds(60),
+                ConnectTimeout = TimeSpan.FromSeconds(10),
+                AutomaticDecompression = System.Net.DecompressionMethods.All
+            };
+            HttpClient client = new HttpClient(handler, disposeHandler: true)
             {
                 Timeout = TimeSpan.FromSeconds(30)
             };

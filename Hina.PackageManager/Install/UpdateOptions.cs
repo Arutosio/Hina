@@ -14,6 +14,9 @@ namespace Hina.PackageManager.Install
         // still serial within itself; this just lets the registry-of-N walk overlap
         // network and disk I/O across apps. Default 4 mirrors PatchClient.Concurrency.
         public int MaxParallelism { get; init; } = 4;
+
+        // Tuning for fetch + chunk-download resilience on flaky / mobile networks.
+        public NetworkOptions Network { get; init; } = new NetworkOptions();
     }
 
     public sealed class UpdateResult

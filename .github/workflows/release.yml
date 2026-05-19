@@ -52,13 +52,32 @@ jobs:
         run: brew install openssl@3 brotli
 
       # linux-arm64 cross-compile from x64 needs the cross-arch sysroot package.
+      # Ubuntu 24.04 GitHub runners use the DEB822 /etc/apt/sources.list.d/ubuntu.sources
+      # which (without an explicit Architectures:) makes apt try to fetch arm64
+      # packages from amd64-only mirrors (azure / security.ubuntu.com) after
+      # dpkg --add-architecture arm64, producing 404s. Pin the default sources
+      # to amd64 and add a separate arm64-only source pointing at ports.ubuntu.com.
       - name: Install linux-arm64 cross toolchain
         if: matrix.rid == 'linux-arm64'
         run: |
+          set -e
           sudo dpkg --add-architecture arm64
-          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs) main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs)-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+          # Legacy single-file source list (may not exist on noble).
+          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list 2>/dev/null || true
+          # DEB822 ubuntu.sources on Ubuntu 24.04 — pin Architectures: amd64.
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo sed -i '/^Architectures:/d' /etc/apt/sources.list.d/ubuntu.sources
+            sudo sed -i '/^Types:/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+          fi
+          CODENAME="$(lsb_release -cs)"
+          {
+            echo "Types: deb"
+            echo "URIs: http://ports.ubuntu.com/ubuntu-ports"
+            echo "Suites: ${CODENAME} ${CODENAME}-updates ${CODENAME}-security ${CODENAME}-backports"
+            echo "Components: main restricted universe multiverse"
+            echo "Architectures: arm64"
+            echo "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg"
+          } | sudo tee /etc/apt/sources.list.d/arm64.sources >/dev/null
           sudo apt-get update
           sudo apt-get install -y clang llvm binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu zlib1g-dev:arm64
 

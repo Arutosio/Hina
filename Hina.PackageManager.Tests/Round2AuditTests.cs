@@ -205,26 +205,27 @@ namespace Hina.PackageManager.Tests
                 v2Map["https://example.com/app" + i + ".json"] = SignedDescriptor("app" + i, "1.1.0", pub, priv);
             }
 
+            SlowFakePatchClient.InFlight = 0;
+            SlowFakePatchClient.PeakInFlight = 0;
+
             UpdateService svc = new UpdateService(_paths, _platform,
                 fetcher: new MultiStubFetcher(v2Map),
-                patchClientFactory: cfg => new SlowFakePatchClient(cfg, NewExecFiles(), TimeSpan.FromMilliseconds(150)));
+                patchClientFactory: cfg => new SlowFakePatchClient(cfg, NewExecFiles(), TimeSpan.FromMilliseconds(300)));
 
-            DateTimeOffset start = DateTimeOffset.UtcNow;
             List<UpdateResult> results = await svc.UpdateAllAsync(new UpdateOptions { MaxParallelism = 4 }, CancellationToken.None);
-            TimeSpan elapsed = DateTimeOffset.UtcNow - start;
 
             foreach (UpdateResult r in results)
             {
                 Assert.Equal(UpdateStatus.Updated, r.Status);
             }
 
-            // 4 apps * 150ms each = 600ms serial; parallel target ~150ms. CI runners can
-            // be an order of magnitude slower than a dev box, so we use a forgiving
-            // threshold: anything strictly less than 4 * delay still proves the parallelism
-            // signal existed without chasing tight numbers that flake on shared CI hosts.
-            TimeSpan serialUpperBound = TimeSpan.FromMilliseconds(150 * 4);
-            Assert.True(elapsed < serialUpperBound,
-                $"UpdateAllAsync was not parallel: took {elapsed.TotalMilliseconds:F0}ms for 4 apps (serial would take {serialUpperBound.TotalMilliseconds}ms)");
+            // Observe concurrency directly via peak in-flight PatchAsync calls.
+            // Timing-based comparisons flake badly on shared CI runners; counting
+            // overlap is the actual parallelism signal we want to assert on.
+            int peak;
+            lock (SlowFakePatchClient.PeakLock) { peak = SlowFakePatchClient.PeakInFlight; }
+            Assert.True(peak >= 2,
+                $"UpdateAllAsync was not parallel: peak concurrent PatchAsync = {peak} (expected >= 2 of 4)");
         }
 
         // ---- B2: cancellation ----
@@ -371,12 +372,17 @@ namespace Hina.PackageManager.Tests
         public Task UnregisterAutostart(string evidencePath, CancellationToken ct) => _delegateImpl.UnregisterAutostart(evidencePath, ct);
     }
 
-    // FakePatchClient that sleeps before reporting success — used to measure
-    // serial-vs-parallel timing in O2.
+    // FakePatchClient that sleeps before reporting success and tracks the peak
+    // number of concurrent PatchAsync calls — used to verify O2 parallelism via
+    // an observable signal rather than wall-clock timing.
     internal sealed class SlowFakePatchClient : Hina.Core.Patching.IPatchClient
     {
         private readonly Dictionary<string, byte[]> _files;
         private readonly TimeSpan _delay;
+
+        public static int InFlight;
+        public static int PeakInFlight;
+        public static readonly object PeakLock = new object();
 
         public SlowFakePatchClient(Hina.Core.Configuration.PatcherConfig config, Dictionary<string, byte[]> files, TimeSpan delay)
         {
@@ -392,14 +398,26 @@ namespace Hina.PackageManager.Tests
 
         public async Task<Hina.Core.Patching.PatchResult> PatchAsync(string rootDir, CancellationToken ct)
         {
-            await Task.Delay(_delay, ct);
-            foreach ((string rel, byte[] bytes) in _files)
+            int now = System.Threading.Interlocked.Increment(ref InFlight);
+            lock (PeakLock)
             {
-                string abs = Path.Combine(rootDir, rel);
-                Directory.CreateDirectory(Path.GetDirectoryName(abs)!);
-                File.WriteAllBytes(abs, bytes);
+                if (now > PeakInFlight) PeakInFlight = now;
             }
-            return new Hina.Core.Patching.PatchResult { Success = true };
+            try
+            {
+                await Task.Delay(_delay, ct);
+                foreach ((string rel, byte[] bytes) in _files)
+                {
+                    string abs = Path.Combine(rootDir, rel);
+                    Directory.CreateDirectory(Path.GetDirectoryName(abs)!);
+                    File.WriteAllBytes(abs, bytes);
+                }
+                return new Hina.Core.Patching.PatchResult { Success = true };
+            }
+            finally
+            {
+                System.Threading.Interlocked.Decrement(ref InFlight);
+            }
         }
 
         public Task<Hina.Core.Patching.VerifyResult> VerifyAsync(string rootDir, CancellationToken ct) =>

@@ -95,6 +95,52 @@ main() {
         fi
     }
 
+    # macOS-specific: the NativeAOT binary dynamically links against
+    # Homebrew openssl@3 + brotli (release.yml builds with them). Catch the
+    # missing-deps case up front with an actionable message rather than
+    # letting the smoke test fail later with a generic dyld error.
+    check_macos_runtime_deps() {
+        [ "$OS" = "macos" ] || return 0
+        if [ "$ARCH" = "arm64" ]; then
+            brew_prefix=/opt/homebrew
+        else
+            brew_prefix=/usr/local
+        fi
+        missing=""
+        # libssl.3.dylib lives under openssl@3
+        if ! ls "${brew_prefix}/opt/openssl@3/lib/libssl.3.dylib" >/dev/null 2>&1; then
+            missing="${missing} openssl@3"
+        fi
+        # brotli ships libbrotlicommon.1.dylib + libbrotlidec.1.dylib
+        if ! ls "${brew_prefix}/opt/brotli/lib/libbrotlicommon"*.dylib >/dev/null 2>&1; then
+            missing="${missing} brotli"
+        fi
+        if [ -n "$missing" ]; then
+            if ! command -v brew >/dev/null 2>&1; then
+                cat >&2 <<EOF
+hina-install: Homebrew is required on macOS to provide runtime libraries
+(openssl@3 + brotli) that the hina binary links against.
+
+  Install Homebrew first: https://brew.sh
+  Then run: brew install${missing}
+  Then re-run this installer.
+EOF
+                exit 1
+            fi
+            cat >&2 <<EOF
+hina-install: missing macOS runtime libraries:${missing}
+
+The hina binary dynamically links against these Homebrew packages.
+Install them with:
+
+  brew install${missing}
+
+Then re-run this installer.
+EOF
+            exit 1
+        fi
+    }
+
     have_tty() {
         # Real open-test: -r/-w metadata can lie when the process has no
         # controlling terminal (ENXIO on open even though stat() reports rw).
@@ -365,6 +411,7 @@ INFO
     # --- platform + version ---------------------------------------------------
     OS="$(detect_os)"
     ARCH="$(detect_arch)"
+    check_macos_runtime_deps
 
     if [ -z "$TAG" ]; then
         info "resolving latest release..."
@@ -564,13 +611,39 @@ WARN
         err "atomic rename failed; rolled back"
     fi
 
-    # post-install smoke test; rollback on failure
-    if ! bounded_run "${DEST}/hina" --help >/dev/null 2>&1; then
+    # post-install smoke test; rollback on failure. Capture stderr to give an
+    # actionable hint when the failure is a missing runtime library
+    # (e.g. user lacks `brew install openssl@3 brotli` on macOS, or glibc
+    # is too old on Linux) rather than a generic "smoke failed".
+    smoke_err_file="${TMPDIR_INSTALL}/smoke.err"
+    set +e
+    bounded_run "${DEST}/hina" --help >/dev/null 2>"$smoke_err_file"
+    smoke_exit=$?
+    set -e
+    smoke_err="$(cat "$smoke_err_file" 2>/dev/null || true)"
+    if [ "$smoke_exit" -ne 0 ]; then
+        hint=""
+        case "$smoke_err" in
+            *"dyld"*"Library not loaded"*|*"image not found"*|*"no LC_RPATH"*)
+                hint=" — missing dynamic library. On macOS: 'brew install openssl@3 brotli'."
+                ;;
+            *libssl*|*libcrypto*)
+                hint=" — missing OpenSSL runtime. Install your distro's libssl3 / openssl package."
+                ;;
+            *libbrotli*)
+                hint=" — missing brotli runtime. Install your distro's libbrotli package (or 'brew install brotli')."
+                ;;
+            *GLIBC_*)
+                hint=" — system glibc is too old for the pre-built binary. Use a newer distro or build from source."
+                ;;
+        esac
         if [ -n "$backup" ] && [ -f "$backup" ]; then
             mv -f "$backup" "${DEST}/hina"
-            err "installed binary failed smoke test; rolled back to previous version"
+            [ -n "$smoke_err" ] && printf '%s\n' "$smoke_err" >&2
+            err "installed binary failed smoke test; rolled back to previous version${hint}"
         else
-            err "installed binary failed smoke test and no backup to restore"
+            [ -n "$smoke_err" ] && printf '%s\n' "$smoke_err" >&2
+            err "installed binary failed smoke test and no backup to restore${hint}"
         fi
     fi
     [ -n "$backup" ] && rm -f "$backup"

@@ -387,15 +387,28 @@ function Invoke-Main {
             Stop-Err "atomic rename failed: $($_.Exception.Message). The running hina.exe may be locked - close all hina.exe processes and retry."
         }
 
+        # Smoke-test the freshly placed binary. Capture stderr so we can give
+        # an actionable hint when the failure is a missing system DLL or wrong
+        # architecture rather than a generic "smoke failed".
+        $smokeErr = ''
         try {
-            $null = & $existingExe --help 2>$null
+            $smokeErr = & $existingExe --help 2>&1 | Out-String
             if ($LASTEXITCODE -ne 0) { throw "smoke test failed (exit=$LASTEXITCODE)" }
+            $smokeErr = ''
         } catch {
+            $hint = ''
+            if ($smokeErr -match 'is not a valid Win32 application|0xC000007B') {
+                $hint = ' - architecture mismatch (downloaded x64 on arm64 or vice-versa).'
+            } elseif ($smokeErr -match 'was not found|missing|DLL') {
+                $hint = ' - missing system DLL. Make sure your Windows 10/11 is up to date (Universal C Runtime).'
+            }
             if ($backup -and (Test-Path -LiteralPath $backup)) {
                 Move-Item -LiteralPath $backup -Destination $existingExe -Force
-                Stop-Err 'installed binary failed smoke test; rolled back to previous version'
+                if ($smokeErr) { Write-Host $smokeErr -ForegroundColor DarkGray }
+                Stop-Err "installed binary failed smoke test; rolled back to previous version$hint"
             } else {
-                Stop-Err 'installed binary failed smoke test and no backup to restore'
+                if ($smokeErr) { Write-Host $smokeErr -ForegroundColor DarkGray }
+                Stop-Err "installed binary failed smoke test and no backup to restore$hint"
             }
         }
         if ($backup -and (Test-Path -LiteralPath $backup)) { Remove-Item -LiteralPath $backup -Force }

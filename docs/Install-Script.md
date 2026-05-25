@@ -91,6 +91,32 @@ below describes both unless explicitly noted.
    download of the script itself, bash fails to parse and refuses to
    execute partial logic.
 
+### Runtime dependencies
+
+The `hina` binary is NativeAOT-compiled and **does not** require a .NET
+runtime on the user's machine — the runtime is statically linked into
+the binary. There is one platform caveat:
+
+| OS | Runtime libs the binary links against | Installer behaviour |
+|----|---------------------------------------|---------------------|
+| Linux | `libssl.so.3`, `libbrotli*`, glibc ≥ 2.31 (typical default on modern distros) | Trusts the distro defaults; if a lib is missing the smoke-test failure includes a hint pointing to the right package |
+| macOS | Homebrew `openssl@3` + `brotli` (linked at build time against `/opt/homebrew` on arm64, `/usr/local` on x64) | **Pre-checked before download**. Missing libs abort with `brew install openssl@3 brotli` instruction |
+| Windows | Universal C Runtime (UCRT) + Win32 system DLLs — always present on Windows 10+ | Smoke-test failure produces a hint on missing-DLL or architecture-mismatch errors |
+
+On macOS, the installer aborts up front if Homebrew is missing or
+either `openssl@3` or `brotli` is not installed at the expected prefix.
+This avoids the dyld error happening later at first run.
+
+On Linux + Windows the smoke test catches missing-library errors and
+the error message points to the likely fix (distro package name on
+Linux, UCRT / arch mismatch on Windows). Common cases the hint covers:
+
+- `dyld: Library not loaded` → `brew install openssl@3 brotli`
+- `libssl`/`libcrypto` not found → install distro libssl3 / openssl
+- `libbrotli` not found → install distro libbrotli / `brew install brotli`
+- `GLIBC_X.Y not found` → glibc too old, use a newer distro
+- Windows `0xC000007B` / "not a valid Win32 application" → arch mismatch
+
 ### Platform layout
 
 | OS | Binary | Registry / configs |

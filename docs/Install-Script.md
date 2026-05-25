@@ -4,11 +4,11 @@
 the one-liner installers behind:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Arutosio/Hina/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.sh | bash
 ```
 
 ```powershell
-iwr -useb https://raw.githubusercontent.com/Arutosio/Hina/master/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.ps1 | iex
 ```
 
 They detect platform + arch, download the matching release archive from

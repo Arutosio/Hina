@@ -94,13 +94,13 @@ Client startup
 **Quick install** (Linux / macOS):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Arutosio/Hina/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.sh | bash
 ```
 
 **Quick install** (Windows PowerShell):
 
 ```powershell
-iwr -useb https://raw.githubusercontent.com/Arutosio/Hina/master/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.ps1 | iex
 ```
 
 Pin a specific version with `HINA_VERSION=v1.2.3 curl ... | bash` (or

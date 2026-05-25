@@ -9,7 +9,7 @@
     network drop-out, and existing-install scenarios.
 
 .EXAMPLE
-    iwr -useb https://raw.githubusercontent.com/Arutosio/Hina/master/install.ps1 | iex
+    iwr -useb https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.ps1 | iex
 
 .NOTES
     Environment overrides:

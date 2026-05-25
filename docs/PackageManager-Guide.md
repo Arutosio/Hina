@@ -13,13 +13,13 @@ This guide covers the user-facing CLI and the wire format publishers author.
 **Quick install (curl | sh).** On Linux and macOS:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Arutosio/Hina/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.sh | bash
 ```
 
 On Windows (PowerShell 5.1+):
 
 ```powershell
-iwr -useb https://raw.githubusercontent.com/Arutosio/Hina/master/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.ps1 | iex
 ```
 
 The one-liner downloads the latest release for your OS/arch, verifies it

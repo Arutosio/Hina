@@ -1,7 +1,7 @@
 #!/bin/sh
 # Hina one-liner installer for Linux and macOS.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Arutosio/Hina/master/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.sh | bash
 #
 # Environment overrides:
 #   HINA_VERSION         pin a release tag (e.g. v1.2.3). default: latest

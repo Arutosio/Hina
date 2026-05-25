@@ -175,7 +175,11 @@ flowchart TD
     Umask --> Need[Check curl, tar, uname, mktemp]
     Need --> Detect[Detect OS + arch]
     Detect -->|unsupported| ErrUnsup([Err: unsupported])
-    Detect -->|ok| Resolve{HINA_VERSION set?}
+    Detect -->|ok| BrewCheck{macOS?}
+    BrewCheck -->|no| Resolve{HINA_VERSION set?}
+    BrewCheck -->|yes| ProbeBrew["Probe Homebrew prefix:<br/>openssl@3 + brotli libs"]
+    ProbeBrew -->|missing| ErrBrew(["Err: brew install openssl@3 brotli"])
+    ProbeBrew -->|ok| Resolve
     Resolve -->|no| API[GitHub API: latest release tag]
     Resolve -->|yes| HaveTag[Use TAG]
     API --> HaveTag
@@ -226,8 +230,8 @@ flowchart TD
     Sha --> Stage[Extract to staging tmpdir]
     Stage --> Atomic["Backup .hina.bak.PID<br/>Stage .hina.new.PID<br/>POSIX rename"]
     Atomic --> Smoke{"hina --help works?"}
-    Smoke -->|no| Rollback[Restore from .bak]
-    Rollback --> ErrSmoke([Err: smoke failed, rolled back])
+    Smoke -->|no| Rollback["Restore from .bak<br/>+ parse stderr for libssl/<br/>libbrotli/GLIBC/dyld hint"]
+    Rollback --> ErrSmoke(["Err: smoke failed +<br/>actionable hint"])
     Smoke -->|yes| Drop[rm .bak]
     Drop --> Path[Add marker-delimited PATH stanza to rc]
     Path --> Done

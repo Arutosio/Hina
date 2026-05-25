@@ -143,7 +143,7 @@ present): exit 0 if same version, reinstall if different.
 
 ```mermaid
 flowchart TD
-    Start([curl -fsSL ... | bash])
+    Start(["curl -fsSL ... | bash"])
     Start --> Norm[Auto-prefix HINA_VERSION: 1.2.3 → v1.2.3]
     Norm --> Umask[umask 077]
     Umask --> Need[Check curl, tar, uname, mktemp]
@@ -187,19 +187,19 @@ flowchart TD
     ActUB --> Lock
 
     Lock --> Branch{action?}
-    Branch -->|uninstall-*| UFlow[do_uninstall:<br/>per-app teardown + rm registry/binary/PATH]
+    Branch -->|uninstall-*| UFlow["do_uninstall:<br/>per-app teardown + rm registry/binary/PATH"]
     UFlow --> Done
 
-    Branch -->|purge| PFlow[Confirm 'yes' → mv registry to .purged-ts → rm]
+    Branch -->|purge| PFlow["Confirm 'yes' → mv registry to .purged-ts → rm"]
     PFlow --> Install
     Branch -->|install/reinstall| Install
 
-    Install --> DL[Download to .partial<br/>curl -C - retry 5x]
+    Install --> DL["Download to .partial<br/>curl -C - retry 5x"]
     DL --> Tar[tar tzf structural check]
-    Tar --> Sha[Verify .sha256<br/>graceful fallback if 404]
+    Tar --> Sha["Verify .sha256<br/>graceful fallback if 404"]
     Sha --> Stage[Extract to staging tmpdir]
-    Stage --> Atomic[Backup .hina.bak.PID<br/>Stage .hina.new.PID<br/>POSIX rename]
-    Atomic --> Smoke{hina --help works?}
+    Stage --> Atomic["Backup .hina.bak.PID<br/>Stage .hina.new.PID<br/>POSIX rename"]
+    Atomic --> Smoke{"hina --help works?"}
     Smoke -->|no| Rollback[Restore from .bak]
     Rollback --> ErrSmoke([Err: smoke failed, rolled back])
     Smoke -->|yes| Drop[rm .bak]

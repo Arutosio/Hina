@@ -291,6 +291,20 @@ jobs:
       - name: List artifacts
         run: ls -la dist
 
+      # SHA-256 companion files for every release archive. The curl|sh
+      # installer in scripts/install.sh and the PowerShell installer in
+      # scripts/install.ps1 download <archive>.sha256 alongside the archive
+      # and refuse to extract on mismatch.
+      - name: Compute SHA-256 sums for archives
+        run: |
+          set -e
+          cd dist
+          for f in Hina-*.tar.gz Hina-*.zip Hina.Builder-*.tar.gz Hina.Builder-*.zip Hina.Host-*.tar.gz Hina.Host-*.zip; do
+            [ -f "$f" ] || continue
+            sha256sum "$f" > "$f.sha256"
+            echo "$(cat "$f.sha256")"
+          done
+
       - name: Generate version tag
         id: version
         run: |

@@ -91,7 +91,35 @@ Client startup
 
 ## Installing the Hina CLI
 
-Each GitHub release ships:
+**Quick install** (Linux / macOS):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Arutosio/Hina/master/install.sh | bash
+```
+
+**Quick install** (Windows PowerShell):
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/Arutosio/Hina/master/install.ps1 | iex
+```
+
+Pin a specific version with `HINA_VERSION=v1.2.3 curl ... | bash` (or
+`$env:HINA_VERSION = 'v1.2.3'` before piping into `iex`). Override the
+install directory with `HINA_INSTALL_DIR`, and skip the PATH edit with
+`HINA_NO_MODIFY_PATH=1`.
+
+Re-running the one-liner on an existing install drops you into an
+interactive menu: **reinstall**, **clean reinstall** (wipes registry +
+apps + keys), **integrity check** (verifies the installed binary's
+SHA-256 against the published release), **uninstall** (full / configs /
+binary-only), or exit. The script is power-loss safe (atomic rename),
+network-drop safe (`curl -C -` resume + 5x retry), and
+corruption-detecting (per-archive `.sha256` companion). See
+[`docs/Install-Script.md`](docs/Install-Script.md) for full capability
+reference and a flow diagram.
+
+For manual install via `.deb` / `.pkg` / `.msi` / Scoop, each GitHub
+release also ships:
 
 | OS | Recommended | Fallback |
 |----|-------------|----------|

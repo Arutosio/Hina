@@ -10,8 +10,82 @@ This guide covers the user-facing CLI and the wire format publishers author.
 
 ## Installing the Hina CLI
 
-GitHub releases ship one or more artifacts per platform. Pick the one that
-matches your OS:
+**Quick install (curl | sh).** On Linux and macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Arutosio/Hina/master/install.sh | bash
+```
+
+On Windows (PowerShell 5.1+):
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/Arutosio/Hina/master/install.ps1 | iex
+```
+
+The one-liner downloads the latest release for your OS/arch, verifies it
+against the published SHA-256, drops `hina` into `~/.local/bin` (Unix) or
+`%LOCALAPPDATA%\Hina\bin` (Windows) via an atomic rename (power-loss safe),
+and prepends the install directory to your `PATH`.
+
+**Re-running on an existing install.** When the installer detects an
+existing `hina` binary, it shows a five-option menu:
+
+1. **Reinstall** — replace the binary; keep installed apps and registry.
+2. **Clean reinstall** — wipe the registry, installed apps, and pinned
+   publisher keys, then reinstall fresh. The installer prints the exact
+   paths it will delete and requires typing `yes` to confirm. Side-effect
+   files (desktop entries, Start Menu shortcuts, `.cmd` shims, fonts)
+   become orphaned and need manual cleanup.
+3. **Integrity check** — re-download the release, verify its SHA-256,
+   compare the released binary's hash against the installed binary's
+   hash, and report match or mismatch. No filesystem changes.
+4. **Exit** — leave the installation as-is.
+5. **Uninstall** — remove hina with one of three granularities:
+   - **(a) Full** — remove hina binary + all installed apps + configs
+     (registry, keys, descriptors). Per-app teardown runs
+     `hina uninstall <name>` first so side-effects (desktop entries,
+     shortcuts, shims, fonts, HKCU MIME entries on Windows) are cleaned.
+     Also strips the marker-delimited PATH stanza this installer added
+     to your shell rc files (Unix) or the user-PATH entry on Windows.
+     Requires typing `yes` to confirm.
+   - **(b) Configs** — remove hina binary + configs (registry.json,
+     descriptors/, pinned keys) but **keep app binaries on disk** as
+     orphan files. hina will no longer track them; you can hand-curate
+     `~/.local/share/hina/Apps/` (or `%LOCALAPPDATA%\Hina\Apps\`).
+     Requires typing `yes` to confirm.
+   - **(c) Binary only** — remove just the hina binary. Apps + configs
+     are preserved. Reinstalling hina later resumes the previous state.
+     Simple `y/N` confirmation.
+
+In non-interactive contexts (CI / `curl | bash` with no controlling
+terminal) the menu is skipped: the installer reinstalls if the target
+version differs and exits if it matches. Use `HINA_ACTION` to force a
+specific path (e.g. `HINA_ACTION=uninstall-full`). Clean reinstall and
+uninstall-full / uninstall-configs are never automatic — they each
+require a second gate (`HINA_PURGE_YES=1` for clean reinstall,
+`HINA_UNINSTALL_YES=1` for the destructive uninstall modes).
+
+**Environment overrides:**
+
+| Variable | Effect |
+|----------|--------|
+| `HINA_VERSION` | Pin a specific tag, e.g. `HINA_VERSION=v1.2.3`. Default: latest release. |
+| `HINA_INSTALL_DIR` | Override destination directory. |
+| `HINA_NO_MODIFY_PATH=1` | Skip the shell-rc / user-PATH edit; print manual instructions instead. |
+| `HINA_ACTION` | Bypass the menu: `reinstall`, `purge`, `verify`, `exit`, `uninstall-full`, `uninstall-configs`, or `uninstall-binary`. |
+| `HINA_PURGE_YES=1` | Required alongside `HINA_ACTION=purge` to confirm a clean reinstall non-interactively. |
+| `HINA_UNINSTALL_YES=1` | Required alongside `HINA_ACTION=uninstall-full` or `HINA_ACTION=uninstall-configs` for non-interactive confirmation. `uninstall-binary` is unaffected. |
+| `HINA_NO_CHECKSUM=1` | Skip SHA-256 verification (debug only — leaves you vulnerable to corruption and tampering). |
+
+**Resilience.** The installer downloads to a `.partial` file with
+`curl -C -` resume, retries up to 5× on network errors, verifies the
+archive's published `.sha256`, and only swaps the live binary via an
+atomic rename after a smoke test of the new binary. If anything fails
+mid-rename, the previous binary is restored from a backup. A lock file
+prevents concurrent installs from racing.
+
+**Manual / package-manager install.** GitHub releases ship one or more
+artifacts per platform. Pick the one that matches your OS:
 
 | OS | File | How to install |
 |----|------|----------------|

@@ -130,6 +130,17 @@ foreach ($rid in $Rids) {
 
 Remove-Item -Recurse -Force (Join-Path $OutputRoot "stage")
 
+# SHA-256 companion files. install.sh / install.ps1 verify these on download
+# and refuse to extract on mismatch (covers truncation + tampering).
+Write-Host ""
+Write-Host "==> Computing SHA-256 sums"
+Get-ChildItem $OutputRoot -Include Hina-*.tar.gz, Hina-*.zip -File | ForEach-Object {
+    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+    $line = "$hash  $($_.Name)"
+    Set-Content -LiteralPath "$($_.FullName).sha256" -Value $line -Encoding ascii -NoNewline
+    Write-Host "    $line"
+}
+
 Write-Host ""
 Write-Host "==> Done. Artifacts in $OutputRoot/:"
 Get-ChildItem $OutputRoot | Format-Table Name, Length

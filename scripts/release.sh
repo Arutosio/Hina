@@ -166,6 +166,18 @@ done
 # Tidy staging area; keep only the finished archives.
 rm -rf "$OUT_ROOT/stage"
 
+# Emit SHA-256 companion files. install.sh / install.ps1 download these
+# alongside the archive and abort on mismatch (covers truncation + tampering).
+echo
+echo "==> Computing SHA-256 sums"
+sha_cmd="sha256sum"
+command -v sha256sum >/dev/null 2>&1 || sha_cmd="shasum -a 256"
+for f in "$OUT_ROOT"/Hina-*.tar.gz "$OUT_ROOT"/Hina-*.zip; do
+    [ -f "$f" ] || continue
+    (cd "$OUT_ROOT" && $sha_cmd "$(basename "$f")" > "$(basename "$f").sha256")
+    echo "    $(cat "$f.sha256")"
+done
+
 echo
 echo "==> Done. Artifacts in $OUT_ROOT/:"
 ls -lh "$OUT_ROOT"

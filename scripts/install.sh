@@ -95,6 +95,25 @@ main() {
         fi
     }
 
+    # Extract a bare X.Y.Z from arbitrary text (e.g. "hina 1.0.0" or "v1.0.0").
+    ver_num() {
+        printf '%s' "$1" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1
+    }
+
+    # Compare two X.Y.Z versions. Prints -1 if $1<$2, 0 if equal, 1 if $1>$2.
+    # POSIX-only (no sort -V, which macOS lacks): split on '.' and compare numerically.
+    semver_cmp() {
+        a_major=${1%%.*}; a_rest=${1#*.}; a_minor=${a_rest%%.*}; a_patch=${a_rest#*.}
+        b_major=${2%%.*}; b_rest=${2#*.}; b_minor=${b_rest%%.*}; b_patch=${b_rest#*.}
+        for pair in "$a_major $b_major" "$a_minor $b_minor" "$a_patch $b_patch"; do
+            x=${pair% *}; y=${pair#* }
+            x=${x:-0}; y=${y:-0}
+            if [ "$x" -lt "$y" ]; then echo -1; return; fi
+            if [ "$x" -gt "$y" ]; then echo 1; return; fi
+        done
+        echo 0
+    }
+
     # macOS-specific: the NativeAOT binary dynamically links against
     # Homebrew openssl@3 + brotli (release.yml builds with them). Catch the
     # missing-deps case up front with an actionable message rather than
@@ -429,8 +448,25 @@ INFO
         err "${existing_bin} exists but is a directory, not a file. Remove or rename it before installing."
     fi
     existing_ver=""
+    existing_num=""
+    target_num="$(ver_num "$TAG")"
     if [ -x "$existing_bin" ] && [ -f "$existing_bin" -o -L "$existing_bin" ]; then
-        existing_ver="$(bounded_run "$existing_bin" --version 2>/dev/null | head -n1 || echo unknown)"
+        # `hina version` prints "hina X.Y.Z"; fall back to --version for older binaries.
+        existing_ver="$(bounded_run "$existing_bin" version 2>/dev/null | head -n1)"
+        [ -z "$existing_ver" ] && existing_ver="$(bounded_run "$existing_bin" --version 2>/dev/null | head -n1)"
+        [ -z "$existing_ver" ] && existing_ver="unknown"
+        existing_num="$(ver_num "$existing_ver")"
+    fi
+
+    # Relationship of the installed build to the release we're targeting.
+    # one of: behind | same | ahead | unknown
+    ver_rel="unknown"
+    if [ -n "$existing_num" ] && [ -n "$target_num" ]; then
+        case "$(semver_cmp "$existing_num" "$target_num")" in
+            -1) ver_rel="behind" ;;
+             0) ver_rel="same" ;;
+             1) ver_rel="ahead" ;;
+        esac
     fi
 
     if [ -n "$ACTION_OVERRIDE" ]; then
@@ -442,15 +478,24 @@ INFO
         [ -n "$existing_ver" ] && info "existing install detected (${existing_ver}); HINA_ACTION=${action}"
     elif [ -n "$existing_ver" ]; then
         if have_tty; then
+            case "$ver_rel" in
+                behind) status_line="A newer release is available (${existing_num} -> ${target_num}). Choose [1] to update." ;;
+                same)   status_line="You already have the target version (${target_num}). Up to date." ;;
+                ahead)  status_line="Installed (${existing_num}) is newer than the target (${target_num})." ;;
+                *)      status_line="Could not determine the installed version." ;;
+            esac
+            opt1_label="Reinstall"
+            [ "$ver_rel" = "behind" ] && opt1_label="Update      "
             cat <<MENU
 
 Hina is already installed.
   Installed: ${existing_ver}
   Location:  ${existing_bin}
   Target:    ${TAG}
+  Status:    ${status_line}
 
 What would you like to do?
-  [1] Reinstall       - replace binary; keep installed apps and registry
+  [1] ${opt1_label}    - replace binary; keep installed apps and registry
   [2] Clean reinstall - WIPES registry, apps, and pinned publisher keys
   [3] Integrity check - verify installed binary against release SHA-256
   [4] Exit            - leave installation as-is
@@ -491,14 +536,27 @@ SUBMENU
                 *) err "invalid choice: $choice" ;;
             esac
         else
-            # non-interactive default: idempotent if same version, else upgrade
-            if [ "$existing_ver" = "$TAG" ] || printf '%s' "$existing_ver" | grep -qF "$TAG"; then
-                info "non-interactive: same version already installed, nothing to do (set HINA_ACTION to override)"
-                action=exit
-            else
-                info "non-interactive: different version detected, upgrading (set HINA_ACTION to override)"
-                action=reinstall
-            fi
+            # non-interactive default: upgrade only when the installed build is strictly
+            # behind the target. Same or ahead = no-op (idempotent); unknown = upgrade to
+            # be safe. Override with HINA_ACTION.
+            case "$ver_rel" in
+                behind)
+                    info "non-interactive: ${existing_num} is behind ${target_num}, upgrading (set HINA_ACTION to override)"
+                    action=reinstall
+                    ;;
+                same)
+                    info "non-interactive: already at ${target_num}, nothing to do (set HINA_ACTION to override)"
+                    action=exit
+                    ;;
+                ahead)
+                    info "non-interactive: installed ${existing_num} is newer than target ${target_num}, leaving as-is (set HINA_ACTION=reinstall to force)"
+                    action=exit
+                    ;;
+                *)
+                    info "non-interactive: could not determine installed version, upgrading (set HINA_ACTION to override)"
+                    action=reinstall
+                    ;;
+            esac
         fi
     else
         action=install

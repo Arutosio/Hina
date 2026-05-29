@@ -2,7 +2,9 @@ name: Release
 
 on:
   push:
-    branches: [ "master" ]
+    # Release only when a clean SemVer tag is pushed (e.g. v1.0.0, v1.0.1).
+    # Bump HinaVersion.Current, commit, then: git tag v1.0.1 && git push --tags
+    tags: [ 'v[0-9]*.[0-9]*.[0-9]*' ]
 
 permissions:
   contents: write
@@ -143,7 +145,7 @@ jobs:
           pkgbuild \
             --root pkgroot \
             --identifier "com.hina.cli" \
-            --version "1.0.0" \
+            --version "${GITHUB_REF_NAME#v}" \
             --install-location "/" \
             "dist/${name}.pkg"
 
@@ -177,7 +179,7 @@ jobs:
           wix build packaging/wix/hina.wxs \
             -arch "$arch" \
             -d "HinaBin=$(pwd)/artifacts/cli/hina.exe" \
-            -d "HinaVersion=1.0.0" \
+            -d "HinaVersion=${GITHUB_REF_NAME#v}" \
             -out "dist/${name}.msi"
 
           ls -la dist
@@ -211,7 +213,7 @@ jobs:
 
           cat > debroot/DEBIAN/control <<EOF
           Package: hina
-          Version: 1.0.0
+          Version: ${GITHUB_REF_NAME#v}
           Section: utils
           Priority: optional
           Architecture: ${arch}
@@ -305,14 +307,21 @@ jobs:
             echo "$(cat "$f.sha256")"
           done
 
-      - name: Generate version tag
+      - name: Resolve version from tag
         id: version
         run: |
-          TAG="v1.0.0-$(git rev-parse --short HEAD)"
+          TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
+          # Guard against drift: the pushed tag must match the version baked into the
+          # binary (HinaVersion.Current), so `hina version` and the release agree.
+          CONST="$(grep -oE 'Current = "[^"]+"' Hina.PackageManager/Install/HinaVersion.cs | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ "$VERSION" != "$CONST" ]; then
+            echo "::error::Tag $TAG (version $VERSION) != HinaVersion.Current ($CONST). Bump the const, commit, then re-tag."
+            exit 1
+          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Generated tag: $TAG"
+          echo "Releasing tag: $TAG (version $VERSION)"
 
       # Generate the Scoop manifest from the template, substituting version + tag +
       # SHA256 of the windows .zip artifacts. End-users install via:

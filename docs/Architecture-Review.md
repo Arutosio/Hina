@@ -10,7 +10,7 @@
 
 ## 0. Stato implementazione (aggiornato 2026-05-29, branch `refactor/wave1-architecture`)
 
-Eseguito in autonomia. Suite: **240 test verdi** (Core 103, PackageManager 124, CLI 13).
+Eseguito in autonomia. Suite: **259 test verdi** (Core 113, PackageManager 133, CLI 13).
 
 | Item | Stato | Commit |
 |---|---|---|
@@ -31,7 +31,19 @@ Eseguito in autonomia. Suite: **240 test verdi** (Core 103, PackageManager 124, 
 - **HIGH** `PatchClient.CopyChunk`: `Stream.Read` singolo → short-read corruttivo. Ora `ReadExactly`. `fix(core)`
 - **MEDIUM** Windows `IsEvidenceDangling` font: controllava solo il primo file di N. Ora tutti. `fix(windows)`
 
-**Non confermati come bug** (analizzati, scartati): `UpdateAllAsync` "self-deadlock" (il lock O2 è a finestre brevi, non si serializza in pratica); `RetryPolicy` DNS-NXDOMAIN retried (latenza, non correttezza — vedi #2 residuo).
+**Bug-hunt round 2** (superficie contenuti non fidati / MITM):
+- **CRITICAL** `PathUtils.ToOsPath`: nessun containment → un manifest ostile/non firmato con `path` `../../...` o assoluto faceva scrivere/leggere a `PatchClient` fuori dalla dir di install. Ora rifiuta i path che escono dalla root. `security(core)`
+- **MEDIUM** `BrotliCodec.Decompress`: illimitato → decompression bomb (OOM) da chunk store ostile. Ora cap a `maxBytes` (il chunk download passa la size esatta dal manifest). `security(core)`
+- **MEDIUM** `DescriptorSigner.Verify`: ignorava `algorithm` → confusion/downgrade. Ora pinnato a `ed25519`. `security(descriptor)`
+- **MEDIUM** `Channel` non validato → entrava nell'URL del manifest (`../`/controlli). Ora regex token-safe. `security(descriptor)`
+- **LOW** `PatchClient`: `chunk.Size` non confrontato col contenuto decompresso → validato prima dell'uso. `security(core)`
+
+**Non confermati come bug** (analizzati, scartati): `UpdateAllAsync` "self-deadlock" (il lock O2 è a finestre brevi, non si serializza in pratica); `RetryPolicy` DNS-NXDOMAIN retried (latenza, non correttezza).
+
+**Aperti / scelte per l'utente** (non toccati overnight per rischio/impatto test, da decidere):
+- **TOFU fail-open**: `InstallService` auto-fida la chiave se `OnFirstTimeTrust == null`. La CLI passa sempre il prompt (sicura), ma il default libreria è permissivo. Renderlo fail-closed rompe gli helper di test e richiede una decisione di design (flag `AssumeTrust`).
+- **HTTP descriptor fetch + redirect**: il fetch del descriptor accetta `http://` e segue redirect senza ri-validare lo scheme. La firma rende il tampering rilevabile, ma il primo install (TOFU) resta esposto su HTTP.
+- `#2 LoadAsync`, `#6 split PatchClient`, `#13/#14 dedup build` — vedi roadmap.
 
 ---
 

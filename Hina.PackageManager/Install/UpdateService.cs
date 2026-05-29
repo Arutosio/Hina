@@ -190,7 +190,8 @@ namespace Hina.PackageManager.Install
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Patch failed for {Name}; rolling back.", name);
-                try { await patcher.RollbackAsync(app.InstallPath, ct); } catch { /* fail-soft */ }
+                try { await patcher.RollbackAsync(app.InstallPath, ct); }
+                catch (Exception rbEx) { _logger.LogDebug(rbEx, "Patch rollback failed for {Name} (fail-soft).", name); }
                 registry.Apps[name] = previousSnapshot;
                 await store.SaveAsync(registry, ct);
                 return new UpdateResult
@@ -208,11 +209,13 @@ namespace Hina.PackageManager.Install
 
             foreach (HookEvidence ev in hooksToRemove)
             {
-                try { await hooks.UndoAsync(ev, ct); } catch { /* fail-soft */ }
+                try { await hooks.UndoAsync(ev, ct); }
+                catch (Exception ex) { _logger.LogDebug(ex, "Undo of removed hook {Action} failed for {Name} (fail-soft).", ev.Action, name); }
             }
             foreach (ShellEntryRecord r in entriesToRemove)
             {
-                try { await _platform.RemoveMenuShortcut(r.Evidence, ct); } catch { /* fail-soft */ }
+                try { await _platform.RemoveMenuShortcut(r.Evidence, ct); }
+                catch (Exception ex) { _logger.LogDebug(ex, "Removal of shell entry {Id} failed for {Name} (fail-soft).", r.Id, name); }
             }
 
             // Build updated registry entry.
@@ -260,11 +263,13 @@ namespace Hina.PackageManager.Install
 
                 for (int i = addedHooks.Count - 1; i >= 0; i--)
                 {
-                    try { await hooks.UndoAsync(addedHooks[i], CancellationToken.None); } catch { /* fail-soft */ }
+                    try { await hooks.UndoAsync(addedHooks[i], CancellationToken.None); }
+                    catch (Exception ex) { _logger.LogDebug(ex, "Rollback-undo of added hook {Action} failed for {Name} (fail-soft).", addedHooks[i].Action, name); }
                 }
                 for (int i = addedEntries.Count - 1; i >= 0; i--)
                 {
-                    try { await _platform.RemoveMenuShortcut(addedEntries[i].Evidence, CancellationToken.None); } catch { /* fail-soft */ }
+                    try { await _platform.RemoveMenuShortcut(addedEntries[i].Evidence, CancellationToken.None); }
+                    catch (Exception ex) { _logger.LogDebug(ex, "Rollback-removal of added shell entry {Id} failed for {Name} (fail-soft).", addedEntries[i].Id, name); }
                 }
                 // Best-effort: re-apply the hooks/entries we removed at step [7] so the
                 // app comes back to its pre-update side-effect set. May silently fail
@@ -274,16 +279,19 @@ namespace Hina.PackageManager.Install
                     foreach (ShellEntry orig in descriptor.Entries)
                     {
                         if (orig.Id != r.Id) continue;
-                        try { await _platform.CreateMenuShortcut(orig, app.InstallPath, CancellationToken.None); } catch { /* fail-soft */ }
+                        try { await _platform.CreateMenuShortcut(orig, app.InstallPath, CancellationToken.None); }
+                        catch (Exception ex) { _logger.LogDebug(ex, "Re-create of shell entry {Id} during rollback failed for {Name} (fail-soft).", r.Id, name); }
                         break;
                     }
                 }
                 // Patch on disk also needs to roll back; PatchClient already journaled
                 // backups when Backup=true so RollbackAsync restores them.
-                try { await patcher.RollbackAsync(app.InstallPath, CancellationToken.None); } catch { /* fail-soft */ }
+                try { await patcher.RollbackAsync(app.InstallPath, CancellationToken.None); }
+                catch (Exception ex) { _logger.LogDebug(ex, "Patch rollback during add-failure recovery failed for {Name} (fail-soft).", name); }
 
                 registry.Apps[name] = previousSnapshot;
-                try { await store.SaveAsync(registry, CancellationToken.None); } catch { /* fail-soft */ }
+                try { await store.SaveAsync(registry, CancellationToken.None); }
+                catch (Exception ex) { _logger.LogWarning(ex, "Restoring pre-update registry snapshot for {Name} failed (fail-soft); run `hina verify`.", name); }
 
                 return new UpdateResult
                 {
@@ -318,7 +326,7 @@ namespace Hina.PackageManager.Install
                             Hina.PackageManager.Json.PackageManagerIndentedJsonContext.Default.Registry),
                         CancellationToken.None);
                 }
-                catch { /* best-effort dump; original failure is what matters */ }
+                catch (Exception dumpEx) { _logger.LogDebug(dumpEx, "Writing recovery snapshot for {Name} failed (fail-soft); original save failure is what matters.", name); }
 
                 _logger.LogError(saveEx,
                     "Update of {Name} patched files on disk but the registry write failed. " +

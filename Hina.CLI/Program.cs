@@ -7,12 +7,12 @@ namespace Hina.CLI
 {
     internal static class Program
     {
-        private static Task<int> Main(string[] args)
+        private static async Task<int> Main(string[] args)
         {
             if (args.Length == 0 || Args.HasFlag(args, "help") || Args.HasFlag(args, "--help") || Args.HasFlag(args, "-h"))
             {
                 Help.PrintMain();
-                return Task.FromResult(0);
+                return 0;
             }
 
             bool verbose = Args.HasFlag(args, "--verbose") || Args.HasFlag(args, "-v");
@@ -42,7 +42,7 @@ namespace Hina.CLI
             CancellationToken ct = cts.Token;
 
             CommandContext context = CommandContext.ForCurrentOs(logger, loggerFactory, ct);
-            return CommandRouter.DispatchAsync(context, args);
+            return await CommandRouter.DispatchAsync(context, args);
         }
     }
 }

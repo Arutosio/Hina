@@ -108,6 +108,19 @@ namespace Hina.CLI.Tests
             Assert.Equal(2, await Dispatch("dev"));
         }
 
+        [Fact]
+        public async Task ReadOnly_FutureSchemaRegistry_ReturnsErrorCodeNotCrash()
+        {
+            // A registry written by a newer Hina makes RegistryStore.Load throw
+            // RegistrySchemaException. The router's top-level catch must turn that into a
+            // clean exit code, not an unhandled stack trace.
+            await File.WriteAllTextAsync(
+                InstallPaths.ForRoot(_root).RegistryFile,
+                "{\"schemaVersion\":999,\"apps\":{}}");
+
+            Assert.Equal(2, await Dispatch("list"));
+        }
+
         // #7: a read-only command reads the registry under the shared lock. After writing a
         // registry row, `info <name>` and `which <name>` must observe it (exit 0).
         [Fact]

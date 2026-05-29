@@ -1,3 +1,4 @@
+using System;
 using System.Threading.Tasks;
 using Hina.CLI.Commands;
 using Microsoft.Extensions.Logging;
@@ -9,7 +10,29 @@ namespace Hina.CLI
     // verbs without spawning a process. Help/cancellation wiring stays in Program.
     internal static class CommandRouter
     {
-        public static Task<int> DispatchAsync(CommandContext ctx, string[] args)
+        public static async Task<int> DispatchAsync(CommandContext ctx, string[] args)
+        {
+            // Top-level safety net: commands surface expected failures via exit codes, but a
+            // few paths throw (registry lock timeout, future-schema registry, unexpected IO —
+            // notably the read-only commands which don't wrap their own body). Catch here so
+            // the CLI exits with a clean message + code instead of an unhandled stack trace.
+            try
+            {
+                return await DispatchCoreAsync(ctx, args);
+            }
+            catch (OperationCanceledException)
+            {
+                ctx.Logger.LogError("Cancelled.");
+                return 1;
+            }
+            catch (Exception ex)
+            {
+                ctx.Logger.LogError("{Message}", ex.Message);
+                return 2;
+            }
+        }
+
+        private static Task<int> DispatchCoreAsync(CommandContext ctx, string[] args)
         {
             string command = args[0].ToLowerInvariant();
 

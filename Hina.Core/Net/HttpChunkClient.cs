@@ -56,7 +56,7 @@ namespace Hina.Core.Net
             }
         }
 
-        public async Task<byte[]> GetChunkAsync(Uri baseUrl, string strongHash, CancellationToken ct)
+        public async Task<byte[]> GetChunkAsync(Uri baseUrl, string strongHash, CancellationToken ct, int expectedSize = 0)
         {
             // Chunk URL uses a two-character bucket based on hash prefix.
             string hashOnly = HashOnly(strongHash);
@@ -64,26 +64,31 @@ namespace Hina.Core.Net
             string relative = $"chunks/{bucket}/{hashOnly}.chunk.br";
             Uri chunkUrl = new Uri(baseUrl, relative);
 
+            // The manifest knows the exact decompressed size; use it as the bomb cap so a
+            // hostile server can't expand a tiny chunk into gigabytes. Fall back to the codec
+            // default when the caller doesn't know the size.
+            long maxBytes = expectedSize > 0 ? expectedSize : BrotliCodec.DefaultMaxDecompressedBytes;
+
             if (_retryPolicy != null)
             {
                 return await _retryPolicy.ExecuteAsync(async token =>
                 {
                     byte[] compressed = await _http.GetByteArrayAsync(chunkUrl, token);
-                    return DecompressAndVerify(compressed, hashOnly);
+                    return DecompressAndVerify(compressed, hashOnly, maxBytes);
                 }, ct);
             }
 
             byte[] compressedData = await _http.GetByteArrayAsync(chunkUrl, ct);
-            return DecompressAndVerify(compressedData, hashOnly);
+            return DecompressAndVerify(compressedData, hashOnly, maxBytes);
         }
 
         // Chunks are content-addressed: the URL names the chunk by its SHA-256. Verify the
         // decompressed bytes actually hash to that name, independent of the optional whole-file
         // verify pass (PatcherConfig.Verify) — so a corrupt/tampered chunk is rejected even when
         // whole-file verification is disabled, and the failure is localized for retry.
-        private static byte[] DecompressAndVerify(byte[] compressed, string expectedHashOnly)
+        private static byte[] DecompressAndVerify(byte[] compressed, string expectedHashOnly, long maxBytes)
         {
-            byte[] data = BrotliCodec.Decompress(compressed);
+            byte[] data = BrotliCodec.Decompress(compressed, maxBytes);
 
             string actual = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(data));
             if (!string.Equals(actual, expectedHashOnly, StringComparison.OrdinalIgnoreCase))

@@ -156,7 +156,12 @@ namespace Hina.Core.Patching
                             {
                                 // Download missing chunk from server.
                                 _logger.LogDebug("Downloading chunk {ChunkIndex} for {FilePath}", chunk.Index, file.Path);
-                                byte[] data = await _http.GetChunkAsync(Config.BaseUrl, chunk.Strong, ct);
+                                byte[] data = await _http.GetChunkAsync(Config.BaseUrl, chunk.Strong, ct, chunk.Size);
+                                if (chunk.Size < 0 || chunk.Size > data.Length)
+                                {
+                                    throw new InvalidDataException(
+                                        $"Manifest chunk size {chunk.Size} is inconsistent with the {data.Length}-byte chunk content.");
+                                }
                                 await outFs.WriteAsync(data.AsMemory(0, chunk.Size), ct);
                             }
                         }

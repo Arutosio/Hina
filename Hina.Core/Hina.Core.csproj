@@ -16,4 +16,8 @@
     <PackageReference Include="NSec.Cryptography" Version="24.4.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Hina.Core.Tests" />
+  </ItemGroup>
+
 </Project>

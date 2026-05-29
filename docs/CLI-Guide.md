@@ -20,6 +20,8 @@ Top-level (end-user package manager):
   update [name]             Update one app or every installed app
   reinstall <name>          Reinstall an app
   verify [name]             Reconcile registry against on-disk state
+  version                   Print the installed Hina version
+  check-update              Check whether a newer Hina release is available
 
 hina dev <subcommand> (patcher engine + publisher helpers):
   check       --dir <path> --base <url>
@@ -32,6 +34,7 @@ hina dev <subcommand> (patcher engine + publisher helpers):
 Global flags:
   -v, --verbose      Enable debug logging
   --allow-insecure   Permit HTTP descriptor URLs (install only)
+  -V, --version      Print the installed Hina version
   --help             Show help
 ```
 
@@ -125,6 +128,39 @@ hina verify --repair       # report + clean
 Detection is read-only; only `--repair` mutates anything. Exit code `0` when all
 inspected apps are healthy or when `--repair` succeeds; `1` when orphans were
 found and not repaired; `2` on internal error.
+
+### version
+
+Print the installed Hina version.
+
+```shell
+hina version          # -> "hina 1.0.0"
+hina --version        # same; -V also works
+```
+
+The version is baked into the binary (`HinaVersion.Current`) and always equals
+the GitHub release tag it was built from (the release pipeline fails if they
+disagree), so `hina version` is authoritative.
+
+### check-update
+
+Ask GitHub whether a newer Hina release exists and report the result.
+
+```shell
+hina check-update     # also accepts: hina check update
+```
+
+Exit codes are script-friendly: `0` already up to date, `10` an update is
+available (the message prints the install one-liner), `2` the check failed
+(offline / rate-limited). Releases use plain SemVer tags (`v1.0.0`, `v1.0.1`),
+so the comparison is a straight version ordering.
+
+To upgrade, re-run the installer (it detects the older version and offers an
+update), or pin a tag with `HINA_VERSION`:
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.sh | bash
+```
 
 ---
 

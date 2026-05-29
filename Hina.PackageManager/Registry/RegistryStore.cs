@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
@@ -8,6 +9,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Hina.PackageManager.Registry
 {
+    // Thrown when the on-disk registry was written by a newer schema than this Hina supports.
+    public sealed class RegistrySchemaException : Exception
+    {
+        public RegistrySchemaException(string message) : base(message) { }
+    }
+
     // Reads and writes registry.json. Writes are atomic (tmp + fsync + rename) so a crash
     // mid-write leaves the previous good registry in place. Caller must hold a LockManager lock.
     public sealed class RegistryStore
@@ -41,7 +48,20 @@ namespace Hina.PackageManager.Registry
             }
 
             Registry? r = JsonSerializer.Deserialize(json, PackageManagerJsonContext.Default.Registry);
-            return r ?? new Registry();
+            r ??= new Registry();
+
+            // Schema gate: a registry stamped with a higher schema than this build understands
+            // was written by a newer Hina. Source-gen JSON silently drops fields it doesn't
+            // know, so loading-then-saving here would truncate the newer data. Refuse instead
+            // so the user upgrades Hina rather than losing install state.
+            if (r.SchemaVersion > Registry.CurrentSchemaVersion)
+            {
+                throw new RegistrySchemaException(
+                    $"Registry at '{_path}' has schema version {r.SchemaVersion}, but this Hina only understands up to {Registry.CurrentSchemaVersion}. " +
+                    "Upgrade Hina to manage this registry; an older Hina would corrupt it.");
+            }
+
+            return r;
         }
 
         public async Task SaveAsync(Registry registry, CancellationToken ct = default)

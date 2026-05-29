@@ -6,7 +6,12 @@ namespace Hina.PackageManager.Registry
     // On-disk index of every app Hina has installed. One row per app.
     public sealed class Registry
     {
-        public int SchemaVersion { get; set; } = 1;
+        // The schema this build of Hina reads and writes. Bump when the on-disk shape changes
+        // in a way an older Hina can't round-trip. RegistryStore refuses to load (and thus
+        // can't overwrite) a registry stamped with a higher version — see RegistryStore.Load.
+        public const int CurrentSchemaVersion = 1;
+
+        public int SchemaVersion { get; set; } = CurrentSchemaVersion;
         public Dictionary<string, InstalledApp> Apps { get; set; } = new Dictionary<string, InstalledApp>(StringComparer.OrdinalIgnoreCase);
     }
 

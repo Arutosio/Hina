@@ -84,6 +84,28 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public async Task Load_FutureSchemaVersion_Throws()
+        {
+            string path = Path.Combine(_tempDir, "registry.json");
+            await File.WriteAllTextAsync(path, "{\"schemaVersion\":999,\"apps\":{}}");
+
+            RegistryStore store = new RegistryStore(path);
+            RegistrySchemaException ex = Assert.Throws<RegistrySchemaException>(() => store.Load());
+            Assert.Contains("999", ex.Message);
+        }
+
+        [Fact]
+        public async Task Load_CurrentSchemaVersion_Succeeds()
+        {
+            string path = Path.Combine(_tempDir, "registry.json");
+            await File.WriteAllTextAsync(path, "{\"schemaVersion\":1,\"apps\":{}}");
+
+            RegistryStore store = new RegistryStore(path);
+            Registry.Registry r = store.Load();
+            Assert.Empty(r.Apps);
+        }
+
+        [Fact]
         public async Task SaveAsync_OverwritesPreviousFileAtomically()
         {
             string path = Path.Combine(_tempDir, "registry.json");

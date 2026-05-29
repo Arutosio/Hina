@@ -69,12 +69,29 @@ namespace Hina.Core.Net
                 return await _retryPolicy.ExecuteAsync(async token =>
                 {
                     byte[] compressed = await _http.GetByteArrayAsync(chunkUrl, token);
-                    return BrotliCodec.Decompress(compressed);
+                    return DecompressAndVerify(compressed, hashOnly);
                 }, ct);
             }
 
             byte[] compressedData = await _http.GetByteArrayAsync(chunkUrl, ct);
-            return BrotliCodec.Decompress(compressedData);
+            return DecompressAndVerify(compressedData, hashOnly);
+        }
+
+        // Chunks are content-addressed: the URL names the chunk by its SHA-256. Verify the
+        // decompressed bytes actually hash to that name, independent of the optional whole-file
+        // verify pass (PatcherConfig.Verify) — so a corrupt/tampered chunk is rejected even when
+        // whole-file verification is disabled, and the failure is localized for retry.
+        private static byte[] DecompressAndVerify(byte[] compressed, string expectedHashOnly)
+        {
+            byte[] data = BrotliCodec.Decompress(compressed);
+
+            string actual = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(data));
+            if (!string.Equals(actual, expectedHashOnly, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException(
+                    $"Chunk content hash mismatch: expected {expectedHashOnly}, got {actual}. The chunk store returned corrupt or tampered data.");
+            }
+            return data;
         }
 
         private static string HashOnly(string strongHash)

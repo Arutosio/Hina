@@ -16,6 +16,11 @@ namespace Hina.Core.Tests
     {
         private static readonly Uri BaseUrl = new Uri("http://cdn.test.com/");
 
+        // Chunks are content-addressed and HttpChunkClient now verifies the decompressed bytes
+        // hash to the requested name, so success-path tests must request the real content hash.
+        private static string Hash(byte[] content) =>
+            "sha256:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(content));
+
         [Fact]
         public async Task GetChunkAsync_SuccessOnFirstAttempt_NoRetry()
         {
@@ -39,7 +44,7 @@ namespace Hina.Core.Tests
             var policy = new RetryPolicy(maxRetries: 3, baseDelayMs: 10, jitterRng: new Random(42));
             var client = new HttpChunkClient(http, policy);
 
-            byte[] result = await client.GetChunkAsync(BaseUrl, "sha256:aabb001122", CancellationToken.None);
+            byte[] result = await client.GetChunkAsync(BaseUrl, Hash(original), CancellationToken.None);
 
             Assert.Equal(original, result);
             Assert.Equal(1, callCount);
@@ -76,7 +81,7 @@ namespace Hina.Core.Tests
             var policy = new RetryPolicy(maxRetries: 3, baseDelayMs: 10, jitterRng: new Random(42));
             var client = new HttpChunkClient(http, policy);
 
-            byte[] result = await client.GetChunkAsync(BaseUrl, "sha256:aabb001122", CancellationToken.None);
+            byte[] result = await client.GetChunkAsync(BaseUrl, Hash(original), CancellationToken.None);
 
             Assert.Equal(original, result);
             Assert.Equal(2, callCount);
@@ -110,7 +115,7 @@ namespace Hina.Core.Tests
             var policy = new RetryPolicy(maxRetries: 3, baseDelayMs: 10, jitterRng: new Random(42));
             var client = new HttpChunkClient(http, policy);
 
-            byte[] result = await client.GetChunkAsync(BaseUrl, "sha256:aabb001122", CancellationToken.None);
+            byte[] result = await client.GetChunkAsync(BaseUrl, Hash(original), CancellationToken.None);
 
             Assert.Equal(original, result);
             Assert.Equal(2, callCount);

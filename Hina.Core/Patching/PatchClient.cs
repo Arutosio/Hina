@@ -294,8 +294,12 @@ namespace Hina.Core.Patching
             using (FileStream fs = File.OpenRead(localPath))
             {
                 fs.Seek(offset, SeekOrigin.Begin);
-                int read = fs.Read(buffer, 0, size);
-                output.Write(buffer, 0, read);
+                // ReadExactly: a single Read may return fewer bytes than requested. A matched
+                // rsync chunk always has `size` bytes available at `offset`, so a short read
+                // means a truncated/changed source — fail (caught upstream → rollback) rather
+                // than silently writing a short, corrupt chunk.
+                fs.ReadExactly(buffer, 0, size);
+                output.Write(buffer, 0, size);
             }
         }
 

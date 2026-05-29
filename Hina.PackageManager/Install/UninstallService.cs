@@ -46,13 +46,13 @@ namespace Hina.PackageManager.Install
             for (int i = app.ExecutedHooks.Count - 1; i >= 0; i--)
             {
                 try { await hooks.UndoAsync(app.ExecutedHooks[i], ct); }
-                catch { /* fail-soft */ }
+                catch (System.Exception ex) { _logger.LogDebug(ex, "Undo of hook {Action} failed for {Name} (fail-soft).", app.ExecutedHooks[i].Action, name); }
             }
 
             foreach (ShellEntryRecord entry in app.ShellEntries)
             {
                 try { await _platform.RemoveMenuShortcut(entry.Evidence, ct); }
-                catch { /* fail-soft */ }
+                catch (System.Exception ex) { _logger.LogDebug(ex, "Removal of shell entry {Id} failed for {Name} (fail-soft).", entry.Id, name); }
             }
 
             // App directory: refuse to follow a symlink. If a user (or a previous Hina
@@ -67,8 +67,11 @@ namespace Hina.PackageManager.Install
                     DirectoryInfo info = new DirectoryInfo(app.InstallPath);
                     if (info.LinkTarget != null)
                     {
-                        // It's a symlink — File.Delete removes the link without touching the target.
-                        File.Delete(app.InstallPath);
+                        // It's a directory symlink. Directory.Delete(recursive:false) removes the
+                        // link itself without descending into the target — and works on Windows,
+                        // where File.Delete throws UnauthorizedAccessException on a directory
+                        // reparse point (silently swallowed before, leaking the link).
+                        Directory.Delete(app.InstallPath, recursive: false);
                     }
                     else
                     {
@@ -76,14 +79,14 @@ namespace Hina.PackageManager.Install
                     }
                 }
             }
-            catch { /* fail-soft */ }
+            catch (System.Exception ex) { _logger.LogDebug(ex, "Removal of install dir {Path} failed for {Name} (fail-soft).", app.InstallPath, name); }
 
             try
             {
                 string descCache = _paths.DescriptorCache(name);
                 if (File.Exists(descCache)) File.Delete(descCache);
             }
-            catch { /* fail-soft */ }
+            catch (System.Exception ex) { _logger.LogDebug(ex, "Removal of descriptor cache failed for {Name} (fail-soft).", name); }
 
             registry.Apps.Remove(name);
             await store.SaveAsync(registry, ct);

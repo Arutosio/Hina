@@ -64,6 +64,20 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public void Verify_NonEd25519Algorithm_ReturnsFalse()
+        {
+            (string priv, string pub) = KeyGenerator.GenerateEd25519();
+            AppDescriptor d = SampleDescriptor(pub);
+            DescriptorSigner.AttachSignature(d, Convert.FromBase64String(priv));
+
+            // Tamper only the declared algorithm — the signature bytes are still valid Ed25519,
+            // but a mismatched algorithm must be rejected (no silent downgrade/confusion).
+            d.DescriptorSignature!.Algorithm = "rsa";
+
+            Assert.False(DescriptorSigner.Verify(d, pub));
+        }
+
+        [Fact]
         public void Sign_SurvivesSerializationRoundTrip()
         {
             (string priv, string pub) = KeyGenerator.GenerateEd25519();

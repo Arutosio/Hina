@@ -38,6 +38,14 @@ namespace Hina.PackageManager.Descriptor
                 return false;
             }
 
+            // Pin the algorithm before verifying. We only implement Ed25519; refuse any other
+            // declared algorithm rather than silently treating the bytes as Ed25519, so the
+            // signature envelope can't be used for algorithm confusion/downgrade.
+            if (!string.Equals(descriptor.DescriptorSignature.Algorithm, "ed25519", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             byte[] data = DescriptorParser.GetCanonicalBytes(descriptor);
             byte[] signature;
             byte[] publicKey;

@@ -229,12 +229,16 @@ namespace Hina.PackageManager.Platform.Windows
                     return !File.Exists(evidence);
 
                 case "installFont":
-                    // Evidence is "<filePath><sep><fontName>"; check the file part.
-                    char sep = evidence.Contains(EvidenceSeparator) ? EvidenceSeparator
-                             : evidence.Contains('|') ? '|'
-                             : (char)0;
-                    string filePart = sep == 0 ? evidence : evidence.Substring(0, evidence.IndexOf(sep));
-                    return !File.Exists(filePart);
+                    // A font hook with multiple files records one "<filePath><US><fontName>"
+                    // segment per file, joined by '|' (see HookExecutor). Check EVERY file —
+                    // the hook is dangling if any installed font is gone (matches Linux/macOS).
+                    foreach (string segment in evidence.Split('|', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        int si = segment.IndexOf(EvidenceSeparator);
+                        string filePart = si >= 0 ? segment.Substring(0, si) : segment;
+                        if (!File.Exists(filePart)) return true;
+                    }
+                    return false;
 
                 case "registerMimeType":
                 case "registerUrlScheme":

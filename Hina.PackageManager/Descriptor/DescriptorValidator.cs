@@ -13,6 +13,9 @@ namespace Hina.PackageManager.Descriptor
 
         private static readonly Regex NameRegex = new Regex(@"^[a-z][a-z0-9-]{1,63}$", RegexOptions.Compiled);
         private static readonly Regex SemVerRegex = new Regex(@"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z\.-]+)?$", RegexOptions.Compiled);
+        // Channel becomes part of the manifest URL path (manifest.<channel>.json); constrain it
+        // to a safe filename token so it can't inject path segments ("../") or URL controls.
+        private static readonly Regex ChannelRegex = new Regex(@"^[a-z0-9][a-z0-9._-]{0,63}$", RegexOptions.Compiled);
 
         public static ValidationResult Validate(AppDescriptor descriptor, ValidationContext? ctx = null)
         {
@@ -42,6 +45,11 @@ namespace Hina.PackageManager.Descriptor
             if (string.IsNullOrWhiteSpace(descriptor.Publisher))
             {
                 errors.Add("publisher is required.");
+            }
+
+            if (string.IsNullOrEmpty(descriptor.Channel) || !ChannelRegex.IsMatch(descriptor.Channel))
+            {
+                errors.Add($"channel '{descriptor.Channel}' must match {ChannelRegex} (it becomes part of the manifest URL).");
             }
 
             ValidateUrl(descriptor.BaseUrl, "baseUrl", ctx.AllowInsecure, errors);

@@ -119,46 +119,12 @@ namespace Hina.PackageManager.Install
             // M5: when sameVersion && Force, we fall through. For an unchanged descriptor
             // the diff below is empty, so this is effectively a re-patch + registry refresh.
 
-            // [4] Compute diffs (by hook identity and entry id).
-            // H2: HookEvidence.Identity was added in Phase 3; registry rows written by
-            // an earlier Hina have an empty Identity. ResolveIdentity synthesizes one
-            // so the diff stays stable on those legacy rows (addToPath recovers exact
-            // identity; other actions get a deterministic synthetic and self-heal on
-            // the first update).
-            HashSet<string> existingHookIds = new HashSet<string>(StringComparer.Ordinal);
-            foreach (HookEvidence ev in app.ExecutedHooks)
-            {
-                existingHookIds.Add(ResolveIdentity(ev));
-            }
-            HashSet<string> newHookIds = new HashSet<string>(StringComparer.Ordinal);
-            foreach (HookAction hook in descriptor.PostInstall) newHookIds.Add(HookIdentity.For(hook));
-
-            List<HookEvidence> hooksToRemove = new();
-            foreach (HookEvidence ev in app.ExecutedHooks)
-            {
-                if (!newHookIds.Contains(ResolveIdentity(ev))) hooksToRemove.Add(ev);
-            }
-            List<HookAction> hooksToAdd = new();
-            foreach (HookAction hook in descriptor.PostInstall)
-            {
-                if (!existingHookIds.Contains(HookIdentity.For(hook))) hooksToAdd.Add(hook);
-            }
-
-            HashSet<string> existingEntryIds = new HashSet<string>(StringComparer.Ordinal);
-            foreach (ShellEntryRecord r in app.ShellEntries) existingEntryIds.Add(r.Id);
-            HashSet<string> newEntryIds = new HashSet<string>(StringComparer.Ordinal);
-            foreach (ShellEntry e in descriptor.Entries) newEntryIds.Add(e.Id);
-
-            List<ShellEntryRecord> entriesToRemove = new();
-            foreach (ShellEntryRecord r in app.ShellEntries)
-            {
-                if (!newEntryIds.Contains(r.Id)) entriesToRemove.Add(r);
-            }
-            List<ShellEntry> entriesToAdd = new();
-            foreach (ShellEntry e in descriptor.Entries)
-            {
-                if (!existingEntryIds.Contains(e.Id)) entriesToAdd.Add(e);
-            }
+            // [4] Compute hook/entry diffs (pure; see UpdateDiff).
+            UpdateDiff diff = UpdateDiff.Compute(app, descriptor);
+            List<HookEvidence> hooksToRemove = diff.HooksToRemove;
+            List<HookAction> hooksToAdd = diff.HooksToAdd;
+            List<ShellEntryRecord> entriesToRemove = diff.EntriesToRemove;
+            List<ShellEntry> entriesToAdd = diff.EntriesToAdd;
 
             // [5] Snapshot registry so we can restore on failure.
             InstalledApp previousSnapshot = CloneInstalledApp(app);
@@ -230,8 +196,8 @@ namespace Hina.PackageManager.Install
                 PublicKey = descriptor.PublicKey,
                 InstalledAt = app.InstalledAt,
                 LastUpdatedAt = DateTimeOffset.UtcNow,
-                ExecutedHooks = SurvivingHooks(app.ExecutedHooks, hooksToRemove),
-                ShellEntries = SurvivingEntries(app.ShellEntries, entriesToRemove)
+                ExecutedHooks = UpdateDiff.SurvivingHooks(app.ExecutedHooks, hooksToRemove),
+                ShellEntries = UpdateDiff.SurvivingEntries(app.ShellEntries, entriesToRemove)
             };
 
             // B1: bracket the additions so a mid-flight failure (e.g. registerAutostart
@@ -416,60 +382,8 @@ namespace Hina.PackageManager.Install
             ShellEntries = new List<ShellEntryRecord>(src.ShellEntries)
         };
 
-        private static List<HookEvidence> SurvivingHooks(List<HookEvidence> existing, List<HookEvidence> removed)
-        {
-            HashSet<string> removedIds = new HashSet<string>(StringComparer.Ordinal);
-            foreach (HookEvidence r in removed) removedIds.Add(ResolveIdentity(r));
-
-            List<HookEvidence> kept = new List<HookEvidence>();
-            foreach (HookEvidence ev in existing)
-            {
-                if (!removedIds.Contains(ResolveIdentity(ev))) kept.Add(ev);
-            }
-            return kept;
-        }
-
-        // H2 helper. Falls back to a derived identity for legacy registry rows that
-        // were written before HookEvidence.Identity existed (Phase 3). Public so tests
-        // (which live in a separate assembly) can exercise the legacy-mapping rules.
-        public static string ResolveIdentity(HookEvidence ev)
-        {
-            if (!string.IsNullOrEmpty(ev.Identity)) return ev.Identity;
-            switch (ev.Action)
-            {
-                case "addToPath":
-                    // Evidence is "<binDir>/<name>" (Linux/macOS) or "<binDir>\\<name>.cmd"
-                    // (Windows). Strip directory + extension manually to recover the original
-                    // AddToPathHook.Name regardless of which OS originally wrote the row.
-                    string basename = ev.Evidence;
-                    int lastSep = basename.LastIndexOfAny(new[] { '/', '\\' });
-                    if (lastSep >= 0) basename = basename.Substring(lastSep + 1);
-                    int lastDot = basename.LastIndexOf('.');
-                    if (lastDot > 0) basename = basename.Substring(0, lastDot);
-                    return "addToPath:" + basename;
-                default:
-                    // Exact reconstruction isn't possible for these actions from evidence
-                    // alone. Use a deterministic synthetic so legacy rows remain stable
-                    // within this single update; the next update will see proper Identity
-                    // values written by the new HookExecutor.
-                    return "legacy:" + ev.Action + ":" + Convert.ToHexString(
-                        System.Security.Cryptography.SHA256.HashData(
-                            System.Text.Encoding.UTF8.GetBytes(ev.Evidence)))
-                        .Substring(0, 8);
-            }
-        }
-
-        private static List<ShellEntryRecord> SurvivingEntries(List<ShellEntryRecord> existing, List<ShellEntryRecord> removed)
-        {
-            HashSet<string> removedIds = new HashSet<string>(StringComparer.Ordinal);
-            foreach (ShellEntryRecord r in removed) removedIds.Add(r.Id);
-
-            List<ShellEntryRecord> kept = new List<ShellEntryRecord>();
-            foreach (ShellEntryRecord r in existing)
-            {
-                if (!removedIds.Contains(r.Id)) kept.Add(r);
-            }
-            return kept;
-        }
+        // H2 helper, kept on UpdateService as a stable public entry point for tests (which
+        // live in a separate assembly). Delegates to UpdateDiff where the logic now lives.
+        public static string ResolveIdentity(HookEvidence ev) => UpdateDiff.ResolveIdentity(ev);
     }
 }

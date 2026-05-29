@@ -24,8 +24,16 @@ namespace Hina.PackageManager.Tests
         public string UserBinDir => "/fake/bin";
         public string UserAppsDir => "/fake/apps";
 
+        // Test seam: when set, CreateMenuShortcut throws for this entry id (to exercise the
+        // update add-phase failure / rollback path). Other ids still succeed.
+        public string? ThrowOnCreateShortcutId { get; set; }
+
         public Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, CancellationToken ct)
         {
+            if (ThrowOnCreateShortcutId != null && entry.Id == ThrowOnCreateShortcutId)
+            {
+                throw new System.InvalidOperationException($"Simulated failure creating shortcut '{entry.Id}'.");
+            }
             string evidence = $"/fake/apps/{entry.Id}.desktop";
             CreatedShortcuts.Add(evidence);
             return Task.FromResult(evidence);

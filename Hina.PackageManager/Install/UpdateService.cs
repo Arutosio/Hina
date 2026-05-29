@@ -126,8 +126,12 @@ namespace Hina.PackageManager.Install
             List<ShellEntryRecord> entriesToRemove = diff.EntriesToRemove;
             List<ShellEntry> entriesToAdd = diff.EntriesToAdd;
 
-            // [5] Snapshot registry so we can restore on failure.
+            // [5] Snapshot registry so we can restore on failure. Also load the PREVIOUS
+            // descriptor from cache (still the pre-update version until step [8] refreshes it)
+            // so a rollback can re-create the entries/hooks it removed — the new descriptor no
+            // longer lists them, so it can't be the restore source.
             InstalledApp previousSnapshot = CloneInstalledApp(app);
+            AppDescriptor? previousDescriptor = TryLoadCachedDescriptor(name);
 
             // [6] PatchClient delta.
             PatcherConfig patchCfg = new PatcherConfig
@@ -237,17 +241,32 @@ namespace Hina.PackageManager.Install
                     try { await _platform.RemoveMenuShortcut(addedEntries[i].Evidence, CancellationToken.None); }
                     catch (Exception ex) { _logger.LogDebug(ex, "Rollback-removal of added shell entry {Id} failed for {Name} (fail-soft).", addedEntries[i].Id, name); }
                 }
-                // Best-effort: re-apply the hooks/entries we removed at step [7] so the
-                // app comes back to its pre-update side-effect set. May silently fail
+                // Best-effort: re-apply the hooks/entries we removed at step [7] so the app
+                // comes back to its pre-update side-effect set. These are sourced from the
+                // PREVIOUS descriptor (the new one no longer lists them). May silently fail
                 // (e.g. target re-exists, race) — we proceed regardless.
-                foreach (ShellEntryRecord r in entriesToRemove)
+                if (previousDescriptor != null)
                 {
-                    foreach (ShellEntry orig in descriptor.Entries)
+                    foreach (ShellEntryRecord r in entriesToRemove)
                     {
-                        if (orig.Id != r.Id) continue;
-                        try { await _platform.CreateMenuShortcut(orig, app.InstallPath, CancellationToken.None); }
-                        catch (Exception ex) { _logger.LogDebug(ex, "Re-create of shell entry {Id} during rollback failed for {Name} (fail-soft).", r.Id, name); }
-                        break;
+                        foreach (ShellEntry orig in previousDescriptor.Entries)
+                        {
+                            if (orig.Id != r.Id) continue;
+                            try { await _platform.CreateMenuShortcut(orig, app.InstallPath, CancellationToken.None); }
+                            catch (Exception ex) { _logger.LogDebug(ex, "Re-create of shell entry {Id} during rollback failed for {Name} (fail-soft).", r.Id, name); }
+                            break;
+                        }
+                    }
+                    foreach (HookEvidence removed in hooksToRemove)
+                    {
+                        string removedId = UpdateDiff.ResolveIdentity(removed);
+                        foreach (HookAction origHook in previousDescriptor.PostInstall)
+                        {
+                            if (HookIdentity.For(origHook) != removedId) continue;
+                            try { await hooks.ApplyAsync(origHook, app.InstallPath, app.Name, CancellationToken.None); }
+                            catch (Exception ex) { _logger.LogDebug(ex, "Re-apply of hook {Id} during rollback failed for {Name} (fail-soft).", removedId, name); }
+                            break;
+                        }
                     }
                 }
                 // Patch on disk also needs to roll back; PatchClient already journaled
@@ -365,6 +384,22 @@ namespace Hina.PackageManager.Install
             }
             await Task.WhenAll(tasks);
             return new List<UpdateResult>(results);
+        }
+
+        // Loads the descriptor cached at install/last-update time (the pre-update version).
+        // Returns null if absent or unparseable — callers treat that as "no restore source".
+        private AppDescriptor? TryLoadCachedDescriptor(string name)
+        {
+            try
+            {
+                string path = _paths.DescriptorCache(name);
+                if (!File.Exists(path)) return null;
+                return DescriptorParser.Parse(File.ReadAllText(path));
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static InstalledApp CloneInstalledApp(InstalledApp src) => new InstalledApp

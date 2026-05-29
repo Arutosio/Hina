@@ -177,6 +177,38 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public async Task Update_AddPhaseFails_RollsBackAndRestoresRemovedEntry()
+        {
+            await InstallV1();
+
+            // v2 drops the "main" shell entry and adds a "broken" one whose creation fails.
+            AppDescriptor v2 = BuildDescriptor(_pubKey, version: "1.1.0");
+            v2.Entries = new() { new ShellEntry { Id = "broken", Name = "broken", Exec = ExecRelative() } };
+            DescriptorSigner.AttachSignature(v2, Convert.FromBase64String(_privKey));
+
+            _platform.ThrowOnCreateShortcutId = "broken";
+
+            UpdateService svc = new UpdateService(
+                _paths,
+                _platform,
+                fetcher: new StubFetcher(v2),
+                patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
+
+            UpdateResult result = await svc.UpdateAsync("demo", null, CancellationToken.None);
+
+            Assert.Equal(UpdateStatus.Failed, result.Status);
+
+            // Registry rolled back to the pre-update snapshot.
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
+
+            // The "main" entry removed during the update was re-created on rollback (sourced
+            // from the previous cached descriptor): created once at install, once on rollback.
+            int mainCreations = _platform.CreatedShortcuts.FindAll(s => s == "/fake/apps/main.desktop").Count;
+            Assert.Equal(2, mainCreations);
+        }
+
+        [Fact]
         public async Task Update_UnknownApp_ReturnsFailedWithMessage()
         {
             UpdateService svc = new UpdateService(_paths, _platform);

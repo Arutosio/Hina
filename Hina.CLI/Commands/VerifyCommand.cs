@@ -1,10 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Threading;
 using System.Threading.Tasks;
 using Hina.PackageManager.Diagnostics;
-using Hina.PackageManager.Paths;
-using Hina.PackageManager.Platform;
 using Hina.PackageManager.Registry;
 using Microsoft.Extensions.Logging;
 
@@ -15,14 +12,12 @@ namespace Hina.CLI.Commands
     // and dangling side-effects.
     internal static class VerifyCommand
     {
-        public static async Task<int> RunAsync(string[] args, ILogger logger, CancellationToken ct)
+        public static async Task<int> RunAsync(CommandContext ctx, string[] args)
         {
             string? name = Args.FirstPositional(args, startIndex: 1);
             bool repair = Args.HasFlag(args, "--repair");
 
-            InstallPaths paths = InstallPaths.ForCurrentOs();
-            IPlatformIntegration platform = PlatformIntegrationFactory.Current(paths);
-            RegistryVerifier verifier = new RegistryVerifier(paths, platform, logger);
+            RegistryVerifier verifier = ctx.NewRegistryVerifier();
 
             try
             {
@@ -76,7 +71,7 @@ namespace Hina.CLI.Commands
 
                 Console.WriteLine();
                 Console.WriteLine("Repairing...");
-                List<AppRepairResult> repaired = await verifier.RepairAsync(name, ct);
+                List<AppRepairResult> repaired = await verifier.RepairAsync(name, ctx.Ct);
 
                 int healed = 0;
                 foreach (AppRepairResult r in repaired)
@@ -97,7 +92,7 @@ namespace Hina.CLI.Commands
             }
             catch (Exception ex)
             {
-                logger.LogError("Verify failed: {Message}", ex.Message);
+                ctx.Logger.LogError("Verify failed: {Message}", ex.Message);
                 return 2;
             }
         }

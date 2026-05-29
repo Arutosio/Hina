@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hina.PackageManager", "Hina
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hina.PackageManager.Tests", "Hina.PackageManager.Tests\Hina.PackageManager.Tests.csproj", "{A33460D5-74C9-462B-B03B-DB81E455D9D7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hina.CLI.Tests", "Hina.CLI.Tests\Hina.CLI.Tests.csproj", "{A502024E-7AAA-4928-9F36-4FF7BA6F396B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -111,6 +113,18 @@ Global
 		{A33460D5-74C9-462B-B03B-DB81E455D9D7}.Release|x64.Build.0 = Release|Any CPU
 		{A33460D5-74C9-462B-B03B-DB81E455D9D7}.Release|x86.ActiveCfg = Release|Any CPU
 		{A33460D5-74C9-462B-B03B-DB81E455D9D7}.Release|x86.Build.0 = Release|Any CPU
+		{A502024E-7AAA-4928-9F36-4FF7BA6F396B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A502024E-7AAA-4928-9F36-4FF7BA6F396B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A502024E-7AAA-4928-9F36-4FF7BA6F396B}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A502024E-7AAA-4928-9F36-4FF7BA6F396B}.Debug|x64.Build.0 = Debug|Any CPU
+		{A502024E-7AAA-4928-9F36-4FF7BA6F396B}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{A502024E-7AAA-4928-9F36-4FF7BA6F396B}.Debug|x86.Build.0 = Debug|Any CPU
+		{A502024E-7AAA-4928-9F36-4FF7BA6F396B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A502024E-7AAA-4928-9F36-4FF7BA6F396B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A502024E-7AAA-4928-9F36-4FF7BA6F396B}.Release|x64.ActiveCfg = Release|Any CPU
+		{A502024E-7AAA-4928-9F36-4FF7BA6F396B}.Release|x64.Build.0 = Release|Any CPU
+		{A502024E-7AAA-4928-9F36-4FF7BA6F396B}.Release|x86.ActiveCfg = Release|Any CPU
+		{A502024E-7AAA-4928-9F36-4FF7BA6F396B}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -12,8 +12,12 @@ namespace Hina.CLI.Commands
     // but still available for app developers, CI, and troubleshooting.
     internal static class DevCommand
     {
-        public static int Run(string[] args, ILoggerFactory loggerFactory, ILogger logger, CancellationToken ct = default)
+        public static int Run(CommandContext ctx, string[] args)
         {
+            ILoggerFactory loggerFactory = ctx.LoggerFactory;
+            ILogger logger = ctx.Logger;
+            CancellationToken ct = ctx.Ct;
+
             if (args.Length < 2)
             {
                 PrintHelp();

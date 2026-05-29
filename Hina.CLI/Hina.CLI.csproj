@@ -9,6 +9,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Hina.CLI.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Hina.Core\Hina.Core.csproj" />
     <ProjectReference Include="..\Hina.PackageManager\Hina.PackageManager.csproj" />
   </ItemGroup>

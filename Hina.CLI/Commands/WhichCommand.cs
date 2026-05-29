@@ -1,7 +1,5 @@
 using System;
-using System.IO;
-using System.Runtime.InteropServices;
-using Hina.PackageManager.Paths;
+using System.Threading.Tasks;
 using Hina.PackageManager.Registry;
 using Microsoft.Extensions.Logging;
 
@@ -9,17 +7,17 @@ namespace Hina.CLI.Commands
 {
     internal static class WhichCommand
     {
-        public static int Run(string[] args, ILogger logger)
+        public static async Task<int> RunAsync(CommandContext ctx, string[] args)
         {
             string? name = Args.FirstPositional(args, startIndex: 1);
             if (string.IsNullOrWhiteSpace(name))
             {
-                logger.LogError("Usage: hina which <name>");
+                ctx.Logger.LogError("Usage: hina which <name>");
                 return 2;
             }
 
-            InstallPaths paths = InstallPaths.ForCurrentOs();
-            Registry registry = new RegistryStore(paths.RegistryFile).Load();
+            // #7: read under the registry lock (see ListCommand).
+            Registry registry = await ctx.LoadRegistryLockedAsync();
 
             if (!registry.Apps.TryGetValue(name, out InstalledApp? app))
             {

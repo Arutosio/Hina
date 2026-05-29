@@ -1,17 +1,18 @@
 using System;
 using System.IO;
 using System.Linq;
-using Hina.PackageManager.Paths;
+using System.Threading.Tasks;
 using Hina.PackageManager.Registry;
 
 namespace Hina.CLI.Commands
 {
     internal static class ListCommand
     {
-        public static int Run(string[] args)
+        public static async Task<int> RunAsync(CommandContext ctx, string[] args)
         {
-            InstallPaths paths = InstallPaths.ForCurrentOs();
-            Registry registry = new RegistryStore(paths.RegistryFile).Load();
+            // #7: read under the registry lock so we don't observe a half-written file
+            // while an install/update is mid-commit.
+            Registry registry = await ctx.LoadRegistryLockedAsync();
 
             if (registry.Apps.Count == 0)
             {

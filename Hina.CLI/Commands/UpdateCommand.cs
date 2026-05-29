@@ -1,17 +1,14 @@
 using System;
 using System.Collections.Generic;
-using System.Threading;
 using System.Threading.Tasks;
 using Hina.PackageManager.Install;
-using Hina.PackageManager.Paths;
-using Hina.PackageManager.Platform;
 using Microsoft.Extensions.Logging;
 
 namespace Hina.CLI.Commands
 {
     internal static class UpdateCommand
     {
-        public static async Task<int> RunAsync(string[] args, ILogger logger, CancellationToken ct)
+        public static async Task<int> RunAsync(CommandContext ctx, string[] args)
         {
             string? name = Args.FirstPositional(args, startIndex: 1);
             bool force = Args.HasFlag(args, "--force");
@@ -23,9 +20,7 @@ namespace Hina.CLI.Commands
                 jobs = parsed;
             }
 
-            InstallPaths paths = InstallPaths.ForCurrentOs();
-            IPlatformIntegration platform = PlatformIntegrationFactory.Current(paths);
-            UpdateService service = new UpdateService(paths, platform);
+            UpdateService service = ctx.NewUpdateService();
             UpdateOptions options = new UpdateOptions
             {
                 Force = force,
@@ -37,7 +32,7 @@ namespace Hina.CLI.Commands
             {
                 if (string.IsNullOrWhiteSpace(name))
                 {
-                    List<UpdateResult> results = await service.UpdateAllAsync(options, ct);
+                    List<UpdateResult> results = await service.UpdateAllAsync(options, ctx.Ct);
                     int failures = 0;
                     foreach (UpdateResult r in results)
                     {
@@ -48,14 +43,14 @@ namespace Hina.CLI.Commands
                 }
                 else
                 {
-                    UpdateResult result = await service.UpdateAsync(name, options, ct);
+                    UpdateResult result = await service.UpdateAsync(name, options, ctx.Ct);
                     PrintResult(result);
                     return result.Status == UpdateStatus.Failed ? 2 : 0;
                 }
             }
             catch (Exception ex)
             {
-                logger.LogError("Update failed: {Message}", ex.Message);
+                ctx.Logger.LogError("Update failed: {Message}", ex.Message);
                 return 2;
             }
         }

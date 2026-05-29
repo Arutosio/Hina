@@ -8,6 +8,33 @@
 
 ---
 
+## 0. Stato implementazione (aggiornato 2026-05-29, branch `refactor/wave1-architecture`)
+
+Eseguito in autonomia. Suite: **240 test verdi** (Core 103, PackageManager 124, CLI 13).
+
+| Item | Stato | Commit |
+|---|---|---|
+| #1 composition root CLI (`CommandContext`+`CommandRouter`) | ✅ Fatto | `refactor(cli)` |
+| #7 lock condiviso in lettura (list/info/which) | ✅ Fatto | `refactor(cli)` |
+| #9 fail-soft logging in UpdateService/UninstallService | ✅ Fatto | `fix(update)`, `fix(uninstall)` |
+| #12 progetto test CLI (13 smoke test) | ✅ Fatto | `refactor(cli)` |
+| #4 helper platform condivisi (`PlatformText`) | ✅ Fatto | `refactor(platform)` |
+| #5 split `UpdateService` → `UpdateDiff` (+6 test) | ✅ Fatto | `refactor(update)` |
+| #8 gate schema-version registry (+2 test) | ✅ Fatto | `feat(registry)` |
+| #13/#14 dedup build/installer | ⏸️ **Deferred** — richiede CI/release per verifica; non toccato senza poterlo eseguire | — |
+| #2/#3/#6/#10/#11 (Wave 3 residuo) | ⏳ Aperti | — |
+
+**Bug reali trovati e corretti** (bug-hunt con 3 reviewer paralleli, ognuno fixato con test):
+- **CRITICAL** `HttpChunkClient`: chunk content-addressed mai verificato per-hash → con `Verify=false` corruzione accettata silenziosamente. Ora verifica SHA per-chunk. `fix(core)`
+- **HIGH** `UpdateService` rollback: ri-creava le entry rimosse dal descriptor *nuovo* (mai matcha) → side-effect persi. Ora ripristina da descriptor *cached* (entry + hook). `fix(update)`
+- **HIGH** `UninstallService`: `File.Delete` su directory-symlink fallisce su Windows (leak del link). Ora `Directory.Delete(recursive:false)`. `fix(uninstall)`
+- **HIGH** `PatchClient.CopyChunk`: `Stream.Read` singolo → short-read corruttivo. Ora `ReadExactly`. `fix(core)`
+- **MEDIUM** Windows `IsEvidenceDangling` font: controllava solo il primo file di N. Ora tutti. `fix(windows)`
+
+**Non confermati come bug** (analizzati, scartati): `UpdateAllAsync` "self-deadlock" (il lock O2 è a finestre brevi, non si serializza in pratica); `RetryPolicy` DNS-NXDOMAIN retried (latenza, non correttezza — vedi #2 residuo).
+
+---
+
 ## 1. Sintesi
 
 L'architettura è **sana e ben stratificata**. Il grafo delle dipendenze è lineare e privo di

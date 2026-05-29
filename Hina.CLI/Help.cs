@@ -19,6 +19,8 @@ namespace Hina.CLI
             Console.WriteLine("  update [name]          Update one app or all installed apps");
             Console.WriteLine("  reinstall <name>       Reinstall an app (use --rotate-key for key change)");
             Console.WriteLine("  verify [name]          Reconcile registry against on-disk state (--repair to clean orphans)");
+            Console.WriteLine("  version                Print the installed Hina version");
+            Console.WriteLine("  check-update           Check whether a newer Hina release is available");
             Console.WriteLine("  dev <subcommand>       Advanced patcher commands");
             Console.WriteLine();
             Console.WriteLine("Global flags:");

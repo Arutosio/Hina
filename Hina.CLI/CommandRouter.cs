@@ -55,6 +55,19 @@ namespace Hina.CLI
                     return ReinstallCommand.RunAsync(ctx, args);
                 case "verify":
                     return VerifyCommand.RunAsync(ctx, args);
+                case "version":
+                    return Task.FromResult(VersionCommand.Run());
+                case "check-update":
+                    return CheckUpdateCommand.RunAsync(ctx, args);
+                case "check":
+                    // `hina check update` — accept the two-word form too.
+                    if (args.Length > 1 && args[1].Equals("update", System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        return CheckUpdateCommand.RunAsync(ctx, args);
+                    }
+                    ctx.Logger.LogError("Unknown command: check {Arg}", args.Length > 1 ? args[1] : "");
+                    Help.PrintMain();
+                    return Task.FromResult(2);
                 case "dev":
                     return Task.FromResult(DevCommand.Run(ctx, args));
                 default:

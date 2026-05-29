@@ -109,6 +109,12 @@ namespace Hina.CLI.Tests
         }
 
         [Fact]
+        public async Task Version_ReturnsZero()
+        {
+            Assert.Equal(0, await Dispatch("version"));
+        }
+
+        [Fact]
         public async Task ReadOnly_FutureSchemaRegistry_ReturnsErrorCodeNotCrash()
         {
             // A registry written by a newer Hina makes RegistryStore.Load throw

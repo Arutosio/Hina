@@ -15,6 +15,11 @@ namespace Hina.CLI
                 return 0;
             }
 
+            if (Args.HasFlag(args, "--version") || Args.HasFlag(args, "-V"))
+            {
+                return Commands.VersionCommand.Run();
+            }
+
             bool verbose = Args.HasFlag(args, "--verbose") || Args.HasFlag(args, "-v");
 
             using ILoggerFactory loggerFactory = LoggerFactory.Create(builder =>

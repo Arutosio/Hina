@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Hina.PackageManager.Descriptor;
 using Hina.PackageManager.Paths;
+using static Hina.PackageManager.Platform.PlatformText;
 
 namespace Hina.PackageManager.Platform.MacOS
 {
@@ -325,18 +326,6 @@ $@"<?xml version=""1.0"" encoding=""UTF-8""?>
 
         // ---- Helpers ----
 
-        private static void TryDeleteFile(string path)
-        {
-            try
-            {
-                if (File.Exists(path) || new FileInfo(path).LinkTarget != null)
-                {
-                    File.Delete(path);
-                }
-            }
-            catch { }
-        }
-
         private static void TryDeleteBundle(string path)
         {
             try
@@ -354,29 +343,6 @@ $@"<?xml version=""1.0"" encoding=""UTF-8""?>
                 .Replace(">", "&gt;")
                 .Replace("\"", "&quot;")
                 .Replace("'", "&apos;");
-        }
-
-        private static string SanitizeId(string id)
-        {
-            StringBuilder sb = new StringBuilder(id.Length);
-            foreach (char c in id)
-            {
-                if (char.IsLetterOrDigit(c) || c == '-' || c == '_') sb.Append(c);
-                else sb.Append('-');
-            }
-            return sb.Length == 0 ? "entry" : sb.ToString();
-        }
-
-        private static string SanitizeFileName(string value)
-        {
-            StringBuilder sb = new StringBuilder(value.Length);
-            char[] invalid = Path.GetInvalidFileNameChars();
-            foreach (char c in value)
-            {
-                sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
-            }
-            string s = sb.ToString().Trim();
-            return s.Length == 0 ? "Hina" : s;
         }
 
         private static string DefaultUserAppsDir()

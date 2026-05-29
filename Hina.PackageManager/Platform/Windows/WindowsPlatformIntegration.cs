@@ -8,6 +8,7 @@ using Hina.PackageManager.Descriptor;
 using Hina.PackageManager.Paths;
 using Microsoft.Win32;
 using Reg = Microsoft.Win32.Registry;
+using static Hina.PackageManager.Platform.PlatformText;
 
 namespace Hina.PackageManager.Platform.Windows
 {
@@ -336,27 +337,6 @@ namespace Hina.PackageManager.Platform.Windows
             }
             subKey = string.Empty;
             return false;
-        }
-
-        private static void TryDeleteFile(string path)
-        {
-            try
-            {
-                if (File.Exists(path)) File.Delete(path);
-            }
-            catch { }
-        }
-
-        private static string SanitizeFileName(string value)
-        {
-            StringBuilder sb = new StringBuilder(value.Length);
-            char[] invalid = Path.GetInvalidFileNameChars();
-            foreach (char c in value)
-            {
-                sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
-            }
-            string s = sb.ToString().Trim();
-            return s.Length == 0 ? "Hina" : s;
         }
 
         private static string SanitizeRegId(string value)

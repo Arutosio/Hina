@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Hina.PackageManager.Descriptor;
 using Hina.PackageManager.Paths;
+using static Hina.PackageManager.Platform.PlatformText;
 
 namespace Hina.PackageManager.Platform.Linux
 {
@@ -254,21 +255,6 @@ namespace Hina.PackageManager.Platform.Linux
         // shape in a future revision.
         private static ShellEntry? FindEntry(string id) => null;
 
-        private static void TryDeleteFile(string path)
-        {
-            try
-            {
-                if (File.Exists(path) || new FileInfo(path).LinkTarget != null)
-                {
-                    File.Delete(path);
-                }
-            }
-            catch
-            {
-                // Fail-soft: uninstall must not abort on missing/locked files.
-            }
-        }
-
         private static string Escape(string value)
         {
             return value.Replace("\\", "\\\\").Replace("\n", "\\n");
@@ -281,17 +267,6 @@ namespace Hina.PackageManager.Platform.Linux
                 return path;
             }
             return "\"" + path.Replace("\"", "\\\"") + "\"";
-        }
-
-        private static string SanitizeId(string id)
-        {
-            StringBuilder sb = new StringBuilder(id.Length);
-            foreach (char c in id)
-            {
-                if (char.IsLetterOrDigit(c) || c == '-' || c == '_') sb.Append(c);
-                else sb.Append('-');
-            }
-            return sb.Length == 0 ? "entry" : sb.ToString();
         }
 
         private static string DefaultUserAppsDir()

@@ -59,6 +59,24 @@ Eseguito in autonomia. Suite: **259 test verdi** (Core 113, PackageManager 133, 
 - **BUG config** `DevCommand` non droppa più i campi config; mapping `NetworkOptions→PatcherConfig`
   unificato + `PooledConnectionLifetimeMs` propagato. `fix(cli,install)`
 
+**Round 4 — bug-hunt (2026-05-31, branch `fix/bug-hunt-round`):** 3 reviewer adversarial paralleli.
+Bug reali confermati contro il codice e fixati con test (308 verdi):
+- **CRITICAL** `UpdateService`: i path di rollback salvavano il registry senza lock (oggetto stale)
+  → in `update --all` parallelo si perdeva la riga di un'altra app. Ora `SaveAppRowLockedAsync`
+  (re-lock + re-read + scrive la propria riga). `fix(update)`
+- **HIGH** `ReinstallService`: verificava solo l'uguaglianza chiave poi disinstallava; firma forgiata
+  → app disinstallata e basta. Ora verifica la firma prima di uninstall. `fix(reinstall)`
+- **HIGH** `PatchClient`: i download chunk in volo non venivano cancellati/drenati su errore (task
+  orfani). Ora CTS linkato + drain. `fix(core)`
+- **MEDIUM** patch: file nuovi journalati (rollback li rimuove → no mixed-version), `File.Delete`
+  temp best-effort (no rollback di un file già applicato su Windows), guard `chunkSize<=0`,
+  `DecodeStrong` errore chiaro. `fix(core)`
+- **Hook Exec rotti** Linux/macOS: `FindEntry` sempre null / macOS autostart usava `EntryId` come
+  path → MIME/URL/autostart scrivevano `Exec=` vuoto. Ora `HookExecutor` risolve l'exec per
+  `EntryId` e lo passa al platform. `fix(platform)`
+- **LOW**: LockManager retry su `UnauthorizedAccessException`, warning anti-rollback su versione
+  non comparabile, journal "Failed" stale non più ricreato, RegistryVerifier dead code/commento.
+
 **Aperti / scelte per l'utente** (da decidere):
 - `#6 split PatchClient`, `#13/#14 dedup build` — vedi roadmap. `#13/#14` resta deferred: richiede un release run per verifica.
 - **Deferred pre-release** (churn puro, nessun guadagno funzionale): estrazione `UpdateRollback`

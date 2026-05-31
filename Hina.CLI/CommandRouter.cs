@@ -69,7 +69,7 @@ namespace Hina.CLI
                     Help.PrintMain();
                     return Task.FromResult(2);
                 case "dev":
-                    return Task.FromResult(DevCommand.Run(ctx, args));
+                    return DevCommand.RunAsync(ctx, args);
                 default:
                     ctx.Logger.LogError("Unknown command: {Cmd}", command);
                     Help.PrintMain();

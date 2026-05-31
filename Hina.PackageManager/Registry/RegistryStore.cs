@@ -35,7 +35,23 @@ namespace Hina.PackageManager.Registry
                 return new Registry();
             }
 
-            string json = File.ReadAllText(_path);
+            return Parse(File.ReadAllText(_path));
+        }
+
+        // Async counterpart of Load() for the async call paths (read-only commands, services)
+        // so registry reads don't block a thread on file IO. Same schema gate as Load().
+        public async Task<Registry> LoadAsync(CancellationToken ct = default)
+        {
+            if (!File.Exists(_path))
+            {
+                return new Registry();
+            }
+
+            return Parse(await File.ReadAllTextAsync(_path, ct));
+        }
+
+        private Registry Parse(string json)
+        {
             if (string.IsNullOrWhiteSpace(json))
             {
                 // M1: file exists but is empty — likely a partial write or truncation.

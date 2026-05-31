@@ -53,7 +53,7 @@ namespace Hina.CLI
         {
             LockManager locks = NewLockManager();
             using RegistryLock l = await locks.AcquireAsync(Ct);
-            return NewRegistryStore().Load();
+            return await NewRegistryStore().LoadAsync(Ct);
         }
     }
 }

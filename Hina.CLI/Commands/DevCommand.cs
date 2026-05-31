@@ -12,7 +12,7 @@ namespace Hina.CLI.Commands
     // but still available for app developers, CI, and troubleshooting.
     internal static class DevCommand
     {
-        public static int Run(CommandContext ctx, string[] args)
+        public static async System.Threading.Tasks.Task<int> RunAsync(CommandContext ctx, string[] args)
         {
             ILoggerFactory loggerFactory = ctx.LoggerFactory;
             ILogger logger = ctx.Logger;
@@ -67,24 +67,24 @@ namespace Hina.CLI.Commands
             {
                 case "check":
                     {
-                        var res = client.CheckAsync(root, ct).Result;
+                        var res = await client.CheckAsync(root, ct);
                         logger.LogInformation("{Message}", res.Message);
                         return res.IsUpdateAvailable ? 1 : 0;
                     }
                 case "patch":
                     {
-                        var res = client.PatchAsync(root, ct).Result;
+                        var res = await client.PatchAsync(root, ct);
                         logger.LogInformation("{Message}", res.Message);
                         return res.Success ? 0 : 2;
                     }
                 case "verify":
                     {
-                        var res = client.VerifyAsync(root, ct).Result;
+                        var res = await client.VerifyAsync(root, ct);
                         logger.LogInformation("{Message}", res.Message);
                         return res.Success ? 0 : 3;
                     }
                 case "rollback":
-                    client.RollbackAsync(root, ct).Wait();
+                    await client.RollbackAsync(root, ct);
                     logger.LogInformation("Rollback complete");
                     return 0;
                 case "cleanup":

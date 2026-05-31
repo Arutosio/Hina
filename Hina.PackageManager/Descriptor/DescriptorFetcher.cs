@@ -79,6 +79,20 @@ namespace Hina.PackageManager.Descriptor
         private async Task<AppDescriptor> FetchOnceAsync(Uri url, CancellationToken ct)
         {
             using HttpResponseMessage response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            // Guard against a transport downgrade on redirect: if we started on https but the
+            // final URL (after any redirects) is http, the descriptor — and the TOFU key it
+            // carries on first install — would arrive over a tamperable channel. A legitimate
+            // https endpoint never needs to redirect to http, so refuse. Starting on http
+            // (only reachable via --allow-insecure upstream) and staying http is unaffected.
+            Uri finalUrl = response.RequestMessage?.RequestUri ?? url;
+            if (string.Equals(url.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(finalUrl.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Refusing descriptor fetch: '{url}' redirected to insecure '{finalUrl}' (HTTPS→HTTP downgrade).");
+            }
+
             response.EnsureSuccessStatusCode();
 
             if (response.Content.Headers.ContentLength is long cl && cl > MaxDescriptorBytes)

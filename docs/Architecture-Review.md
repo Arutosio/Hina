@@ -40,10 +40,15 @@ Eseguito in autonomia. Suite: **259 test verdi** (Core 113, PackageManager 133, 
 
 **Non confermati come bug** (analizzati, scartati): `UpdateAllAsync` "self-deadlock" (il lock O2 è a finestre brevi, non si serializza in pratica); `RetryPolicy` DNS-NXDOMAIN retried (latenza, non correttezza).
 
-**Aperti / scelte per l'utente** (non toccati overnight per rischio/impatto test, da decidere):
-- **TOFU fail-open**: `InstallService` auto-fida la chiave se `OnFirstTimeTrust == null`. La CLI passa sempre il prompt (sicura), ma il default libreria è permissivo. Renderlo fail-closed rompe gli helper di test e richiede una decisione di design (flag `AssumeTrust`).
-- **HTTP descriptor fetch + redirect**: il fetch del descriptor accetta `http://` e segue redirect senza ri-validare lo scheme. La firma rende il tampering rilevabile, ma il primo install (TOFU) resta esposto su HTTP.
-- `#2 LoadAsync`, `#6 split PatchClient`, `#13/#14 dedup build` — vedi roadmap.
+**Chiusi nel giro perf/hardening/cleanup (2026-05-31, branch `improve/perf-hardening-cleanup`):**
+- **PERF** `PatchClient.PatchAsync`: chunk mancanti scaricati in serie → ora prefetch parallelo a finestra scorrevole, cap `Config.Concurrency`, scrittura ancora in ordine manifest. `perf(core)`
+- **TOFU fail-open → fail-closed**: `InstallOptions.AssumeTrustOnFirstUse` (default false). Senza prompt né opt-in, il primo install rifiuta invece di auto-fidare. CLI invariata. `security(install)`
+- **HTTP descriptor fetch + redirect**: `DescriptorFetcher` rifiuta il downgrade https→http sul redirect (l'URL finale dopo i redirect è confrontato con lo scheme iniziale). `security(descriptor)`
+- **#9 fail-soft logging (residuo platform)**: i `catch {}` muti di unregister/cleanup in Windows/macOS ora loggano a Debug; `ILogger` opzionale (NullLogger default) instradato via factory. `refactor(platform)`
+- **#10 `RegistryStore.LoadAsync`** aggiunto e usato dai comandi read-only. `#C3` `DevCommand` ora async (`await`, niente `.Result`/`.Wait()`). `refactor(cli,registry)`
+
+**Aperti / scelte per l'utente** (da decidere):
+- `#6 split PatchClient`, `#13/#14 dedup build` — vedi roadmap. `#13/#14` resta deferred: richiede un release run per verifica.
 
 ---
 

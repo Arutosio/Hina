@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using Hina.Core.Configuration;
@@ -337,16 +338,18 @@ namespace Hina.Core.Patching
 
         private async Task<Dictionary<int, long>> RsyncMatchLocalAsync(string localPath, ManifestFile file, CancellationToken ct)
         {
-            // Build weak checksum lookup for quick candidate matching.
-            Dictionary<uint, List<ManifestChunk>> weakMap = new Dictionary<uint, List<ManifestChunk>>();
+            // Build weak checksum lookup for quick candidate matching. Pre-decode each chunk's
+            // strong hash to raw bytes once here, so the per-offset hot path can compare 32 bytes
+            // directly (SequenceEqual) instead of formatting a hex string and doing a string compare.
+            Dictionary<uint, List<WeakEntry>> weakMap = new Dictionary<uint, List<WeakEntry>>();
             foreach (ManifestChunk chunk in file.Chunks)
             {
-                if (!weakMap.TryGetValue(chunk.Weak, out List<ManifestChunk>? list))
+                if (!weakMap.TryGetValue(chunk.Weak, out List<WeakEntry>? list))
                 {
-                    list = new List<ManifestChunk>();
+                    list = new List<WeakEntry>();
                     weakMap[chunk.Weak] = list;
                 }
-                list.Add(chunk);
+                list.Add(new WeakEntry(chunk.Index, DecodeStrong(chunk.Strong)));
             }
 
             Dictionary<int, long> matches = new Dictionary<int, long>();
@@ -366,10 +369,13 @@ namespace Hina.Core.Patching
                     return matches;
                 }
 
+                // Reusable scratch for the linearized window — avoids an allocation per weak hit.
+                byte[] linear = new byte[chunkSize];
+
                 long offset = 0;
                 // Start with the first full window.
                 uint weak = RollingChecksum.Compute(window);
-                await TryMatchWindowAsync(window, 0, weak, offset, weakMap, matches, ct);
+                TryMatchWindow(window, 0, weak, offset, weakMap, matches, linear);
 
                 int ringIndex = 0;
                 byte[] buffer = new byte[64 * 1024];
@@ -388,7 +394,7 @@ namespace Hina.Core.Patching
                         weak = RollingChecksum.Roll(weak, remove, add, chunkSize);
                         offset++;
 
-                        await TryMatchWindowAsync(window, ringIndex, weak, offset, weakMap, matches, ct);
+                        TryMatchWindow(window, ringIndex, weak, offset, weakMap, matches, linear);
                     }
                 }
             }
@@ -396,49 +402,67 @@ namespace Hina.Core.Patching
             return matches;
         }
 
-        private async Task TryMatchWindowAsync(
+        // Synchronous, allocation-free on both the no-hit and hit paths: no per-byte await state
+        // machine, no MemoryStream, no SHA256 object, no hex string. Hashes the linearized window
+        // straight into a stack buffer and compares raw bytes.
+        private static void TryMatchWindow(
             byte[] ring,
             int ringIndex,
             uint weak,
             long offset,
-            Dictionary<uint, List<ManifestChunk>> weakMap,
+            Dictionary<uint, List<WeakEntry>> weakMap,
             Dictionary<int, long> matches,
-            CancellationToken ct)
+            byte[] linear)
         {
-            if (!weakMap.TryGetValue(weak, out List<ManifestChunk>? candidates))
+            if (!weakMap.TryGetValue(weak, out List<WeakEntry>? candidates))
             {
                 return;
             }
 
             // Resolve weak hits by strong hash to avoid collisions.
-            byte[] window = RingToLinear(ring, ringIndex);
-            using (var ms = new MemoryStream(window, 0, window.Length, writable: false, publiclyVisible: true))
+            RingToLinear(ring, ringIndex, linear);
+            Span<byte> hash = stackalloc byte[32];
+            SHA256.HashData(linear, hash);
+            foreach (WeakEntry candidate in candidates)
             {
-                string strong = await _hasher.ComputeHashAsync(ms, ct);
-                foreach (ManifestChunk candidate in candidates)
+                if (hash.SequenceEqual(candidate.Strong))
                 {
-                    if (string.Equals(candidate.Strong, strong, StringComparison.OrdinalIgnoreCase))
+                    if (!matches.ContainsKey(candidate.Index))
                     {
-                        if (!matches.ContainsKey(candidate.Index))
-                        {
-                            matches[candidate.Index] = offset;
-                        }
-                        break;
+                        matches[candidate.Index] = offset;
                     }
+                    break;
                 }
             }
         }
 
-        private static byte[] RingToLinear(byte[] ring, int startIndex)
+        private static void RingToLinear(byte[] ring, int startIndex, byte[] linear)
         {
-            byte[] linear = new byte[ring.Length];
             int tail = ring.Length - startIndex;
             Array.Copy(ring, startIndex, linear, 0, tail);
             if (startIndex > 0)
             {
                 Array.Copy(ring, 0, linear, tail, startIndex);
             }
-            return linear;
+        }
+
+        // Decode a "sha256:<hex>" (or bare hex) strong hash to its 32 raw bytes.
+        private static byte[] DecodeStrong(string strong)
+        {
+            int idx = strong.IndexOf(':');
+            string hex = idx >= 0 ? strong.Substring(idx + 1) : strong;
+            return Convert.FromHexString(hex);
+        }
+
+        private readonly struct WeakEntry
+        {
+            public readonly int Index;
+            public readonly byte[] Strong;
+            public WeakEntry(int index, byte[] strong)
+            {
+                Index = index;
+                Strong = strong;
+            }
         }
 
         private void VerifyManifestOrThrow(Manifest.Manifest manifest)

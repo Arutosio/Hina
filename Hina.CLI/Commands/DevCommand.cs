@@ -49,10 +49,13 @@ namespace Hina.CLI.Commands
                 return 2;
             }
 
+            // Mutate the loaded config in place: rebuilding it field-by-field (the old
+            // ApplyOverrides) silently dropped retry/timeout/CDC settings from hina.config.json
+            // whenever any CLI override was passed.
             PatcherConfig config = LoadConfigOrDefault(configPath);
-            if (!string.IsNullOrWhiteSpace(baseUrl)) config = ApplyOverrides(config, new Uri(baseUrl), null, null);
-            if (!string.IsNullOrWhiteSpace(trustedKey)) config = ApplyOverrides(config, null, trustedKey, null);
-            if (!string.IsNullOrWhiteSpace(channel)) config = ApplyOverrides(config, null, null, channel);
+            if (!string.IsNullOrWhiteSpace(baseUrl)) config.BaseUrl = new Uri(baseUrl);
+            if (!string.IsNullOrWhiteSpace(trustedKey)) config.TrustedPublicKey = trustedKey;
+            if (!string.IsNullOrWhiteSpace(channel)) config.Channel = channel;
 
             if (string.IsNullOrWhiteSpace(config.BaseUrl?.ToString()))
             {
@@ -198,18 +201,5 @@ namespace Hina.CLI.Commands
             return new PatcherConfig();
         }
 
-        private static PatcherConfig ApplyOverrides(PatcherConfig current, Uri? baseUrl, string? trustedKey, string? channel)
-        {
-            return new PatcherConfig
-            {
-                BaseUrl = baseUrl ?? current.BaseUrl,
-                Channel = channel ?? current.Channel,
-                Concurrency = current.Concurrency,
-                ChunkSize = current.ChunkSize,
-                Verify = current.Verify,
-                Backup = current.Backup,
-                TrustedPublicKey = trustedKey ?? current.TrustedPublicKey
-            };
-        }
     }
 }

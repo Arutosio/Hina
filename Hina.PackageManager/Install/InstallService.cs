@@ -140,19 +140,8 @@ namespace Hina.PackageManager.Install
                 tx.RecordAppDirCreated(appDir);
 
                 // [10] Delta-fetch chunks into appDir.
-                PatcherConfig patchCfg = new PatcherConfig
-                {
-                    BaseUrl = new Uri(descriptor.BaseUrl),
-                    Channel = descriptor.Channel,
-                    TrustedPublicKey = descriptor.PublicKey,
-                    Verify = true,
-                    Backup = false,
-                    MaxRetries = options.Network.MaxRetries,
-                    RetryBaseDelayMs = options.Network.RetryBaseDelayMs,
-                    MaxRetryDelayMs = options.Network.MaxRetryDelayMs,
-                    ConnectTimeoutMs = options.Network.ConnectTimeoutMs,
-                    RequestTimeoutMs = options.Network.RequestTimeoutMs
-                };
+                PatcherConfig patchCfg = options.Network.ToPatchConfig(
+                    descriptor.BaseUrl, descriptor.Channel, descriptor.PublicKey, backup: false);
                 IPatchClient patcher = _patchClientFactory(patchCfg);
                 PatchResult patchResult = await patcher.PatchAsync(appDir, ct);
                 if (!patchResult.Success)

@@ -150,19 +150,8 @@ namespace Hina.PackageManager.Install
             AppDescriptor? previousDescriptor = TryLoadCachedDescriptor(name);
 
             // [6] PatchClient delta.
-            PatcherConfig patchCfg = new PatcherConfig
-            {
-                BaseUrl = new Uri(descriptor.BaseUrl),
-                Channel = descriptor.Channel,
-                TrustedPublicKey = descriptor.PublicKey,
-                Verify = true,
-                Backup = true,
-                MaxRetries = options.Network.MaxRetries,
-                RetryBaseDelayMs = options.Network.RetryBaseDelayMs,
-                MaxRetryDelayMs = options.Network.MaxRetryDelayMs,
-                ConnectTimeoutMs = options.Network.ConnectTimeoutMs,
-                RequestTimeoutMs = options.Network.RequestTimeoutMs
-            };
+            PatcherConfig patchCfg = options.Network.ToPatchConfig(
+                descriptor.BaseUrl, descriptor.Channel, descriptor.PublicKey, backup: true);
             IPatchClient patcher = _patchClientFactory(patchCfg);
 
             try

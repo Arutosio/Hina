@@ -114,7 +114,7 @@ namespace Hina.PackageManager.Tests
             InstallService installSvc = new InstallService(_paths, failPlatform,
                 fetcher: new StubFetcher(v1),
                 patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
-            await installSvc.InstallAsync(new Uri("https://example.com/demo2.json"), null, CancellationToken.None);
+            await installSvc.InstallAsync(new Uri("https://example.com/demo2.json"), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
 
             // v2 adds a registerAutostart hook; failPlatform throws on RegisterAutostart.
             // Build the descriptor THEN sign (signing must happen last — any mutation
@@ -196,7 +196,7 @@ namespace Hina.PackageManager.Tests
                 InstallService s = new InstallService(_paths, _platform,
                     fetcher: new StubFetcher(d),
                     patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
-                await s.InstallAsync(new Uri("https://example.com/app" + i + ".json"), null, CancellationToken.None);
+                await s.InstallAsync(new Uri("https://example.com/app" + i + ".json"), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
             }
 
             Dictionary<string, AppDescriptor> v2Map = new();
@@ -251,7 +251,7 @@ namespace Hina.PackageManager.Tests
             InstallService svc = new InstallService(_paths, _platform,
                 fetcher: new StubFetcher(v1),
                 patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
-            await svc.InstallAsync(new Uri($"https://example.com/{name}.json"), null, CancellationToken.None);
+            await svc.InstallAsync(new Uri($"https://example.com/{name}.json"), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
         }
 
         private static AppDescriptor SignedDescriptor(string name, string version, string pub, string priv)

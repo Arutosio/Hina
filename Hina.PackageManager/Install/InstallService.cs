@@ -100,6 +100,15 @@ namespace Hina.PackageManager.Install
                     throw new OperationCanceledException("User rejected publisher's signing key.");
                 }
             }
+            else if (!options.AssumeTrustOnFirstUse)
+            {
+                // Fail-closed: no prompt and no explicit opt-in, so we won't silently pin an
+                // unverified publisher key. Library consumers must either supply OnFirstTimeTrust
+                // or set AssumeTrustOnFirstUse to accept the key on first use.
+                throw new InvalidOperationException(
+                    $"Refusing to trust publisher key for '{descriptor.Name}' on first install: no trust prompt was provided. " +
+                    "Set InstallOptions.OnFirstTimeTrust to confirm interactively, or AssumeTrustOnFirstUse=true to auto-accept.");
+            }
 
             // [8] Resolve install dir and refuse to overwrite non-empty content.
             string appDir = _paths.AppDir(descriptor.Name);

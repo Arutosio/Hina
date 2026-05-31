@@ -45,7 +45,7 @@ namespace Hina.PackageManager.Tests
                 new FakePatchClient(cfg, NewExecFiles());
 
             InstallService install = new InstallService(_paths, _platform, new StubFetcher(d), PatchFactory);
-            await install.InstallAsync(new Uri("https://example.com/demo.json"), null, CancellationToken.None);
+            await install.InstallAsync(new Uri("https://example.com/demo.json"), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
 
             ReinstallService svc = new ReinstallService(_paths, _platform, new StubFetcher(d), PatchFactory);
             InstallResult result = await svc.ReinstallAsync("demo", rotateKey: false, CancellationToken.None);
@@ -69,7 +69,7 @@ namespace Hina.PackageManager.Tests
                 new FakePatchClient(cfg, NewExecFiles());
 
             InstallService install = new InstallService(_paths, _platform, new StubFetcher(v1), PatchFactory);
-            await install.InstallAsync(new Uri("https://example.com/demo.json"), null, CancellationToken.None);
+            await install.InstallAsync(new Uri("https://example.com/demo.json"), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
 
             // Same name, same version, but rotated to a brand-new key pair.
             (string otherPriv, string otherPub) = KeyGenerator.GenerateEd25519();
@@ -99,7 +99,7 @@ namespace Hina.PackageManager.Tests
                 new FakePatchClient(cfg, NewExecFiles());
 
             InstallService install = new InstallService(_paths, _platform, new StubFetcher(v1), PatchFactory);
-            await install.InstallAsync(new Uri("https://example.com/demo.json"), null, CancellationToken.None);
+            await install.InstallAsync(new Uri("https://example.com/demo.json"), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
 
             (string otherPriv, string otherPub) = KeyGenerator.GenerateEd25519();
             AppDescriptor rotated = BuildDescriptor(otherPub, "1.0.0");

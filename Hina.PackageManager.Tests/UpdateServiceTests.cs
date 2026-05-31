@@ -237,7 +237,7 @@ namespace Hina.PackageManager.Tests
             string descriptorUrl = name == "demo"
                 ? "https://example.com/demo.json"
                 : $"https://example.com/{name}.json";
-            await install.InstallAsync(new Uri(descriptorUrl), null, CancellationToken.None);
+            await install.InstallAsync(new Uri(descriptorUrl), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
         }
 
         private static AppDescriptor BuildDescriptor(string publicKey, string name = "demo", string version = "1.0.0")

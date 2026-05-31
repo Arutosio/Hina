@@ -56,7 +56,7 @@ namespace Hina.PackageManager.Tests
             // Act
             InstallResult result = await install.InstallAsync(
                 new Uri("https://example.com/hina.app.json"),
-                options: null,
+                options: new InstallOptions { AssumeTrustOnFirstUse = true },
                 CancellationToken.None);
 
             // Assert
@@ -75,6 +75,53 @@ namespace Hina.PackageManager.Tests
             Assert.Equal("1.0.0", app.InstalledVersion);
             Assert.Single(app.ExecutedHooks);
             Assert.Single(app.ShellEntries);
+        }
+
+        [Fact]
+        public async Task Install_NoTrustPromptAndNoOptIn_FailsClosed()
+        {
+            // B2: library default is fail-closed — without a TOFU callback or an explicit
+            // AssumeTrustOnFirstUse opt-in, a first install must refuse to pin the key.
+            (string priv, string pub) = KeyGenerator.GenerateEd25519();
+            AppDescriptor descriptor = BuildDescriptor(pub);
+            DescriptorSigner.AttachSignature(descriptor, Convert.FromBase64String(priv));
+
+            InstallPaths paths = InstallPaths.ForRoot(_tempDir);
+            string execRel = InstallService.ExecForCurrentOs(descriptor)!;
+            InstallService svc = new(
+                paths,
+                new FakePlatformIntegration(),
+                fetcher: new StubFetcher(descriptor),
+                patchClientFactory: cfg => new FakePatchClient(cfg, new Dictionary<string, byte[]> { [execRel] = new byte[] { 1 } }));
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                svc.InstallAsync(new Uri("https://example.com/hina.app.json"), options: null, CancellationToken.None));
+
+            // Nothing pinned: registry never committed.
+            Assert.False(Directory.Exists(paths.AppDir("demo")));
+            Assert.False(File.Exists(paths.RegistryFile));
+        }
+
+        [Fact]
+        public async Task Install_TrustPromptRejected_ThrowsAndPinsNothing()
+        {
+            (string priv, string pub) = KeyGenerator.GenerateEd25519();
+            AppDescriptor descriptor = BuildDescriptor(pub);
+            DescriptorSigner.AttachSignature(descriptor, Convert.FromBase64String(priv));
+
+            InstallPaths paths = InstallPaths.ForRoot(_tempDir);
+            string execRel = InstallService.ExecForCurrentOs(descriptor)!;
+            InstallService svc = new(
+                paths,
+                new FakePlatformIntegration(),
+                fetcher: new StubFetcher(descriptor),
+                patchClientFactory: cfg => new FakePatchClient(cfg, new Dictionary<string, byte[]> { [execRel] = new byte[] { 1 } }));
+
+            InstallOptions reject = new InstallOptions { OnFirstTimeTrust = _ => false };
+            await Assert.ThrowsAsync<OperationCanceledException>(() =>
+                svc.InstallAsync(new Uri("https://example.com/hina.app.json"), reject, CancellationToken.None));
+
+            Assert.False(File.Exists(paths.RegistryFile));
         }
 
         [Fact]
@@ -118,10 +165,10 @@ namespace Hina.PackageManager.Tests
                 fetcher: new StubFetcher(descriptor),
                 patchClientFactory: cfg => new FakePatchClient(cfg, new Dictionary<string, byte[]> { [execRel] = new byte[] { 1 } }));
 
-            await svc.InstallAsync(new Uri("https://example.com/hina.app.json"), null, CancellationToken.None);
+            await svc.InstallAsync(new Uri("https://example.com/hina.app.json"), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
 
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                svc.InstallAsync(new Uri("https://example.com/hina.app.json"), null, CancellationToken.None));
+                svc.InstallAsync(new Uri("https://example.com/hina.app.json"), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None));
         }
 
         [Fact]
@@ -142,7 +189,7 @@ namespace Hina.PackageManager.Tests
                 patchClientFactory: cfg => new FakePatchClient(cfg, new Dictionary<string, byte[]>()));
 
             await Assert.ThrowsAsync<InvalidDataException>(() =>
-                svc.InstallAsync(new Uri("https://example.com/hina.app.json"), null, CancellationToken.None));
+                svc.InstallAsync(new Uri("https://example.com/hina.app.json"), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None));
 
             // App dir was created then rolled back.
             Assert.False(Directory.Exists(paths.AppDir("demo")));
@@ -168,7 +215,7 @@ namespace Hina.PackageManager.Tests
                 fetcher: new StubFetcher(descriptor),
                 patchClientFactory: cfg => new FakePatchClient(cfg, new Dictionary<string, byte[]> { [execRel] = new byte[] { 0x90 } }));
 
-            await installSvc.InstallAsync(new Uri("https://example.com/hina.app.json"), null, CancellationToken.None);
+            await installSvc.InstallAsync(new Uri("https://example.com/hina.app.json"), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
 
             UninstallService uninstallSvc = new(paths, platform);
             UninstallResult res = await uninstallSvc.UninstallAsync("demo", CancellationToken.None);

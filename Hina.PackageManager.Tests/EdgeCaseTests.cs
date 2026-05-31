@@ -270,7 +270,7 @@ namespace Hina.PackageManager.Tests
         {
             AppDescriptor v1 = SignedDescriptor(name, "1.0.0");
             InstallService svc = NewInstallService(v1);
-            await svc.InstallAsync(new Uri($"https://example.com/{name}.json"), null, CancellationToken.None);
+            await svc.InstallAsync(new Uri($"https://example.com/{name}.json"), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
         }
 
         private InstallService NewInstallService(AppDescriptor d) => new InstallService(

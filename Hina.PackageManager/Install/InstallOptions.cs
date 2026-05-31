@@ -8,8 +8,13 @@ namespace Hina.PackageManager.Install
         public bool AllowInsecure { get; init; }
 
         // Called on first-time install for TOFU acceptance of the publisher's key.
-        // Default impl (null) auto-accepts — CLI overrides with an interactive prompt.
+        // The CLI always sets this to an interactive prompt.
         public Func<TrustPrompt, bool>? OnFirstTimeTrust { get; init; }
+
+        // Fail-closed default: with no OnFirstTimeTrust callback, a first-time install is
+        // refused rather than auto-trusting the publisher's key. Set true to auto-accept on
+        // first use (the old permissive behaviour) when running unattended without a prompt.
+        public bool AssumeTrustOnFirstUse { get; init; }
 
         // Tuning for fetch + chunk-download resilience on flaky / mobile networks.
         public NetworkOptions Network { get; init; } = new NetworkOptions();

@@ -145,6 +145,10 @@ namespace Hina.Core.Patching
 
                     // Open the local file once for the whole rebuild instead of per matched chunk.
                     using FileStream? srcFs = matches.Count > 0 ? File.OpenRead(localPath) : null;
+                    // Downloads run against a derived token so that on any failure we can cancel
+                    // every in-flight chunk fetch and drain it — otherwise the tasks we started
+                    // ahead of the write cursor would leak (open sockets, unobserved exceptions).
+                    using CancellationTokenSource dl = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     using (FileStream outFs = File.Create(tempPath))
                     {
                         // Rebuild the file in manifest order, reusing local data when possible.
@@ -169,31 +173,43 @@ namespace Hina.Core.Patching
                                 if (!matches.ContainsKey(c.Index))
                                 {
                                     _logger.LogDebug("Downloading chunk {ChunkIndex} for {FilePath}", c.Index, file.Path);
-                                    inflight[pos] = _http.GetChunkAsync(Config.BaseUrl, c.Strong, ct, c.Size);
+                                    inflight[pos] = _http.GetChunkAsync(Config.BaseUrl, c.Strong, dl.Token, c.Size);
                                 }
                             }
                         }
 
-                        for (int pos = 0; pos < file.Chunks.Count; pos++)
+                        try
                         {
-                            Pump();
-                            ManifestChunk chunk = file.Chunks[pos];
-                            if (matches.TryGetValue(chunk.Index, out long offset))
+                            for (int pos = 0; pos < file.Chunks.Count; pos++)
                             {
-                                // Reuse local data when a chunk matches.
-                                CopyChunk(srcFs!, offset, chunk.Size, outFs);
-                            }
-                            else
-                            {
-                                byte[] data = await inflight[pos];
-                                inflight.Remove(pos);
-                                if (chunk.Size < 0 || chunk.Size > data.Length)
+                                Pump();
+                                ManifestChunk chunk = file.Chunks[pos];
+                                if (matches.TryGetValue(chunk.Index, out long offset))
                                 {
-                                    throw new InvalidDataException(
-                                        $"Manifest chunk size {chunk.Size} is inconsistent with the {data.Length}-byte chunk content.");
+                                    // Reuse local data when a chunk matches.
+                                    CopyChunk(srcFs!, offset, chunk.Size, outFs);
                                 }
-                                await outFs.WriteAsync(data.AsMemory(0, chunk.Size), ct);
+                                else
+                                {
+                                    byte[] data = await inflight[pos];
+                                    inflight.Remove(pos);
+                                    if (chunk.Size < 0 || chunk.Size > data.Length)
+                                    {
+                                        throw new InvalidDataException(
+                                            $"Manifest chunk size {chunk.Size} is inconsistent with the {data.Length}-byte chunk content.");
+                                    }
+                                    await outFs.WriteAsync(data.AsMemory(0, chunk.Size), ct);
+                                }
                             }
+                        }
+                        catch
+                        {
+                            // Cancel and drain the chunk downloads still in flight so they don't
+                            // leak past this failed patch (the outer catch then rolls back).
+                            dl.Cancel();
+                            try { await Task.WhenAll(inflight.Values); }
+                            catch { /* faults/cancellations observed; the original error is what propagates */ }
+                            throw;
                         }
                     }
 

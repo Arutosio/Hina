@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Hina.Core.Chunking;
+using Hina.Core.Compression;
 using Hina.Core.Configuration;
 using Hina.Core.Hashing;
 using Hina.Core.Manifest;
@@ -117,6 +118,25 @@ namespace Hina.Core.Tests
             await chunkWriter.WriteChunksAsync(sourceDir, chunkDir, CancellationToken.None);
         }
 
+        [Fact]
+        public async Task PatchAsync_DownloadFails_CancelsAndDrainsInFlightDownloads()
+        {
+            // Many missing chunks; the first-started download fails fast (corrupt) while the
+            // others are still in flight. The patch must cancel + drain them before returning.
+            CreateSourceFile("big.bin", GenerateData(ChunkSize * 8));
+            await RunBuildAsync();
+
+            var handler = new FailFirstDrainHandler(_buildOutputDir, siblingDelayMs: 3000);
+            PatchClient client = CreatePatchClient(concurrency: 4, handler);
+
+            PatchResult result = await client.PatchAsync(_targetDir, CancellationToken.None);
+
+            Assert.False(result.Success);
+            // No download left running: without cancel+drain the siblings would still be in
+            // their 3s delay when PatchAsync returns.
+            Assert.Equal(0, handler.InFlight);
+        }
+
         private PatchClient CreatePatchClient(int concurrency, HttpMessageHandler handler)
         {
             PatcherConfig config = new PatcherConfig
@@ -147,6 +167,61 @@ namespace Hina.Core.Tests
             string targetPath = Path.Combine(_targetDir, relativePath.Replace('/', Path.DirectorySeparatorChar));
             Assert.True(File.Exists(targetPath), $"Target file missing: {relativePath}");
             Assert.Equal(File.ReadAllBytes(sourcePath), File.ReadAllBytes(targetPath));
+        }
+
+        // Serves the manifest, fails the first-started chunk download immediately (corrupt), and
+        // makes every subsequent chunk download block on a long delay so the test can observe
+        // whether the patch cancels + drains them on failure. Tracks currently in-flight downloads.
+        private sealed class FailFirstDrainHandler : HttpMessageHandler
+        {
+            private readonly string _buildOutputDir;
+            private readonly int _siblingDelayMs;
+            private int _started;
+            private int _inFlight;
+
+            public FailFirstDrainHandler(string buildOutputDir, int siblingDelayMs)
+            {
+                _buildOutputDir = buildOutputDir;
+                _siblingDelayMs = siblingDelayMs;
+            }
+
+            public int InFlight => Volatile.Read(ref _inFlight);
+
+            protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                string path = request.RequestUri!.AbsolutePath.TrimStart('/');
+
+                if (path.StartsWith("manifest", StringComparison.OrdinalIgnoreCase) && path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                {
+                    byte[] data = await File.ReadAllBytesAsync(Path.Combine(_buildOutputDir, "manifest.json"), cancellationToken);
+                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(data) };
+                }
+
+                if (path.StartsWith("chunks/", StringComparison.OrdinalIgnoreCase))
+                {
+                    // The increment runs synchronously before any await, so n==1 is the first
+                    // chunk download started by the rebuild loop (write position 0).
+                    int n = Interlocked.Increment(ref _started);
+                    if (n == 1)
+                    {
+                        // Corrupt content → per-chunk hash verify throws → patch fails fast.
+                        return new HttpResponseMessage(HttpStatusCode.OK)
+                        {
+                            Content = new ByteArrayContent(BrotliCodec.Compress(new byte[] { 9, 9, 9, 9 }))
+                        };
+                    }
+
+                    Interlocked.Increment(ref _inFlight);
+                    try { await Task.Delay(_siblingDelayMs, cancellationToken); }
+                    finally { Interlocked.Decrement(ref _inFlight); }
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent(BrotliCodec.Compress(new byte[] { 9 }))
+                    };
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
         }
 
         // Serves manifest + chunks from the build dir, delays each chunk response so overlapping

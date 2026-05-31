@@ -226,8 +226,11 @@ namespace Hina.Core.Patching
                         _logger.LogDebug("Verification passed for {FilePath}", file.Path);
                     }
 
-                    // Keep a backup when configured to allow rollback.
-                    if (Config.Backup && File.Exists(localPath))
+                    // Keep a backup of an existing file, or record a net-new file, so rollback can
+                    // either restore or remove it. Without the net-new record, a later file's
+                    // failure would roll back existing files but leave new ones — a mixed-version state.
+                    bool existedBefore = File.Exists(localPath);
+                    if (Config.Backup && existedBefore)
                     {
                         File.Copy(localPath, backupPath, overwrite: true);
                         journal.Entries.Add(new PatchJournalEntry
@@ -237,9 +240,18 @@ namespace Hina.Core.Patching
                         });
                         await journal.SaveAsync(journalPath);
                     }
+                    else if (Config.Backup && !existedBefore)
+                    {
+                        journal.Entries.Add(new PatchJournalEntry { TargetPath = localPath, IsNew = true });
+                        await journal.SaveAsync(journalPath);
+                    }
 
                     File.Copy(tempPath, localPath, overwrite: true);
-                    File.Delete(tempPath);
+                    // The file is now swapped in. Deleting the temp is cleanup only — a failure here
+                    // (e.g. AV/indexer holding the handle on Windows) must NOT trigger rollback of an
+                    // already-applied file. Leftover .hina.tmp is removed by PatchCleanup later.
+                    try { File.Delete(tempPath); }
+                    catch (Exception delEx) { _logger.LogDebug(delEx, "Could not delete temp file {Temp}; left for cleanup.", tempPath); }
 
                     result.AppliedFiles.Add(file.Path);
                 }
@@ -326,7 +338,17 @@ namespace Hina.Core.Patching
 
             foreach (PatchJournalEntry entry in journal.Entries)
             {
-                if (File.Exists(entry.BackupPath))
+                if (entry.IsNew)
+                {
+                    // Net-new file from this session: remove it so a partial patch doesn't leave
+                    // new files alongside rolled-back existing ones.
+                    if (File.Exists(entry.TargetPath))
+                    {
+                        _logger.LogDebug("Removing net-new file {TargetPath} during rollback", entry.TargetPath);
+                        File.Delete(entry.TargetPath);
+                    }
+                }
+                else if (File.Exists(entry.BackupPath))
                 {
                     _logger.LogDebug("Restoring {TargetPath} from backup", entry.TargetPath);
                     File.Copy(entry.BackupPath, entry.TargetPath, overwrite: true);
@@ -369,6 +391,13 @@ namespace Hina.Core.Patching
 
             Dictionary<int, long> matches = new Dictionary<int, long>();
             int chunkSize = file.ChunkSize;
+            // A hostile/corrupt manifest could carry chunkSize <= 0; the sliding window uses it as a
+            // modulo divisor (% chunkSize) and a buffer size, so guard against a DivideByZeroException.
+            // Returning no matches just means every chunk is downloaded.
+            if (chunkSize <= 0)
+            {
+                return matches;
+            }
 
             using (FileStream fs = File.OpenRead(localPath))
             {
@@ -466,7 +495,15 @@ namespace Hina.Core.Patching
         {
             int idx = strong.IndexOf(':');
             string hex = idx >= 0 ? strong.Substring(idx + 1) : strong;
-            return Convert.FromHexString(hex);
+            try
+            {
+                return Convert.FromHexString(hex);
+            }
+            catch (FormatException ex)
+            {
+                // Surface a clear manifest error instead of a raw "not a valid hex string".
+                throw new InvalidDataException($"Manifest contains an invalid chunk strong hash '{strong}'.", ex);
+            }
         }
 
         private readonly struct WeakEntry

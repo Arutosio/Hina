@@ -137,6 +137,31 @@ namespace Hina.Core.Tests
             Assert.Equal(0, handler.InFlight);
         }
 
+        [Fact]
+        public async Task RollbackAsync_RemovesNetNewFiles_AndRestoresBackups()
+        {
+            // M2: a partial multi-file patch must not leave net-new files alongside rolled-back
+            // existing ones. Rollback removes IsNew entries and restores backups.
+            Directory.CreateDirectory(_targetDir);
+            string newFile = Path.Combine(_targetDir, "new.bin");
+            string existing = Path.Combine(_targetDir, "existing.bin");
+            string backup = existing + ".hina.bak";
+            await File.WriteAllTextAsync(newFile, "new content");
+            await File.WriteAllTextAsync(existing, "patched content");
+            await File.WriteAllTextAsync(backup, "original content");
+
+            var journal = new PatchJournal();
+            journal.Entries.Add(new PatchJournalEntry { TargetPath = newFile, IsNew = true });
+            journal.Entries.Add(new PatchJournalEntry { TargetPath = existing, BackupPath = backup });
+            await journal.SaveAsync(PatchJournal.GetJournalPath(_targetDir));
+
+            var client = new PatchClient(new PatcherConfig { BaseUrl = _baseUrl, Channel = "stable", ChunkSize = ChunkSize });
+            await client.RollbackAsync(_targetDir, CancellationToken.None);
+
+            Assert.False(File.Exists(newFile));
+            Assert.Equal("original content", await File.ReadAllTextAsync(existing));
+        }
+
         private PatchClient CreatePatchClient(int concurrency, HttpMessageHandler handler)
         {
             PatcherConfig config = new PatcherConfig

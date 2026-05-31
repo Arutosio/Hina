@@ -43,5 +43,9 @@ namespace Hina.Core.Patching
     {
         public string TargetPath { get; set; } = string.Empty;
         public string BackupPath { get; set; } = string.Empty;
+        // A net-new file (no prior version to back up). Rollback removes it rather than restoring,
+        // so a multi-file patch that fails partway can't leave new files behind next to rolled-back
+        // existing ones (mixed-version state).
+        public bool IsNew { get; set; }
     }
 }

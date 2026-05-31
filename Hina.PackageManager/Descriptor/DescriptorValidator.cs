@@ -16,6 +16,13 @@ namespace Hina.PackageManager.Descriptor
         // Channel becomes part of the manifest URL path (manifest.<channel>.json); constrain it
         // to a safe filename token so it can't inject path segments ("../") or URL controls.
         private static readonly Regex ChannelRegex = new Regex(@"^[a-z0-9][a-z0-9._-]{0,63}$", RegexOptions.Compiled);
+        // These fields are written verbatim into shell-integration artifacts (Linux .desktop keys,
+        // macOS plist, Windows registry). Constrain them to safe charsets so an attacker-controlled
+        // (but validly signed) descriptor can't inject extra .desktop keys / an autostart Exec= line.
+        private static readonly Regex MimeTypeRegex = new Regex(@"^[a-zA-Z0-9][a-zA-Z0-9!#$&^_.+-]*/[a-zA-Z0-9][a-zA-Z0-9!#$&^_.+-]*$", RegexOptions.Compiled);
+        private static readonly Regex SchemeRegex = new Regex(@"^[a-z][a-z0-9+.-]{0,63}$", RegexOptions.Compiled);
+        private static readonly Regex ExtensionRegex = new Regex(@"^\.?[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", RegexOptions.Compiled);
+        private static readonly Regex CategoryRegex = new Regex(@"^[A-Za-z0-9-]{1,64}$", RegexOptions.Compiled);
 
         public static ValidationResult Validate(AppDescriptor descriptor, ValidationContext? ctx = null)
         {
@@ -36,6 +43,10 @@ namespace Hina.PackageManager.Descriptor
             {
                 errors.Add("displayName is required.");
             }
+            else if (HasControlChars(descriptor.DisplayName))
+            {
+                errors.Add("displayName must not contain control characters.");
+            }
 
             if (!SemVerRegex.IsMatch(descriptor.Version))
             {
@@ -45,6 +56,10 @@ namespace Hina.PackageManager.Descriptor
             if (string.IsNullOrWhiteSpace(descriptor.Publisher))
             {
                 errors.Add("publisher is required.");
+            }
+            else if (HasControlChars(descriptor.Publisher))
+            {
+                errors.Add("publisher must not contain control characters.");
             }
 
             if (string.IsNullOrEmpty(descriptor.Channel) || !ChannelRegex.IsMatch(descriptor.Channel))
@@ -88,6 +103,18 @@ namespace Hina.PackageManager.Descriptor
                 {
                     errors.Add($"{prefix}.name is required.");
                 }
+                else if (HasControlChars(e.Name))
+                {
+                    errors.Add($"{prefix}.name must not contain control characters.");
+                }
+
+                foreach (string cat in e.Categories)
+                {
+                    if (!CategoryRegex.IsMatch(cat))
+                    {
+                        errors.Add($"{prefix}.categories entry '{cat}' must match {CategoryRegex}.");
+                    }
+                }
 
                 ValidateRelativePath(e.Exec, $"{prefix}.exec", errors);
                 ValidateRelativePath(e.Icon, $"{prefix}.icon", errors);
@@ -120,11 +147,17 @@ namespace Hina.PackageManager.Descriptor
                     break;
                 case MimeTypeHook m:
                     if (string.IsNullOrWhiteSpace(m.MimeType)) errors.Add($"{prefix}.mimeType is required.");
+                    else if (!MimeTypeRegex.IsMatch(m.MimeType)) errors.Add($"{prefix}.mimeType '{m.MimeType}' must be a valid type/subtype token.");
                     if (m.Extensions.Count == 0) errors.Add($"{prefix}.extensions must not be empty.");
+                    foreach (string ext in m.Extensions)
+                    {
+                        if (!ExtensionRegex.IsMatch(ext)) errors.Add($"{prefix}.extensions entry '{ext}' must match {ExtensionRegex}.");
+                    }
                     ValidateEntryId(m.EntryId, entryIds, $"{prefix}.entryId", errors);
                     break;
                 case UrlSchemeHook u:
                     if (string.IsNullOrWhiteSpace(u.Scheme)) errors.Add($"{prefix}.scheme is required.");
+                    else if (!SchemeRegex.IsMatch(u.Scheme)) errors.Add($"{prefix}.scheme '{u.Scheme}' must match {SchemeRegex}.");
                     ValidateEntryId(u.EntryId, entryIds, $"{prefix}.entryId", errors);
                     break;
                 case InstallFontHook f:
@@ -136,6 +169,13 @@ namespace Hina.PackageManager.Descriptor
                     break;
                 case AutostartHook au:
                     ValidateEntryId(au.EntryId, entryIds, $"{prefix}.entryId", errors);
+                    if (au.Args != null)
+                    {
+                        for (int i = 0; i < au.Args.Count; i++)
+                        {
+                            if (HasControlChars(au.Args[i])) errors.Add($"{prefix}.args[{i}] must not contain control characters.");
+                        }
+                    }
                     break;
                 default:
                     errors.Add($"{prefix} has unknown action type.");
@@ -193,6 +233,19 @@ namespace Hina.PackageManager.Descriptor
             {
                 errors.Add($"{field} is not valid base64.");
             }
+        }
+
+        // Control characters (CR/LF/NUL/etc.) in a field that's written into a .desktop / plist /
+        // registry artifact let an attacker break out of the intended key and inject a new one
+        // (e.g. an autostart Exec= line). Reject them at validation time as defense in depth on top
+        // of the per-writer stripping.
+        private static bool HasControlChars(string value)
+        {
+            foreach (char c in value)
+            {
+                if (char.IsControl(c)) return true;
+            }
+            return false;
         }
 
         private static void ValidateRelativePath(string? value, string field, List<string> errors)

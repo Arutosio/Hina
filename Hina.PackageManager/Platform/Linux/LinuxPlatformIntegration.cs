@@ -64,7 +64,7 @@ namespace Hina.PackageManager.Platform.Linux
             sb.AppendLine($"Terminal={(entry.Terminal ? "true" : "false")}");
             if (entry.Categories.Count > 0)
             {
-                sb.AppendLine($"Categories={string.Join(";", entry.Categories)};");
+                sb.AppendLine($"Categories={string.Join(";", entry.Categories.ConvertAll(StripControl))};");
             }
             sb.AppendLine("X-Hina-Managed=true");
 
@@ -118,8 +118,8 @@ namespace Hina.PackageManager.Platform.Linux
             sb.AppendLine($"Name=Hina MIME {Escape(hook.MimeType)}");
             sb.AppendLine($"Exec={QuoteExec(execValue + " %f")}");
             sb.AppendLine("NoDisplay=true");
-            sb.AppendLine($"MimeType={hook.MimeType};");
-            sb.AppendLine($"X-Hina-Mime-Extensions={string.Join(",", hook.Extensions)}");
+            sb.AppendLine($"MimeType={StripControl(hook.MimeType)};");
+            sb.AppendLine($"X-Hina-Mime-Extensions={string.Join(",", hook.Extensions.ConvertAll(StripControl))}");
             sb.AppendLine("X-Hina-Managed=true");
 
             File.WriteAllText(targetPath, sb.ToString());
@@ -143,7 +143,7 @@ namespace Hina.PackageManager.Platform.Linux
             string fileName = $"hina-url-{SanitizeId(hook.Scheme)}-{SanitizeId(hook.EntryId)}.desktop";
             string targetPath = Path.Combine(_userAppsDir, fileName);
 
-            string mime = $"x-scheme-handler/{hook.Scheme}";
+            string mime = $"x-scheme-handler/{StripControl(hook.Scheme)}";
 
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("[Desktop Entry]");
@@ -261,7 +261,29 @@ namespace Hina.PackageManager.Platform.Linux
 
         private static string Escape(string value)
         {
-            return value.Replace("\\", "\\\\").Replace("\n", "\\n");
+            // Strip control chars first (defense in depth vs .desktop key injection — a raw CR/LF
+            // would start a new key line), then escape backslash per the freedesktop spec.
+            return StripControl(value).Replace("\\", "\\\\");
+        }
+
+        // Remove any control character so an interpolated value can't break out of its key line.
+        // The descriptor validator already rejects these, but stripping here keeps every write site
+        // safe even if a new field is added without a validator rule.
+        private static string StripControl(string value)
+        {
+            StringBuilder? sb = null;
+            for (int i = 0; i < value.Length; i++)
+            {
+                if (char.IsControl(value[i]))
+                {
+                    sb ??= new StringBuilder(value.Length).Append(value, 0, i);
+                }
+                else
+                {
+                    sb?.Append(value[i]);
+                }
+            }
+            return sb?.ToString() ?? value;
         }
 
         private static string QuoteExec(string path)

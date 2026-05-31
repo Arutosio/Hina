@@ -59,6 +59,35 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public async Task Reinstall_ForgedSignature_RefusesAndLeavesAppInstalled()
+        {
+            (string priv, string pub) = KeyGenerator.GenerateEd25519();
+            AppDescriptor good = BuildDescriptor(pub, "1.0.0");
+            DescriptorSigner.AttachSignature(good, Convert.FromBase64String(priv));
+
+            FakePatchClient PatchFactory(Hina.Core.Configuration.PatcherConfig cfg) =>
+                new FakePatchClient(cfg, NewExecFiles());
+
+            InstallService install = new InstallService(_paths, _platform, new StubFetcher(good), PatchFactory);
+            await install.InstallAsync(new Uri("https://example.com/demo.json"), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
+
+            // Forge: keep the correct publicKey field (passes the equality check) but invalidate
+            // the signature by mutating a signed field after signing.
+            AppDescriptor forged = BuildDescriptor(pub, "1.0.0");
+            DescriptorSigner.AttachSignature(forged, Convert.FromBase64String(priv));
+            forged.Version = "1.0.1"; // signature no longer matches; publicKey unchanged
+
+            ReinstallService svc = new ReinstallService(_paths, _platform, new StubFetcher(forged), PatchFactory);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                svc.ReinstallAsync("demo", rotateKey: false, CancellationToken.None));
+
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.True(reg.Apps.ContainsKey("demo"));
+            Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        [Fact]
         public async Task Reinstall_DifferentKey_WithoutRotateFlag_RefusesAndLeavesAppInstalled()
         {
             (string priv, string pub) = KeyGenerator.GenerateEd25519();

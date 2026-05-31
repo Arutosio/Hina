@@ -70,6 +70,17 @@ namespace Hina.PackageManager.Install
                     "Descriptor declares a different publisher key. Re-run with `--rotate-key` if you trust the new key.");
             }
 
+            // [2a] Verify the signature BEFORE uninstalling. The key-equality check above only
+            //      compares the declared publicKey field — a forged descriptor with the right
+            //      field but an invalid signature would otherwise pass, get the app uninstalled,
+            //      and only fail at the re-install signature check, leaving the user with nothing.
+            string verifyingKey = rotateKey ? descriptor.PublicKey : pinnedKey;
+            if (!DescriptorSigner.Verify(descriptor, verifyingKey))
+            {
+                throw new InvalidOperationException(
+                    "Descriptor signature is invalid; refusing to reinstall. The installed app is left untouched.");
+            }
+
             // [3] Uninstall.
             UninstallService uninstall = new UninstallService(_paths, _platform, _logger);
             await uninstall.UninstallAsync(name, ct);

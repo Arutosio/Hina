@@ -47,8 +47,23 @@ Eseguito in autonomia. Suite: **259 test verdi** (Core 113, PackageManager 133, 
 - **#9 fail-soft logging (residuo platform)**: i `catch {}` muti di unregister/cleanup in Windows/macOS ora loggano a Debug; `ILogger` opzionale (NullLogger default) instradato via factory. `refactor(platform)`
 - **#10 `RegistryStore.LoadAsync`** aggiunto e usato dai comandi read-only. `#C3` `DevCommand` ora async (`await`, niente `.Result`/`.Wait()`). `refactor(cli,registry)`
 
+**Round 3 — analisi pre-release (2026-05-31, branch `improve/round2-sec-perf`):** 3 review paralleli
+(perf/security/code-quality). Chiusi, 302 test verdi:
+- **SEC HIGH** Linux `.desktop` key injection: campi descriptor (Categories/MimeType/Scheme/Args/
+  Name…) scritti raw → un descriptor firmato-ma-ostile poteva iniettare una riga `Exec=` in
+  autostart (esecuzione al login). Validazione charset/control-char + strip al write. `security(descriptor,linux)`
+- **SEC MED** cap download manifest (32 MB) + chunk compresso, downgrade-guard https→http su
+  manifest/chunk, anti-rollback versione (`--allow-downgrade`), `ManifestSigner` algo-pin. `security(net,update)`
+- **PERF** `TryMatchWindow` allocation-free (SHA span, strong-hash pre-decodati, no await per byte);
+  `CopyChunk` apre il file locale una volta. `perf(core)`
+- **BUG config** `DevCommand` non droppa più i campi config; mapping `NetworkOptions→PatcherConfig`
+  unificato + `PooledConnectionLifetimeMs` propagato. `fix(cli,install)`
+
 **Aperti / scelte per l'utente** (da decidere):
 - `#6 split PatchClient`, `#13/#14 dedup build` — vedi roadmap. `#13/#14` resta deferred: richiede un release run per verifica.
+- **Deferred pre-release** (churn puro, nessun guadagno funzionale): estrazione `UpdateRollback`
+  (refactor del path più safety-critical, richiede TDD), ritiro overload legacy `InstallFont(file, ct)`
+  (cambia la semantica di 4 test esistenti). Da fare in una finestra non-release.
 
 ---
 

@@ -10,6 +10,11 @@ namespace Hina.PackageManager.Install
         // when you suspect the local install is corrupted).
         public bool Force { get; init; }
 
+        // Permit updating to a version older than the installed one. Off by default: an
+        // attacker who can serve a validly-signed older release (signatures don't expire)
+        // could otherwise force a rollback to a known-vulnerable version.
+        public bool AllowDowngrade { get; init; }
+
         // How many apps UpdateAllAsync updates concurrently. Each per-app update is
         // still serial within itself; this just lets the registry-of-N walk overlap
         // network and disk I/O across apps. Default 4 mirrors PatchClient.Concurrency.

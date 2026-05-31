@@ -33,9 +33,30 @@ namespace Hina.Core.Manifest
                 return false;
             }
 
+            // Pin the algorithm: only ed25519 is implemented, so any other value is a downgrade/
+            // confusion attempt, not a real alternative. Mirrors DescriptorSigner.Verify.
+            if (!string.Equals(manifest.Signature.Algorithm, "ed25519", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             byte[] data = GetCanonicalBytes(manifest);
-            byte[] signature = Convert.FromBase64String(manifest.Signature.Signature);
-            byte[] publicKey = Convert.FromBase64String(trustedPublicKeyBase64);
+            byte[] signature;
+            byte[] publicKey;
+            try
+            {
+                signature = Convert.FromBase64String(manifest.Signature.Signature);
+                publicKey = Convert.FromBase64String(trustedPublicKeyBase64);
+            }
+            catch (FormatException)
+            {
+                // Malformed base64 is a failed verification, not an exception to bubble up.
+                return false;
+            }
+            if (publicKey.Length != 32)
+            {
+                return false;
+            }
 
             PublicKey key = PublicKey.Import(Algorithm, publicKey, KeyBlobFormat.RawPublicKey);
             return Algorithm.Verify(key, data, signature);

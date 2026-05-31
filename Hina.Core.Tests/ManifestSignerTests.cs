@@ -107,6 +107,32 @@ namespace Hina.Core.Tests
             Assert.Equal(m1.Signature!.Signature, m2.Signature!.Signature);
         }
 
+        [Fact]
+        public void Verify_NonEd25519Algorithm_ReturnsFalse()
+        {
+            Manifest.Manifest manifest = CreateTestManifest();
+            ManifestSigner.AttachSignature(manifest, GeneratePrivateKey());
+            string publicKey = manifest.Signature!.PublicKey;
+
+            // Downgrade/confusion: a valid Ed25519 signature relabeled as another algorithm.
+            manifest.Signature.Algorithm = "rsa";
+
+            Assert.False(ManifestSigner.Verify(manifest, publicKey));
+        }
+
+        [Fact]
+        public void Verify_MalformedBase64Signature_ReturnsFalse()
+        {
+            Manifest.Manifest manifest = CreateTestManifest();
+            ManifestSigner.AttachSignature(manifest, GeneratePrivateKey());
+            string publicKey = manifest.Signature!.PublicKey;
+
+            manifest.Signature.Signature = "not valid base64!!!";
+
+            // Must return false, not throw FormatException.
+            Assert.False(ManifestSigner.Verify(manifest, publicKey));
+        }
+
         private static Manifest.Manifest CreateTestManifest()
         {
             return new Manifest.Manifest

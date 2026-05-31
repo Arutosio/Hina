@@ -62,6 +62,47 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public async Task Update_OlderVersion_IsRefusedAsDowngrade()
+        {
+            await InstallV1(); // 1.0.0
+
+            AppDescriptor older = BuildDescriptor(_pubKey, version: "0.9.0");
+            DescriptorSigner.AttachSignature(older, Convert.FromBase64String(_privKey));
+
+            UpdateService svc = new UpdateService(
+                _paths, _platform,
+                fetcher: new StubFetcher(older),
+                patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
+
+            UpdateResult result = await svc.UpdateAsync("demo", null, CancellationToken.None);
+
+            Assert.Equal(UpdateStatus.Failed, result.Status);
+            Assert.Contains("downgrade", result.Message, StringComparison.OrdinalIgnoreCase);
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        [Fact]
+        public async Task Update_OlderVersion_WithAllowDowngrade_Proceeds()
+        {
+            await InstallV1(); // 1.0.0
+
+            AppDescriptor older = BuildDescriptor(_pubKey, version: "0.9.0");
+            DescriptorSigner.AttachSignature(older, Convert.FromBase64String(_privKey));
+
+            UpdateService svc = new UpdateService(
+                _paths, _platform,
+                fetcher: new StubFetcher(older),
+                patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
+
+            UpdateResult result = await svc.UpdateAsync("demo", new UpdateOptions { AllowDowngrade = true }, CancellationToken.None);
+
+            Assert.Equal(UpdateStatus.Updated, result.Status);
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("0.9.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        [Fact]
         public async Task Update_SameVersion_ReturnsAlreadyUpToDate()
         {
             await InstallV1();

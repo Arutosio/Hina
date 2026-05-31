@@ -210,7 +210,10 @@ namespace Hina.Core.Tests
             var policy = new RetryPolicy(maxRetries: 3, baseDelayMs: 1000, jitterRng: new Random(42));
             var client = new HttpChunkClient(http, policy);
 
-            await Assert.ThrowsAsync<TaskCanceledException>(() =>
+            // Cancellation is honoured before the 500 is treated as a retryable error, and no retry
+            // is attempted (callCount stays 1). Type is OperationCanceledException (TaskCanceledException
+            // derives from it), so accept any.
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
                 client.GetChunkAsync(BaseUrl, "sha256:aabb001122", cts.Token));
 
             Assert.Equal(1, callCount);

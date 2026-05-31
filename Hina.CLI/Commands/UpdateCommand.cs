@@ -12,6 +12,7 @@ namespace Hina.CLI.Commands
         {
             string? name = Args.FirstPositional(args, startIndex: 1);
             bool force = Args.HasFlag(args, "--force");
+            bool allowDowngrade = Args.HasFlag(args, "--allow-downgrade");
 
             int jobs = 4;
             string? jobsArg = Args.GetValue(args, "--jobs");
@@ -24,6 +25,7 @@ namespace Hina.CLI.Commands
             UpdateOptions options = new UpdateOptions
             {
                 Force = force,
+                AllowDowngrade = allowDowngrade,
                 MaxParallelism = jobs,
                 Network = NetworkArgs.FromArgs(args)
             };

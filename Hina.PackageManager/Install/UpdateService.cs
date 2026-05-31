@@ -116,6 +116,22 @@ namespace Hina.PackageManager.Install
                     Status = UpdateStatus.AlreadyUpToDate
                 };
             }
+            // [3b] Anti-rollback: refuse a validly-signed older version unless explicitly allowed.
+            // Signatures don't expire, so a replayed/served old release would otherwise pass the
+            // signature check above and silently downgrade the user to a known-vulnerable build.
+            if (!options.AllowDowngrade && !sameVersion &&
+                HinaVersion.TryCompare(descriptor.Version, app.InstalledVersion, out int sign) && sign < 0)
+            {
+                return new UpdateResult
+                {
+                    Name = name,
+                    FromVersion = app.InstalledVersion,
+                    ToVersion = descriptor.Version,
+                    Status = UpdateStatus.Failed,
+                    Message = $"Refusing downgrade {app.InstalledVersion} → {descriptor.Version}. Pass --allow-downgrade to override."
+                };
+            }
+
             // M5: when sameVersion && Force, we fall through. For an unchanged descriptor
             // the diff below is empty, so this is effectively a re-patch + registry refresh.
 

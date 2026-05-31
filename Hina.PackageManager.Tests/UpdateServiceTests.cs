@@ -260,6 +260,47 @@ namespace Hina.PackageManager.Tests
             Assert.Contains("not installed", result.Message);
         }
 
+        [Fact]
+        public async Task Update_PatchFailureRollback_DoesNotClobberConcurrentRegistryWrite()
+        {
+            await InstallV1("demo");
+
+            AppDescriptor v2 = BuildDescriptor(_pubKey, name: "demo", version: "1.1.0");
+            DescriptorSigner.AttachSignature(v2, Convert.FromBase64String(_privKey));
+
+            RegistryStore store = new RegistryStore(_paths.RegistryFile);
+
+            // The patcher simulates a concurrent UpdateAllAsync worker writing a sibling row
+            // (lock-free patch window), then fails — triggering demo's patch-failure rollback.
+            // The rollback must re-read the registry and preserve the sibling row, not overwrite
+            // with the stale snapshot loaded before the patch.
+            Hina.Core.Patching.IPatchClient FailingPatcher(Hina.Core.Configuration.PatcherConfig cfg) =>
+                new ConcurrentWriterThenFailPatchClient(cfg, () =>
+                {
+                    Registry.Registry reg = store.Load();
+                    reg.Apps["ghost"] = new InstalledApp
+                    {
+                        Name = "ghost",
+                        InstalledVersion = "9.9.9",
+                        InstallPath = Path.Combine(_tempDir, "ghost"),
+                        DescriptorUrl = "https://example.com/ghost.json",
+                        BaseUrl = "https://cdn.example.com/ghost/",
+                        Channel = "stable",
+                        PublicKey = _pubKey
+                    };
+                    store.SaveAsync(reg).GetAwaiter().GetResult();
+                });
+
+            UpdateService svc = new UpdateService(_paths, _platform, fetcher: new StubFetcher(v2), patchClientFactory: FailingPatcher);
+            UpdateResult result = await svc.UpdateAsync("demo", null, CancellationToken.None);
+
+            Assert.Equal(UpdateStatus.Failed, result.Status);
+            Registry.Registry final = store.Load();
+            Assert.True(final.Apps.ContainsKey("ghost"), "Concurrent sibling row was clobbered by the rollback save.");
+            Assert.Equal("9.9.9", final.Apps["ghost"].InstalledVersion);
+            Assert.Equal("1.0.0", final.Apps["demo"].InstalledVersion); // demo rolled back to v1
+        }
+
         // Performs a clean v1 install via the real InstallService so the registry has a
         // realistic starting state with hooks + shell entries the update can diff against.
         private async Task InstallV1(string name = "demo")
@@ -305,6 +346,28 @@ namespace Hina.PackageManager.Tests
         {
             [ExecRelative()] = new byte[] { 1, 2, 3 }
         };
+    }
+
+    // Runs a side-effect (simulating a concurrent registry writer) then reports patch failure.
+    internal sealed class ConcurrentWriterThenFailPatchClient : Hina.Core.Patching.IPatchClient
+    {
+        private readonly System.Action _onPatch;
+        public ConcurrentWriterThenFailPatchClient(Hina.Core.Configuration.PatcherConfig config, System.Action onPatch)
+        {
+            Config = config;
+            _onPatch = onPatch;
+        }
+        public Hina.Core.Configuration.PatcherConfig Config { get; }
+        public Task<Hina.Core.Patching.CheckResult> CheckAsync(string rootDir, CancellationToken ct)
+            => Task.FromResult(new Hina.Core.Patching.CheckResult { IsUpdateAvailable = true });
+        public Task<Hina.Core.Patching.PatchResult> PatchAsync(string rootDir, CancellationToken ct)
+        {
+            _onPatch();
+            return Task.FromResult(new Hina.Core.Patching.PatchResult { Success = false, Message = "simulated failure" });
+        }
+        public Task<Hina.Core.Patching.VerifyResult> VerifyAsync(string rootDir, CancellationToken ct)
+            => Task.FromResult(new Hina.Core.Patching.VerifyResult { Success = true });
+        public Task RollbackAsync(string rootDir, CancellationToken ct) => Task.CompletedTask;
     }
 
     // Multi-URL stub fetcher so UpdateAllAsync can map descriptorUrl → descriptor.

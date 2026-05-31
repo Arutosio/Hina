@@ -167,8 +167,7 @@ namespace Hina.PackageManager.Install
                 _logger.LogError(ex, "Patch failed for {Name}; rolling back.", name);
                 try { await patcher.RollbackAsync(app.InstallPath, ct); }
                 catch (Exception rbEx) { _logger.LogDebug(rbEx, "Patch rollback failed for {Name} (fail-soft).", name); }
-                registry.Apps[name] = previousSnapshot;
-                await store.SaveAsync(registry, ct);
+                await SaveAppRowLockedAsync(locks, store, name, previousSnapshot, ct);
                 return new UpdateResult
                 {
                     Name = name,
@@ -279,8 +278,7 @@ namespace Hina.PackageManager.Install
                 try { await patcher.RollbackAsync(app.InstallPath, CancellationToken.None); }
                 catch (Exception ex) { _logger.LogDebug(ex, "Patch rollback during add-failure recovery failed for {Name} (fail-soft).", name); }
 
-                registry.Apps[name] = previousSnapshot;
-                try { await store.SaveAsync(registry, CancellationToken.None); }
+                try { await SaveAppRowLockedAsync(locks, store, name, previousSnapshot, CancellationToken.None); }
                 catch (Exception ex) { _logger.LogWarning(ex, "Restoring pre-update registry snapshot for {Name} failed (fail-soft); run `hina verify`.", name); }
 
                 return new UpdateResult
@@ -348,6 +346,19 @@ namespace Hina.PackageManager.Install
                 ToVersion = descriptor.Version,
                 Status = UpdateStatus.Updated
             };
+        }
+
+        // Write a single app row under the exclusive lock, re-reading the on-disk registry first so
+        // we merge with rows that other concurrent UpdateAsync workers wrote. The rollback paths must
+        // use this (not a lock-free SaveAsync of the stale in-memory registry) or a failing update in
+        // `update --all` would clobber a sibling app's freshly-written row.
+        private static async Task SaveAppRowLockedAsync(
+            LockManager locks, RegistryStore store, string name, InstalledApp row, CancellationToken ct)
+        {
+            using RegistryLock l = await locks.AcquireAsync(ct);
+            Registry.Registry reg = await store.LoadAsync(ct);
+            reg.Apps[name] = row;
+            await store.SaveAsync(reg, ct);
         }
 
         public async Task<List<UpdateResult>> UpdateAllAsync(UpdateOptions? options, CancellationToken ct)

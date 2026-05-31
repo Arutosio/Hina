@@ -119,17 +119,30 @@ namespace Hina.PackageManager.Install
             // [3b] Anti-rollback: refuse a validly-signed older version unless explicitly allowed.
             // Signatures don't expire, so a replayed/served old release would otherwise pass the
             // signature check above and silently downgrade the user to a known-vulnerable build.
-            if (!options.AllowDowngrade && !sameVersion &&
-                HinaVersion.TryCompare(descriptor.Version, app.InstalledVersion, out int sign) && sign < 0)
+            if (!options.AllowDowngrade && !sameVersion)
             {
-                return new UpdateResult
+                if (HinaVersion.TryCompare(descriptor.Version, app.InstalledVersion, out int sign))
                 {
-                    Name = name,
-                    FromVersion = app.InstalledVersion,
-                    ToVersion = descriptor.Version,
-                    Status = UpdateStatus.Failed,
-                    Message = $"Refusing downgrade {app.InstalledVersion} → {descriptor.Version}. Pass --allow-downgrade to override."
-                };
+                    if (sign < 0)
+                    {
+                        return new UpdateResult
+                        {
+                            Name = name,
+                            FromVersion = app.InstalledVersion,
+                            ToVersion = descriptor.Version,
+                            Status = UpdateStatus.Failed,
+                            Message = $"Refusing downgrade {app.InstalledVersion} → {descriptor.Version}. Pass --allow-downgrade to override."
+                        };
+                    }
+                }
+                else
+                {
+                    // Unparseable version on either side (e.g. a hand-edited registry): we can't tell
+                    // direction, so downgrade protection can't apply. Proceed but surface a warning.
+                    _logger.LogWarning(
+                        "Cannot compare versions '{From}' and '{To}' for {Name}; downgrade protection skipped.",
+                        app.InstalledVersion, descriptor.Version, name);
+                }
             }
 
             // M5: when sameVersion && Force, we fall through. For an unchanged descriptor

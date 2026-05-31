@@ -281,9 +281,10 @@ namespace Hina.Core.Patching
             }
             else
             {
+                // RollbackAsync (in the per-file catch) already restored backups and deleted the
+                // journal. Don't rewrite a "Failed" journal here — a leftover journal makes the next
+                // PatchAsync think a patch was interrupted and run a spurious rollback every time.
                 _logger.LogError("Patch failed: {Message}", result.Message);
-                journal.Status = "Failed";
-                await journal.SaveAsync(journalPath);
             }
 
             return result;

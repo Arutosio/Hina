@@ -39,8 +39,11 @@ namespace Hina.PackageManager.Registry
                         FileOptions.DeleteOnClose);
                     return new RegistryLock(stream);
                 }
-                catch (IOException)
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
+                    // A held FileShare.None lock surfaces as IOException (sharing violation) or,
+                    // on Windows under certain permission conditions, UnauthorizedAccessException.
+                    // Retry both up to the deadline instead of failing fast on the latter.
                     if (DateTimeOffset.UtcNow >= deadline)
                     {
                         throw new TimeoutException($"Could not acquire registry lock at '{_lockFilePath}' within {_maxWait}.");

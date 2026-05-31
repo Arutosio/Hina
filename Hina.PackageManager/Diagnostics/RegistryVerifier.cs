@@ -99,9 +99,9 @@ namespace Hina.PackageManager.Diagnostics
 
                 if (!Directory.Exists(app.InstallPath))
                 {
-                    // App dir gone — defer to UninstallService (fail-soft, idempotent).
-                    // We have to release the lock first because UninstallService takes
-                    // its own; do it via a nested scope after the foreach completes.
+                    // App dir gone — collect it now and remove its registry row + residual
+                    // side-effects in the post-loop block below (still under this lock), so we
+                    // don't mutate registry.Apps while enumerating it.
                     res.RemovedOrphanEntry = true;
                     res.RemovedHooks.AddRange(app.ExecutedHooks);
                     res.RemovedShellEntries.AddRange(app.ShellEntries);
@@ -161,7 +161,6 @@ namespace Hina.PackageManager.Diagnostics
                 registry.Apps.Remove(orphan);
                 // Best-effort cleanup of any still-extant side-effects (no app dir,
                 // but symlinks/shortcuts may still exist with dead targets).
-                InstalledApp? snapshot = null;
                 AppRepairResult r = results.Find(x => x.Name == orphan)!;
                 foreach (HookEvidence ev in r.RemovedHooks)
                 {
@@ -178,7 +177,6 @@ namespace Hina.PackageManager.Diagnostics
                     if (File.Exists(descCache)) File.Delete(descCache);
                 }
                 catch { /* fail-soft */ }
-                _ = snapshot;
             }
 
             await store.SaveAsync(registry, ct);

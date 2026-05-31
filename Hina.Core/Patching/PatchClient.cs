@@ -143,6 +143,8 @@ namespace Hina.Core.Patching
                         _logger.LogDebug("Rsync matched {MatchCount}/{TotalChunks} chunks for {FilePath}", matches.Count, file.Chunks.Count, file.Path);
                     }
 
+                    // Open the local file once for the whole rebuild instead of per matched chunk.
+                    using FileStream? srcFs = matches.Count > 0 ? File.OpenRead(localPath) : null;
                     using (FileStream outFs = File.Create(tempPath))
                     {
                         // Rebuild the file in manifest order, reusing local data when possible.
@@ -179,7 +181,7 @@ namespace Hina.Core.Patching
                             if (matches.TryGetValue(chunk.Index, out long offset))
                             {
                                 // Reuse local data when a chunk matches.
-                                CopyChunk(localPath, offset, chunk.Size, outFs);
+                                CopyChunk(srcFs!, offset, chunk.Size, outFs);
                             }
                             else
                             {
@@ -321,19 +323,16 @@ namespace Hina.Core.Patching
             return Task.CompletedTask;
         }
 
-        private static void CopyChunk(string localPath, long offset, int size, FileStream output)
+        private static void CopyChunk(FileStream src, long offset, int size, FileStream output)
         {
             byte[] buffer = new byte[size];
-            using (FileStream fs = File.OpenRead(localPath))
-            {
-                fs.Seek(offset, SeekOrigin.Begin);
-                // ReadExactly: a single Read may return fewer bytes than requested. A matched
-                // rsync chunk always has `size` bytes available at `offset`, so a short read
-                // means a truncated/changed source — fail (caught upstream → rollback) rather
-                // than silently writing a short, corrupt chunk.
-                fs.ReadExactly(buffer, 0, size);
-                output.Write(buffer, 0, size);
-            }
+            src.Seek(offset, SeekOrigin.Begin);
+            // ReadExactly: a single Read may return fewer bytes than requested. A matched
+            // rsync chunk always has `size` bytes available at `offset`, so a short read
+            // means a truncated/changed source — fail (caught upstream → rollback) rather
+            // than silently writing a short, corrupt chunk.
+            src.ReadExactly(buffer, 0, size);
+            output.Write(buffer, 0, size);
         }
 
         private async Task<Dictionary<int, long>> RsyncMatchLocalAsync(string localPath, ManifestFile file, CancellationToken ct)

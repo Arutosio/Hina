@@ -54,7 +54,7 @@ namespace Hina.PackageManager.Tests
         public async Task RegisterAutostart_EntryIdWithNewline_NoInjectedKey()
         {
             AutostartHook hook = new AutostartHook { EntryId = "main\nExec=/bin/sh -c evil" };
-            string path = await _platform.RegisterAutostart(hook, _tempDir, CancellationToken.None);
+            string path = await _platform.RegisterAutostart(hook, _tempDir, null, CancellationToken.None);
 
             string[] lines = await File.ReadAllLinesAsync(path);
             Assert.Equal(1, lines.Count(l => l.StartsWith("Exec=", StringComparison.Ordinal)));

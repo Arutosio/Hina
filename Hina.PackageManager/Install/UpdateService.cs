@@ -226,7 +226,7 @@ namespace Hina.PackageManager.Install
                 }
                 foreach (HookAction hook in hooksToAdd)
                 {
-                    HookEvidence evidence = await hooks.ApplyAsync(hook, app.InstallPath, app.Name, ct);
+                    HookEvidence evidence = await hooks.ApplyAsync(hook, app.InstallPath, app.Name, descriptor.Entries, ct);
                     addedHooks.Add(evidence);
                     updated.ExecutedHooks.Add(evidence);
                 }
@@ -267,7 +267,7 @@ namespace Hina.PackageManager.Install
                         foreach (HookAction origHook in previousDescriptor.PostInstall)
                         {
                             if (HookIdentity.For(origHook) != removedId) continue;
-                            try { await hooks.ApplyAsync(origHook, app.InstallPath, app.Name, CancellationToken.None); }
+                            try { await hooks.ApplyAsync(origHook, app.InstallPath, app.Name, previousDescriptor.Entries, CancellationToken.None); }
                             catch (Exception ex) { _logger.LogDebug(ex, "Re-apply of hook {Id} during rollback failed for {Name} (fail-soft).", removedId, name); }
                             break;
                         }

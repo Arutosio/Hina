@@ -58,21 +58,28 @@ namespace Hina.PackageManager.Tests
             return Task.CompletedTask;
         }
 
-        public Task<string> RegisterMimeType(MimeTypeHook hook, string appDir, CancellationToken ct)
+        public Task<string> RegisterMimeType(MimeTypeHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
         {
             string evidence = $"/fake/mime/{hook.MimeType}";
             MimeTypesRegistered.Add(evidence);
+            LastMimeExecAbs = entryExecAbs;
             return Task.FromResult(evidence);
         }
 
         public Task UnregisterMimeType(string evidencePath, CancellationToken ct) => Task.CompletedTask;
 
-        public Task<string> RegisterUrlScheme(UrlSchemeHook hook, string appDir, CancellationToken ct)
+        public Task<string> RegisterUrlScheme(UrlSchemeHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
         {
             string evidence = $"/fake/url/{hook.Scheme}";
             UrlSchemesRegistered.Add(evidence);
+            LastUrlExecAbs = entryExecAbs;
             return Task.FromResult(evidence);
         }
+
+        // Captured resolved exec paths so tests can assert HookExecutor passed the right one.
+        public string? LastMimeExecAbs { get; private set; }
+        public string? LastUrlExecAbs { get; private set; }
+        public string? LastAutostartExecAbs { get; private set; }
 
         public Task UnregisterUrlScheme(string evidencePath, CancellationToken ct) => Task.CompletedTask;
 
@@ -89,10 +96,11 @@ namespace Hina.PackageManager.Tests
             return Task.CompletedTask;
         }
 
-        public Task<string> RegisterAutostart(AutostartHook hook, string appDir, CancellationToken ct)
+        public Task<string> RegisterAutostart(AutostartHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
         {
             string evidence = $"/fake/autostart/{hook.EntryId}";
             AutostartRegistered.Add(evidence);
+            LastAutostartExecAbs = entryExecAbs;
             return Task.FromResult(evidence);
         }
 

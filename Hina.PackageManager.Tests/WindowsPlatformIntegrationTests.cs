@@ -97,7 +97,7 @@ namespace Hina.PackageManager.Tests
             WindowsPlatformIntegration p = NewPlatform();
             UrlSchemeHook hook = new UrlSchemeHook { Scheme = "hinatest-url", EntryId = "main" };
 
-            string evidence = await p.RegisterUrlScheme(hook, "C:\\apps\\x", CancellationToken.None);
+            string evidence = await p.RegisterUrlScheme(hook, "C:\\apps\\x", null, CancellationToken.None);
 
             Assert.StartsWith("hkcu:", evidence);
 
@@ -124,7 +124,7 @@ namespace Hina.PackageManager.Tests
                 EntryId = "main"
             };
 
-            string evidence = await p.RegisterMimeType(hook, "C:\\apps\\x", CancellationToken.None);
+            string evidence = await p.RegisterMimeType(hook, "C:\\apps\\x", null, CancellationToken.None);
 
             Assert.Contains("Hina.application_x-hinatest.main", evidence);
 
@@ -181,7 +181,7 @@ namespace Hina.PackageManager.Tests
             WindowsPlatformIntegration p = NewPlatform();
             AutostartHook hook = new AutostartHook { EntryId = "hinatest-autostart" };
 
-            string evidence = await p.RegisterAutostart(hook, "C:\\apps\\x", CancellationToken.None);
+            string evidence = await p.RegisterAutostart(hook, "C:\\apps\\x", null, CancellationToken.None);
 
             Assert.StartsWith("hkcu-run:", evidence);
 

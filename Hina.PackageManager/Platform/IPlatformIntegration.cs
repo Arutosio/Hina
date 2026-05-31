@@ -19,11 +19,13 @@ namespace Hina.PackageManager.Platform
         Task<string> AddToPath(string name, string targetExec, CancellationToken ct);
         Task RemoveFromPath(string evidencePath, CancellationToken ct);
 
-        // Phase 4 hooks. Stubs throw PlatformNotSupportedException until implemented.
-        Task<string> RegisterMimeType(MimeTypeHook hook, string appDir, CancellationToken ct);
+        // Phase 4 hooks. `entryExecAbs` is the absolute path to the executable of the entry the
+        // hook references (resolved by HookExecutor from the descriptor's entries[]); the OS needs
+        // it to write a working launch command. Null only if the entry can't be resolved.
+        Task<string> RegisterMimeType(MimeTypeHook hook, string appDir, string? entryExecAbs, CancellationToken ct);
         Task UnregisterMimeType(string evidencePath, CancellationToken ct);
 
-        Task<string> RegisterUrlScheme(UrlSchemeHook hook, string appDir, CancellationToken ct);
+        Task<string> RegisterUrlScheme(UrlSchemeHook hook, string appDir, string? entryExecAbs, CancellationToken ct);
         Task UnregisterUrlScheme(string evidencePath, CancellationToken ct);
 
         Task<string> InstallFont(string fontFile, CancellationToken ct);
@@ -34,7 +36,7 @@ namespace Hina.PackageManager.Platform
         Task<string> InstallFont(string fontFile, string appName, CancellationToken ct) => InstallFont(fontFile, ct);
         Task UninstallFont(string evidencePath, CancellationToken ct);
 
-        Task<string> RegisterAutostart(AutostartHook hook, string appDir, CancellationToken ct);
+        Task<string> RegisterAutostart(AutostartHook hook, string appDir, string? entryExecAbs, CancellationToken ct);
         Task UnregisterAutostart(string evidencePath, CancellationToken ct);
 
         // Used by `hina verify`. Returns true if the recorded evidence no longer

@@ -89,7 +89,7 @@ namespace Hina.PackageManager.Platform.Windows
 
         // ---- MIME type via HKCU\Software\Classes ----
 
-        public Task<string> RegisterMimeType(MimeTypeHook hook, string appDir, CancellationToken ct)
+        public Task<string> RegisterMimeType(MimeTypeHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
         {
             // ProgID keyed off the mime-type identifier so re-registering for the same
             // (mime, entry) overwrites in place rather than accumulating duplicates.
@@ -100,10 +100,7 @@ namespace Hina.PackageManager.Platform.Windows
             {
                 progKey.SetValue("", $"Hina MIME {hook.MimeType}");
                 using RegistryKey shellOpen = progKey.CreateSubKey("shell\\open\\command");
-                // Exec path resolved by caller — Hina drives MIME *registration*, not launch.
-                // We keep a placeholder so the shell can still launch via this ProgID when
-                // the upstream entry's exec is wired by the user.
-                shellOpen.SetValue("", "\"%1\"");
+                shellOpen.SetValue("", LaunchCommand(entryExecAbs));
             }
 
             foreach (string ext in hook.Extensions)
@@ -128,7 +125,7 @@ namespace Hina.PackageManager.Platform.Windows
 
         // ---- URL scheme via HKCU\Software\Classes\<scheme> ----
 
-        public Task<string> RegisterUrlScheme(UrlSchemeHook hook, string appDir, CancellationToken ct)
+        public Task<string> RegisterUrlScheme(UrlSchemeHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
         {
             string evidence = $"hkcu:Software\\Classes\\{hook.Scheme}";
 
@@ -136,9 +133,14 @@ namespace Hina.PackageManager.Platform.Windows
             k.SetValue("", "URL:" + hook.Scheme);
             k.SetValue("URL Protocol", "");
             using RegistryKey cmd = k.CreateSubKey("shell\\open\\command");
-            cmd.SetValue("", "\"%1\"");
+            cmd.SetValue("", LaunchCommand(entryExecAbs));
             return Task.FromResult(evidence);
         }
+
+        // Shell open command: "<exec>" "%1" when the entry exec is known, else just "%1" (the old
+        // placeholder) so the key still exists for the user to wire up.
+        private static string LaunchCommand(string? entryExecAbs) =>
+            string.IsNullOrEmpty(entryExecAbs) ? "\"%1\"" : $"\"{entryExecAbs}\" \"%1\"";
 
         public Task UnregisterUrlScheme(string evidencePath, CancellationToken ct)
         {
@@ -295,18 +297,25 @@ namespace Hina.PackageManager.Platform.Windows
 
         // ---- Autostart: HKCU\Software\Microsoft\Windows\CurrentVersion\Run ----
 
-        public Task<string> RegisterAutostart(AutostartHook hook, string appDir, CancellationToken ct)
+        public Task<string> RegisterAutostart(AutostartHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
         {
             string valueName = "Hina." + SanitizeRegId(hook.EntryId);
             string evidence = "hkcu-run:" + valueName;
 
             using RegistryKey k = Reg.CurrentUser.CreateSubKey(
                 "Software\\Microsoft\\Windows\\CurrentVersion\\Run")!;
-            // Caller's appDir + entry exec isn't known here, but the run-on-login behaviour
-            // requires a real command. We stash a placeholder pointing at the registered ProgID;
-            // higher-level callers wiring exec into autostart should supply a target via a
-            // future schema field — for now we record the value-name so uninstall can clean.
-            k.SetValue(valueName, "");
+            // Run-on-login needs the real executable command. Append any hook args; fall back to an
+            // empty value (the old placeholder) only when the entry exec couldn't be resolved.
+            string command = "";
+            if (!string.IsNullOrEmpty(entryExecAbs))
+            {
+                command = $"\"{entryExecAbs}\"";
+                if (hook.Args is { Count: > 0 })
+                {
+                    command += " " + string.Join(" ", hook.Args);
+                }
+            }
+            k.SetValue(valueName, command);
             return Task.FromResult(evidence);
         }
 

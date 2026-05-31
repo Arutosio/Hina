@@ -88,12 +88,12 @@ namespace Hina.PackageManager.Platform.MacOS
 
         // ---- MIME type: helper .app bundle with CFBundleDocumentTypes ----
 
-        public Task<string> RegisterMimeType(MimeTypeHook hook, string appDir, CancellationToken ct)
+        public Task<string> RegisterMimeType(MimeTypeHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
         {
             string bundlePath = WriteAppBundle(
                 bundleName: $"Hina MIME {hook.MimeType}",
                 bundleId: "com.hina.mime." + SanitizeId(hook.MimeType) + "." + SanitizeId(hook.EntryId),
-                execTarget: null,
+                execTarget: entryExecAbs,
                 iconRelative: null,
                 documentTypes: BuildDocumentTypesPlist(hook),
                 urlTypes: null);
@@ -108,12 +108,12 @@ namespace Hina.PackageManager.Platform.MacOS
 
         // ---- URL scheme: helper .app bundle with CFBundleURLTypes ----
 
-        public Task<string> RegisterUrlScheme(UrlSchemeHook hook, string appDir, CancellationToken ct)
+        public Task<string> RegisterUrlScheme(UrlSchemeHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
         {
             string bundlePath = WriteAppBundle(
                 bundleName: $"Hina URL {hook.Scheme}",
                 bundleId: "com.hina.url." + SanitizeId(hook.Scheme) + "." + SanitizeId(hook.EntryId),
-                execTarget: null,
+                execTarget: entryExecAbs,
                 iconRelative: null,
                 documentTypes: null,
                 urlTypes: BuildUrlTypesPlist(hook));
@@ -186,12 +186,16 @@ namespace Hina.PackageManager.Platform.MacOS
 
         // ---- Autostart: ~/Library/LaunchAgents/*.plist ----
 
-        public Task<string> RegisterAutostart(AutostartHook hook, string appDir, CancellationToken ct)
+        public Task<string> RegisterAutostart(AutostartHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
         {
             Directory.CreateDirectory(_launchAgentsDir);
 
             string label = "com.hina.autostart." + SanitizeId(hook.EntryId);
             string plistPath = Path.Combine(_launchAgentsDir, label + ".plist");
+
+            // ProgramArguments[0] must be the executable path so launchd can start it. Fall back to
+            // the EntryId only if it couldn't be resolved (shouldn't happen for a valid descriptor).
+            string program = string.IsNullOrEmpty(entryExecAbs) ? hook.EntryId : entryExecAbs;
 
             StringBuilder args = new StringBuilder();
             if (hook.Args != null)
@@ -211,7 +215,7 @@ $@"<?xml version=""1.0"" encoding=""UTF-8""?>
     <string>{EscapeXml(label)}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{EscapeXml(hook.EntryId)}</string>
+        <string>{EscapeXml(program)}</string>
 {args}    </array>
     <key>RunAtLoad</key>
     <true/>

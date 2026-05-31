@@ -359,14 +359,14 @@ namespace Hina.PackageManager.Tests
         public Task RemoveMenuShortcut(string evidencePath, CancellationToken ct) => _delegateImpl.RemoveMenuShortcut(evidencePath, ct);
         public Task<string> AddToPath(string name, string targetExec, CancellationToken ct) => _delegateImpl.AddToPath(name, targetExec, ct);
         public Task RemoveFromPath(string evidencePath, CancellationToken ct) => _delegateImpl.RemoveFromPath(evidencePath, ct);
-        public Task<string> RegisterMimeType(MimeTypeHook hook, string appDir, CancellationToken ct) => _delegateImpl.RegisterMimeType(hook, appDir, ct);
+        public Task<string> RegisterMimeType(MimeTypeHook hook, string appDir, string? entryExecAbs, CancellationToken ct) => _delegateImpl.RegisterMimeType(hook, appDir, entryExecAbs, ct);
         public Task UnregisterMimeType(string evidencePath, CancellationToken ct) => _delegateImpl.UnregisterMimeType(evidencePath, ct);
-        public Task<string> RegisterUrlScheme(UrlSchemeHook hook, string appDir, CancellationToken ct) => _delegateImpl.RegisterUrlScheme(hook, appDir, ct);
+        public Task<string> RegisterUrlScheme(UrlSchemeHook hook, string appDir, string? entryExecAbs, CancellationToken ct) => _delegateImpl.RegisterUrlScheme(hook, appDir, entryExecAbs, ct);
         public Task UnregisterUrlScheme(string evidencePath, CancellationToken ct) => _delegateImpl.UnregisterUrlScheme(evidencePath, ct);
         public Task<string> InstallFont(string fontFile, CancellationToken ct) => _delegateImpl.InstallFont(fontFile, ct);
         public Task UninstallFont(string evidencePath, CancellationToken ct) => _delegateImpl.UninstallFont(evidencePath, ct);
 
-        public Task<string> RegisterAutostart(AutostartHook hook, string appDir, CancellationToken ct)
+        public Task<string> RegisterAutostart(AutostartHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
             => throw new UnauthorizedAccessException("autostart denied (test)");
 
         public Task UnregisterAutostart(string evidencePath, CancellationToken ct) => _delegateImpl.UnregisterAutostart(evidencePath, ct);

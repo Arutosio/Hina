@@ -47,7 +47,7 @@ namespace Hina.PackageManager.Tests
                 EntryId = "main"
             };
 
-            string evidence = await _platform.RegisterMimeType(hook, "/apps/foo", CancellationToken.None);
+            string evidence = await _platform.RegisterMimeType(hook, "/apps/foo", null, CancellationToken.None);
 
             Assert.True(File.Exists(evidence));
             Assert.Equal(_appsDir, Path.GetDirectoryName(evidence));
@@ -64,7 +64,7 @@ namespace Hina.PackageManager.Tests
         public async Task UnregisterMimeType_DeletesFile_AndIsIdempotent()
         {
             MimeTypeHook hook = new MimeTypeHook { MimeType = "application/x-x", Extensions = { ".x" }, EntryId = "main" };
-            string evidence = await _platform.RegisterMimeType(hook, "/apps/x", CancellationToken.None);
+            string evidence = await _platform.RegisterMimeType(hook, "/apps/x", null, CancellationToken.None);
 
             await _platform.UnregisterMimeType(evidence, CancellationToken.None);
             Assert.False(File.Exists(evidence));
@@ -78,7 +78,7 @@ namespace Hina.PackageManager.Tests
         {
             UrlSchemeHook hook = new UrlSchemeHook { Scheme = "fooedit", EntryId = "main" };
 
-            string evidence = await _platform.RegisterUrlScheme(hook, "/apps/foo", CancellationToken.None);
+            string evidence = await _platform.RegisterUrlScheme(hook, "/apps/foo", null, CancellationToken.None);
 
             string content = File.ReadAllText(evidence);
             Assert.Contains("MimeType=x-scheme-handler/fooedit;", content);
@@ -89,7 +89,7 @@ namespace Hina.PackageManager.Tests
         public async Task UnregisterUrlScheme_DeletesFile_AndIsIdempotent()
         {
             UrlSchemeHook hook = new UrlSchemeHook { Scheme = "rmtest", EntryId = "main" };
-            string evidence = await _platform.RegisterUrlScheme(hook, "/apps/x", CancellationToken.None);
+            string evidence = await _platform.RegisterUrlScheme(hook, "/apps/x", null, CancellationToken.None);
 
             await _platform.UnregisterUrlScheme(evidence, CancellationToken.None);
             Assert.False(File.Exists(evidence));
@@ -137,7 +137,7 @@ namespace Hina.PackageManager.Tests
                 Args = new() { "--minimized" }
             };
 
-            string evidence = await _platform.RegisterAutostart(hook, "/apps/foo", CancellationToken.None);
+            string evidence = await _platform.RegisterAutostart(hook, "/apps/foo", null, CancellationToken.None);
 
             Assert.Equal(_autostartDir, Path.GetDirectoryName(evidence));
             string content = File.ReadAllText(evidence);
@@ -148,10 +148,24 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public async Task RegisterAutostart_WithResolvedExec_WritesExecLineWithPath()
+        {
+            AutostartHook hook = new AutostartHook { EntryId = "main", Args = new() { "--minimized" } };
+            string execAbs = "/apps/foo/bin/app";
+
+            string evidence = await _platform.RegisterAutostart(hook, "/apps/foo", execAbs, CancellationToken.None);
+
+            string content = File.ReadAllText(evidence);
+            Assert.Contains("Exec=", content);
+            Assert.Contains(execAbs, content); // the .desktop now actually launches the app
+            Assert.DoesNotContain("Exec= ", content); // not an empty exec
+        }
+
+        [Fact]
         public async Task UnregisterAutostart_DeletesFile_AndIsIdempotent()
         {
             AutostartHook hook = new AutostartHook { EntryId = "rm" };
-            string evidence = await _platform.RegisterAutostart(hook, "/apps/x", CancellationToken.None);
+            string evidence = await _platform.RegisterAutostart(hook, "/apps/x", null, CancellationToken.None);
 
             await _platform.UnregisterAutostart(evidence, CancellationToken.None);
             Assert.False(File.Exists(evidence));

@@ -103,10 +103,9 @@ namespace Hina.PackageManager.Platform.Linux
 
         // ---- MIME type ----
 
-        public Task<string> RegisterMimeType(MimeTypeHook hook, string appDir, CancellationToken ct)
+        public Task<string> RegisterMimeType(MimeTypeHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
         {
-            ShellEntry? targetEntry = FindEntry(hook.EntryId);
-            string execValue = targetEntry != null ? Path.Combine(appDir, targetEntry.Exec) : "";
+            string execValue = entryExecAbs ?? "";
 
             Directory.CreateDirectory(_userAppsDir);
             string fileName = $"hina-mime-{SanitizeId(hook.MimeType)}-{SanitizeId(hook.EntryId)}.desktop";
@@ -134,10 +133,9 @@ namespace Hina.PackageManager.Platform.Linux
 
         // ---- URL scheme ----
 
-        public Task<string> RegisterUrlScheme(UrlSchemeHook hook, string appDir, CancellationToken ct)
+        public Task<string> RegisterUrlScheme(UrlSchemeHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
         {
-            ShellEntry? targetEntry = FindEntry(hook.EntryId);
-            string execValue = targetEntry != null ? Path.Combine(appDir, targetEntry.Exec) : "";
+            string execValue = entryExecAbs ?? "";
 
             Directory.CreateDirectory(_userAppsDir);
             string fileName = $"hina-url-{SanitizeId(hook.Scheme)}-{SanitizeId(hook.EntryId)}.desktop";
@@ -220,10 +218,9 @@ namespace Hina.PackageManager.Platform.Linux
 
         // ---- Autostart ----
 
-        public Task<string> RegisterAutostart(AutostartHook hook, string appDir, CancellationToken ct)
+        public Task<string> RegisterAutostart(AutostartHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
         {
-            ShellEntry? targetEntry = FindEntry(hook.EntryId);
-            string execValue = targetEntry != null ? Path.Combine(appDir, targetEntry.Exec) : "";
+            string execValue = entryExecAbs ?? "";
             if (hook.Args is { Count: > 0 })
             {
                 execValue = execValue + " " + string.Join(" ", hook.Args);
@@ -252,12 +249,6 @@ namespace Hina.PackageManager.Platform.Linux
         }
 
         // ---- Helpers ----
-
-        // The platform layer doesn't have access to the descriptor's entries[]. For
-        // hook .desktop files we leave Exec empty when the entry can't be resolved;
-        // callers wishing to enforce strict resolution should pass a richer hook
-        // shape in a future revision.
-        private static ShellEntry? FindEntry(string id) => null;
 
         private static string Escape(string value)
         {

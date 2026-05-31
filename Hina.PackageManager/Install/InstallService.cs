@@ -172,7 +172,7 @@ namespace Hina.PackageManager.Install
                 // [13] Post-install hooks in declared order.
                 foreach (HookAction hook in descriptor.PostInstall)
                 {
-                    HookEvidence evidence = await hooks.ApplyAsync(hook, appDir, descriptor.Name, ct);
+                    HookEvidence evidence = await hooks.ApplyAsync(hook, appDir, descriptor.Name, descriptor.Entries, ct);
                     tx.RecordHook(evidence);
                     newApp.ExecutedHooks.Add(evidence);
                 }

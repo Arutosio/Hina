@@ -57,6 +57,25 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public async Task Apply_ResolvesEntryExecForMimeUrlAutostart()
+        {
+            FakePlatformIntegration p = new();
+            HookExecutor exec = new(p);
+
+            var entries = new[] { new ShellEntry { Id = "main", Name = "Main", Exec = "bin/app" } };
+            string appDir = "/apps/x";
+            string expectedExec = System.IO.Path.Combine(appDir, "bin/app");
+
+            await exec.ApplyAsync(new MimeTypeHook { MimeType = "application/x-foo", Extensions = { ".foo" }, EntryId = "main" }, appDir, "x", entries, CancellationToken.None);
+            await exec.ApplyAsync(new UrlSchemeHook { Scheme = "foo", EntryId = "main" }, appDir, "x", entries, CancellationToken.None);
+            await exec.ApplyAsync(new AutostartHook { EntryId = "main" }, appDir, "x", entries, CancellationToken.None);
+
+            Assert.Equal(expectedExec, p.LastMimeExecAbs);
+            Assert.Equal(expectedExec, p.LastUrlExecAbs);
+            Assert.Equal(expectedExec, p.LastAutostartExecAbs);
+        }
+
+        [Fact]
         public async Task Undo_InstallFont_UninstallsEveryFontInEvidence()
         {
             FakePlatformIntegration p = new();

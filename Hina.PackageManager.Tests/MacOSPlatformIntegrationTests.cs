@@ -110,6 +110,7 @@ namespace Hina.PackageManager.Tests
             string bundlePath = await _platform.RegisterMimeType(
                 new MimeTypeHook { MimeType = "application/x-demo", Extensions = { ".demo" }, EntryId = "main" },
                 "/apps/demo",
+                null,
                 CancellationToken.None);
 
             Assert.EndsWith(".app", bundlePath);
@@ -125,6 +126,7 @@ namespace Hina.PackageManager.Tests
             string bundlePath = await _platform.RegisterUrlScheme(
                 new UrlSchemeHook { Scheme = "demoapp", EntryId = "main" },
                 "/apps/demo",
+                null,
                 CancellationToken.None);
 
             string plist = File.ReadAllText(Path.Combine(bundlePath, "Contents", "Info.plist"));
@@ -152,6 +154,7 @@ namespace Hina.PackageManager.Tests
             string evidence = await _platform.RegisterAutostart(
                 new AutostartHook { EntryId = "demo-daemon", Args = new() { "--quiet" } },
                 "/apps/demo",
+                null,
                 CancellationToken.None);
 
             Assert.Equal(_launchAgentsDir, Path.GetDirectoryName(evidence));
@@ -167,7 +170,7 @@ namespace Hina.PackageManager.Tests
         public async Task UnregisterAutostart_DeletesPlist_AndIsIdempotent()
         {
             string evidence = await _platform.RegisterAutostart(
-                new AutostartHook { EntryId = "rm" }, "/apps/x", CancellationToken.None);
+                new AutostartHook { EntryId = "rm" }, "/apps/x", null, CancellationToken.None);
 
             await _platform.UnregisterAutostart(evidence, CancellationToken.None);
             Assert.False(File.Exists(evidence));

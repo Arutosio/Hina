@@ -145,8 +145,36 @@ namespace Hina.Core.Patching
                     using (FileStream outFs = File.Create(tempPath))
                     {
                         // Rebuild the file in manifest order, reusing local data when possible.
-                        foreach (ManifestChunk chunk in file.Chunks)
+                        // Missing chunks are downloaded in parallel: we keep up to Config.Concurrency
+                        // downloads in flight ahead of the write cursor. The output is still written
+                        // strictly in manifest order (so the file is byte-identical and the atomic
+                        // swap is unchanged), but network latency overlaps instead of summing.
+                        // The sliding window also caps memory to ~Concurrency chunks rather than
+                        // buffering the whole file.
+                        int window = Math.Max(1, Config.Concurrency);
+                        Dictionary<int, Task<byte[]>> inflight = new Dictionary<int, Task<byte[]>>();
+                        int nextToStart = 0;
+
+                        // Start downloads for upcoming missing chunks until `window` are in flight
+                        // (matched chunks are read from disk, so they don't consume a window slot).
+                        void Pump()
                         {
+                            while (inflight.Count < window && nextToStart < file.Chunks.Count)
+                            {
+                                int pos = nextToStart++;
+                                ManifestChunk c = file.Chunks[pos];
+                                if (!matches.ContainsKey(c.Index))
+                                {
+                                    _logger.LogDebug("Downloading chunk {ChunkIndex} for {FilePath}", c.Index, file.Path);
+                                    inflight[pos] = _http.GetChunkAsync(Config.BaseUrl, c.Strong, ct, c.Size);
+                                }
+                            }
+                        }
+
+                        for (int pos = 0; pos < file.Chunks.Count; pos++)
+                        {
+                            Pump();
+                            ManifestChunk chunk = file.Chunks[pos];
                             if (matches.TryGetValue(chunk.Index, out long offset))
                             {
                                 // Reuse local data when a chunk matches.
@@ -154,9 +182,8 @@ namespace Hina.Core.Patching
                             }
                             else
                             {
-                                // Download missing chunk from server.
-                                _logger.LogDebug("Downloading chunk {ChunkIndex} for {FilePath}", chunk.Index, file.Path);
-                                byte[] data = await _http.GetChunkAsync(Config.BaseUrl, chunk.Strong, ct, chunk.Size);
+                                byte[] data = await inflight[pos];
+                                inflight.Remove(pos);
                                 if (chunk.Size < 0 || chunk.Size > data.Length)
                                 {
                                     throw new InvalidDataException(

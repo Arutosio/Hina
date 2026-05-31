@@ -5,6 +5,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Hina.PackageManager.Descriptor;
 using Hina.PackageManager.Paths;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using static Hina.PackageManager.Platform.PlatformText;
 
 namespace Hina.PackageManager.Platform.Linux
@@ -20,19 +22,21 @@ namespace Hina.PackageManager.Platform.Linux
         private readonly string _userAppsDir;
         private readonly string _userFontsDir;
         private readonly string _userAutostartDir;
+        private readonly ILogger _logger;
 
-        public LinuxPlatformIntegration(InstallPaths paths)
-            : this(paths.UserBinDir, DefaultUserAppsDir(), DefaultUserFontsDir(), DefaultUserAutostartDir())
+        public LinuxPlatformIntegration(InstallPaths paths, ILogger? logger = null)
+            : this(paths.UserBinDir, DefaultUserAppsDir(), DefaultUserFontsDir(), DefaultUserAutostartDir(), logger)
         {
         }
 
         // Test seam: caller controls every directory we touch.
-        public LinuxPlatformIntegration(string userBinDir, string userAppsDir, string? userFontsDir = null, string? userAutostartDir = null)
+        public LinuxPlatformIntegration(string userBinDir, string userAppsDir, string? userFontsDir = null, string? userAutostartDir = null, ILogger? logger = null)
         {
             _userBinDir = userBinDir;
             _userAppsDir = userAppsDir;
             _userFontsDir = userFontsDir ?? DefaultUserFontsDir();
             _userAutostartDir = userAutostartDir ?? DefaultUserAutostartDir();
+            _logger = logger ?? NullLogger.Instance;
         }
 
         public string OsId => "linux";
@@ -70,7 +74,7 @@ namespace Hina.PackageManager.Platform.Linux
 
         public Task RemoveMenuShortcut(string evidencePath, CancellationToken ct)
         {
-            TryDeleteFile(evidencePath);
+            TryDeleteFile(evidencePath, _logger);
             return Task.CompletedTask;
         }
 
@@ -84,7 +88,7 @@ namespace Hina.PackageManager.Platform.Linux
 
             if (File.Exists(linkPath) || new FileInfo(linkPath).LinkTarget != null)
             {
-                TryDeleteFile(linkPath);
+                TryDeleteFile(linkPath, _logger);
             }
 
             File.CreateSymbolicLink(linkPath, targetExec);
@@ -93,7 +97,7 @@ namespace Hina.PackageManager.Platform.Linux
 
         public Task RemoveFromPath(string evidencePath, CancellationToken ct)
         {
-            TryDeleteFile(evidencePath);
+            TryDeleteFile(evidencePath, _logger);
             return Task.CompletedTask;
         }
 
@@ -124,7 +128,7 @@ namespace Hina.PackageManager.Platform.Linux
 
         public Task UnregisterMimeType(string evidencePath, CancellationToken ct)
         {
-            TryDeleteFile(evidencePath);
+            TryDeleteFile(evidencePath, _logger);
             return Task.CompletedTask;
         }
 
@@ -156,7 +160,7 @@ namespace Hina.PackageManager.Platform.Linux
 
         public Task UnregisterUrlScheme(string evidencePath, CancellationToken ct)
         {
-            TryDeleteFile(evidencePath);
+            TryDeleteFile(evidencePath, _logger);
             return Task.CompletedTask;
         }
 
@@ -182,7 +186,7 @@ namespace Hina.PackageManager.Platform.Linux
 
         public Task UninstallFont(string evidencePath, CancellationToken ct)
         {
-            TryDeleteFile(evidencePath);
+            TryDeleteFile(evidencePath, _logger);
             return Task.CompletedTask;
         }
 
@@ -243,7 +247,7 @@ namespace Hina.PackageManager.Platform.Linux
 
         public Task UnregisterAutostart(string evidencePath, CancellationToken ct)
         {
-            TryDeleteFile(evidencePath);
+            TryDeleteFile(evidencePath, _logger);
             return Task.CompletedTask;
         }
 

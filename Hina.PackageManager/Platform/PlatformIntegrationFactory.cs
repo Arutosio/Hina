@@ -4,24 +4,25 @@ using Hina.PackageManager.Paths;
 using Hina.PackageManager.Platform.Linux;
 using Hina.PackageManager.Platform.MacOS;
 using Hina.PackageManager.Platform.Windows;
+using Microsoft.Extensions.Logging;
 
 namespace Hina.PackageManager.Platform
 {
     public static class PlatformIntegrationFactory
     {
-        public static IPlatformIntegration Current(InstallPaths paths)
+        public static IPlatformIntegration Current(InstallPaths paths, ILogger? logger = null)
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
-                return new LinuxPlatformIntegration(paths);
+                return new LinuxPlatformIntegration(paths, logger);
             }
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
-                return new MacOSPlatformIntegration(paths);
+                return new MacOSPlatformIntegration(paths, logger);
             }
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                return new WindowsPlatformIntegration(paths);
+                return new WindowsPlatformIntegration(paths, logger);
             }
             throw new PlatformNotSupportedException("This OS is not supported by Hina.");
         }

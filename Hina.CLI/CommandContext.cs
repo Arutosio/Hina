@@ -23,7 +23,7 @@ namespace Hina.CLI
         public CancellationToken Ct { get; }
 
         private IPlatformIntegration? _platform;
-        public IPlatformIntegration Platform => _platform ??= PlatformIntegrationFactory.Current(Paths);
+        public IPlatformIntegration Platform => _platform ??= PlatformIntegrationFactory.Current(Paths, Logger);
 
         public CommandContext(InstallPaths paths, ILogger logger, ILoggerFactory loggerFactory, CancellationToken ct)
         {

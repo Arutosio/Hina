@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
+using Microsoft.Extensions.Logging;
 
 namespace Hina.PackageManager.Platform
 {
@@ -13,7 +14,7 @@ namespace Hina.PackageManager.Platform
         // Fail-soft delete that also removes dangling symlinks (a symlink whose target is gone
         // reports File.Exists == false, but LinkTarget != null). Uninstall must not abort on a
         // missing/locked file, so all failures are swallowed.
-        public static void TryDeleteFile(string path)
+        public static void TryDeleteFile(string path, ILogger? logger = null)
         {
             try
             {
@@ -22,9 +23,11 @@ namespace Hina.PackageManager.Platform
                     File.Delete(path);
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Fail-soft: uninstall must not abort on missing/locked files.
+                // Fail-soft: uninstall must not abort on missing/locked files. Log so a
+                // recurring failure is diagnosable instead of silently swallowed (#9).
+                logger?.LogDebug(ex, "Fail-soft: could not delete {Path}", path);
             }
         }
 

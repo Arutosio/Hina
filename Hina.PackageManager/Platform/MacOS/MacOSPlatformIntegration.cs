@@ -6,6 +6,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Hina.PackageManager.Descriptor;
 using Hina.PackageManager.Paths;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using static Hina.PackageManager.Platform.PlatformText;
 
 namespace Hina.PackageManager.Platform.MacOS
@@ -22,19 +24,21 @@ namespace Hina.PackageManager.Platform.MacOS
         private readonly string _userAppsDir;
         private readonly string _userFontsDir;
         private readonly string _launchAgentsDir;
+        private readonly ILogger _logger;
 
-        public MacOSPlatformIntegration(InstallPaths paths)
-            : this(paths.UserBinDir, DefaultUserAppsDir(), DefaultUserFontsDir(), DefaultLaunchAgentsDir())
+        public MacOSPlatformIntegration(InstallPaths paths, ILogger? logger = null)
+            : this(paths.UserBinDir, DefaultUserAppsDir(), DefaultUserFontsDir(), DefaultLaunchAgentsDir(), logger)
         {
         }
 
         // Test seam.
-        public MacOSPlatformIntegration(string userBinDir, string userAppsDir, string? userFontsDir = null, string? launchAgentsDir = null)
+        public MacOSPlatformIntegration(string userBinDir, string userAppsDir, string? userFontsDir = null, string? launchAgentsDir = null, ILogger? logger = null)
         {
             _userBinDir = userBinDir;
             _userAppsDir = userAppsDir;
             _userFontsDir = userFontsDir ?? DefaultUserFontsDir();
             _launchAgentsDir = launchAgentsDir ?? DefaultLaunchAgentsDir();
+            _logger = logger ?? NullLogger.Instance;
         }
 
         public string OsId => "macos";
@@ -70,7 +74,7 @@ namespace Hina.PackageManager.Platform.MacOS
             string linkPath = Path.Combine(_userBinDir, name);
             if (File.Exists(linkPath) || new FileInfo(linkPath).LinkTarget != null)
             {
-                TryDeleteFile(linkPath);
+                TryDeleteFile(linkPath, _logger);
             }
             File.CreateSymbolicLink(linkPath, targetExec);
             return Task.FromResult(linkPath);
@@ -78,7 +82,7 @@ namespace Hina.PackageManager.Platform.MacOS
 
         public Task RemoveFromPath(string evidencePath, CancellationToken ct)
         {
-            TryDeleteFile(evidencePath);
+            TryDeleteFile(evidencePath, _logger);
             return Task.CompletedTask;
         }
 
@@ -143,7 +147,7 @@ namespace Hina.PackageManager.Platform.MacOS
 
         public Task UninstallFont(string evidencePath, CancellationToken ct)
         {
-            TryDeleteFile(evidencePath);
+            TryDeleteFile(evidencePath, _logger);
             return Task.CompletedTask;
         }
 
@@ -220,7 +224,7 @@ $@"<?xml version=""1.0"" encoding=""UTF-8""?>
 
         public Task UnregisterAutostart(string evidencePath, CancellationToken ct)
         {
-            TryDeleteFile(evidencePath);
+            TryDeleteFile(evidencePath, _logger);
             return Task.CompletedTask;
         }
 
@@ -242,7 +246,7 @@ $@"<?xml version=""1.0"" encoding=""UTF-8""?>
             {
                 if (File.Exists(execPath) || new FileInfo(execPath).LinkTarget != null)
                 {
-                    TryDeleteFile(execPath);
+                    TryDeleteFile(execPath, _logger);
                 }
                 File.CreateSymbolicLink(execPath, execTarget);
             }
@@ -258,7 +262,7 @@ $@"<?xml version=""1.0"" encoding=""UTF-8""?>
                         | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
                         | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
                 }
-                catch { }
+                catch (Exception ex) { _logger.LogDebug(ex, "Best-effort: could not set exec mode on {Path}", execPath); }
             }
 
             string plistPath = Path.Combine(contentsDir, "Info.plist");
@@ -326,13 +330,17 @@ $@"<?xml version=""1.0"" encoding=""UTF-8""?>
 
         // ---- Helpers ----
 
-        private static void TryDeleteBundle(string path)
+        private void TryDeleteBundle(string path)
         {
             try
             {
                 if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // Fail-soft: uninstall must converge to clean even if a bundle is locked/gone.
+                _logger.LogDebug(ex, "Fail-soft: could not delete bundle {Path}", path);
+            }
         }
 
         private static string EscapeXml(string value)

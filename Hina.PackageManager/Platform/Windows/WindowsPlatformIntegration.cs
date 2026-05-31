@@ -6,6 +6,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Hina.PackageManager.Descriptor;
 using Hina.PackageManager.Paths;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Win32;
 using Reg = Microsoft.Win32.Registry;
 using static Hina.PackageManager.Platform.PlatformText;
@@ -22,18 +24,20 @@ namespace Hina.PackageManager.Platform.Windows
         private readonly string _userBinDir;
         private readonly string _startMenuDir;
         private readonly string _userFontsDir;
+        private readonly ILogger _logger;
 
-        public WindowsPlatformIntegration(InstallPaths paths)
-            : this(paths.UserBinDir, DefaultStartMenuDir(), DefaultUserFontsDir())
+        public WindowsPlatformIntegration(InstallPaths paths, ILogger? logger = null)
+            : this(paths.UserBinDir, DefaultStartMenuDir(), DefaultUserFontsDir(), logger)
         {
         }
 
         // Test seam.
-        public WindowsPlatformIntegration(string userBinDir, string startMenuDir, string? userFontsDir = null)
+        public WindowsPlatformIntegration(string userBinDir, string startMenuDir, string? userFontsDir = null, ILogger? logger = null)
         {
             _userBinDir = userBinDir;
             _startMenuDir = startMenuDir;
             _userFontsDir = userFontsDir ?? DefaultUserFontsDir();
+            _logger = logger ?? NullLogger.Instance;
         }
 
         public string OsId => "windows";
@@ -57,7 +61,7 @@ namespace Hina.PackageManager.Platform.Windows
 
         public Task RemoveMenuShortcut(string evidencePath, CancellationToken ct)
         {
-            TryDeleteFile(evidencePath);
+            TryDeleteFile(evidencePath, _logger);
             return Task.CompletedTask;
         }
 
@@ -79,7 +83,7 @@ namespace Hina.PackageManager.Platform.Windows
 
         public Task RemoveFromPath(string evidencePath, CancellationToken ct)
         {
-            TryDeleteFile(evidencePath);
+            TryDeleteFile(evidencePath, _logger);
             return Task.CompletedTask;
         }
 
@@ -116,7 +120,8 @@ namespace Hina.PackageManager.Platform.Windows
         {
             if (TryParseHkcuPath(evidencePath, out string? subKey))
             {
-                try { Reg.CurrentUser.DeleteSubKeyTree(subKey, throwOnMissingSubKey: false); } catch { }
+                try { Reg.CurrentUser.DeleteSubKeyTree(subKey, throwOnMissingSubKey: false); }
+                catch (Exception ex) { _logger.LogDebug(ex, "Fail-soft: could not delete registry subkey {SubKey}", subKey); }
             }
             return Task.CompletedTask;
         }
@@ -139,7 +144,8 @@ namespace Hina.PackageManager.Platform.Windows
         {
             if (TryParseHkcuPath(evidencePath, out string? subKey))
             {
-                try { Reg.CurrentUser.DeleteSubKeyTree(subKey, throwOnMissingSubKey: false); } catch { }
+                try { Reg.CurrentUser.DeleteSubKeyTree(subKey, throwOnMissingSubKey: false); }
+                catch (Exception ex) { _logger.LogDebug(ex, "Fail-soft: could not delete registry subkey {SubKey}", subKey); }
             }
             return Task.CompletedTask;
         }
@@ -205,7 +211,7 @@ namespace Hina.PackageManager.Platform.Windows
                 fontName = evidencePath.Substring(idx + 1);
             }
 
-            TryDeleteFile(filePath);
+            TryDeleteFile(filePath, _logger);
 
             if (fontName != null)
             {
@@ -215,7 +221,7 @@ namespace Hina.PackageManager.Platform.Windows
                         "Software\\Microsoft\\Windows NT\\CurrentVersion\\Fonts", writable: true);
                     k?.DeleteValue(fontName + " (TrueType)", throwOnMissingValue: false);
                 }
-                catch { }
+                catch (Exception ex) { _logger.LogDebug(ex, "Fail-soft: could not remove font registry value {Font}", fontName); }
             }
             return Task.CompletedTask;
         }
@@ -255,7 +261,12 @@ namespace Hina.PackageManager.Platform.Windows
                             "Software\\Microsoft\\Windows\\CurrentVersion\\Run");
                         return k?.GetValue(valueName) == null;
                     }
-                    catch { return true; }
+                    catch (Exception ex)
+                    {
+                        // Can't probe → treat as dangling so `verify --repair` reconciles it.
+                        _logger.LogDebug(ex, "Could not probe autostart value {Value}; treating as dangling", valueName);
+                        return true;
+                    }
 
                 case "shellEntry":
                     // .lnk file
@@ -266,7 +277,7 @@ namespace Hina.PackageManager.Platform.Windows
             }
         }
 
-        private static bool IsHkcuSubkeyMissing(string evidence, string prefix)
+        private bool IsHkcuSubkeyMissing(string evidence, string prefix)
         {
             if (!evidence.StartsWith(prefix)) return false;
             string subKey = evidence.Substring(prefix.Length);
@@ -275,7 +286,11 @@ namespace Hina.PackageManager.Platform.Windows
                 using RegistryKey? k = Reg.CurrentUser.OpenSubKey(subKey);
                 return k == null;
             }
-            catch { return true; }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not probe registry subkey {SubKey}; treating as dangling", subKey);
+                return true;
+            }
         }
 
         // ---- Autostart: HKCU\Software\Microsoft\Windows\CurrentVersion\Run ----
@@ -307,7 +322,7 @@ namespace Hina.PackageManager.Platform.Windows
                     "Software\\Microsoft\\Windows\\CurrentVersion\\Run", writable: true);
                 k?.DeleteValue(valueName, throwOnMissingValue: false);
             }
-            catch { }
+            catch (Exception ex) { _logger.LogDebug(ex, "Fail-soft: could not remove autostart value {Value}", valueName); }
             return Task.CompletedTask;
         }
 

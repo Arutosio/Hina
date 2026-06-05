@@ -85,6 +85,23 @@ namespace Hina.Core.Tests
         }
 
         [Fact]
+        public void Roll_LargeBlockSize_NoInt32Overflow()
+        {
+            // blockSize * remove (255) overflows int32 once blockSize > ~8.42 MB. Verify the
+            // rolled checksum still matches a fresh recompute for such a window.
+            int window = 8_500_000;
+            byte[] data = new byte[window + 1];
+            Array.Fill(data, (byte)0xFF, 0, window); // window is all 0xFF, so `remove` == 255
+            data[window] = 0x00;                     // roll a different byte in
+
+            uint w1 = RollingChecksum.Compute(data.AsSpan(0, window));
+            uint rolled = RollingChecksum.Roll(w1, data[0], data[window], window);
+            uint recomputed = RollingChecksum.Compute(data.AsSpan(1, window));
+
+            Assert.Equal(recomputed, rolled);
+        }
+
+        [Fact]
         public void Compute_SingleByte()
         {
             byte[] data = new byte[] { 42 };

@@ -117,10 +117,64 @@ namespace Hina.PackageManager.Platform.Windows
         {
             if (TryParseHkcuPath(evidencePath, out string? subKey))
             {
+                // Remove the per-extension association keys we pointed at this ProgID BEFORE
+                // deleting the ProgID itself. RegisterMimeType writes a `Software\Classes\.ext`
+                // key (default value = ProgID) per extension but the evidence only records the
+                // ProgID subkey, so without this the `.ext` keys are orphaned with a default
+                // value referencing a now-deleted ProgID — breaking "Open With" for that
+                // extension and shadowing other handlers.
+                string progId = subKey.Substring(subKey.LastIndexOf('\\') + 1);
+                TryCleanupExtensionKeys(progId);
+
                 try { Reg.CurrentUser.DeleteSubKeyTree(subKey, throwOnMissingSubKey: false); }
                 catch (Exception ex) { _logger.LogDebug(ex, "Fail-soft: could not delete registry subkey {SubKey}", subKey); }
             }
             return Task.CompletedTask;
+        }
+
+        // Scan Software\Classes for `.ext` keys whose default value still equals progId and
+        // drop that association. Only the default value we wrote is cleared (not unrelated
+        // subkeys/values another app may own); a key left empty afterwards is removed.
+        private void TryCleanupExtensionKeys(string progId)
+        {
+            try
+            {
+                using RegistryKey? classes = Reg.CurrentUser.OpenSubKey("Software\\Classes", writable: true);
+                if (classes == null) return;
+
+                foreach (string name in classes.GetSubKeyNames())
+                {
+                    if (!name.StartsWith(".", StringComparison.Ordinal)) continue;
+
+                    bool nowEmpty = false;
+                    try
+                    {
+                        using RegistryKey? extKey = classes.OpenSubKey(name, writable: true);
+                        if (extKey == null) continue;
+                        if (extKey.GetValue("") is not string def || !string.Equals(def, progId, StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+                        extKey.DeleteValue("", throwOnMissingValue: false);
+                        nowEmpty = extKey.ValueCount == 0 && extKey.SubKeyCount == 0;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Fail-soft: could not clean extension key {Ext} for {ProgId}", name, progId);
+                        continue;
+                    }
+
+                    if (nowEmpty)
+                    {
+                        try { classes.DeleteSubKey(name, throwOnMissingSubKey: false); }
+                        catch (Exception ex) { _logger.LogDebug(ex, "Fail-soft: could not delete empty extension key {Ext}", name); }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Fail-soft: could not enumerate Software\\Classes to clean {ProgId}", progId);
+            }
         }
 
         // ---- URL scheme via HKCU\Software\Classes\<scheme> ----
@@ -312,7 +366,12 @@ namespace Hina.PackageManager.Platform.Windows
                 command = $"\"{entryExecAbs}\"";
                 if (hook.Args is { Count: > 0 })
                 {
-                    command += " " + string.Join(" ", hook.Args);
+                    // Quote each arg individually: joining raw would let an arg containing a
+                    // space (e.g. --name=My App) split into two tokens at launch.
+                    foreach (string arg in hook.Args)
+                    {
+                        command += " " + QuoteWinArg(arg);
+                    }
                 }
             }
             k.SetValue(valueName, command);
@@ -365,6 +424,17 @@ namespace Hina.PackageManager.Platform.Windows
             }
             subKey = string.Empty;
             return false;
+        }
+
+        // Quote a command-line argument for the Run value when it contains whitespace or a
+        // quote, escaping embedded quotes the way CommandLineToArgvW expects.
+        private static string QuoteWinArg(string arg)
+        {
+            if (arg.Length > 0 && arg.IndexOfAny(new[] { ' ', '\t', '"' }) < 0)
+            {
+                return arg;
+            }
+            return "\"" + arg.Replace("\"", "\\\"") + "\"";
         }
 
         private static string SanitizeRegId(string value)

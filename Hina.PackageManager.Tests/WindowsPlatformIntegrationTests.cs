@@ -195,5 +195,53 @@ namespace Hina.PackageManager.Tests
                 "Software\\Microsoft\\Windows\\CurrentVersion\\Run");
             Assert.Null(k2?.GetValue("Hina.hinatest-autostart"));
         }
+
+        [Fact]
+        [SupportedOSPlatform("windows")]
+        public async Task UnregisterMimeType_RemovesOrphanedExtensionKey()
+        {
+            if (!IsWindows) return;
+
+            WindowsPlatformIntegration p = NewPlatform();
+            MimeTypeHook hook = new MimeTypeHook
+            {
+                MimeType = "application/x-hinaorphan",
+                Extensions = { ".hnorphan" },
+                EntryId = "main"
+            };
+
+            string evidence = await p.RegisterMimeType(hook, "C:\\apps\\x", null, CancellationToken.None);
+            await p.UnregisterMimeType(evidence, CancellationToken.None);
+
+            // The per-extension association key (default value = ProgID) must not survive the
+            // unregister with a dangling reference to the deleted ProgID.
+            using Microsoft.Win32.RegistryKey? ext = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                "Software\\Classes\\.hnorphan");
+            Assert.True(ext == null || ext.GetValue("") == null);
+        }
+
+        [Fact]
+        [SupportedOSPlatform("windows")]
+        public async Task RegisterAutostart_ArgWithSpace_IsQuoted()
+        {
+            if (!IsWindows) return;
+
+            WindowsPlatformIntegration p = NewPlatform();
+            AutostartHook hook = new AutostartHook
+            {
+                EntryId = "hinatest-args",
+                Args = new() { "--name=My App" }
+            };
+
+            string evidence = await p.RegisterAutostart(hook, "C:\\apps\\x", "C:\\apps\\x\\app.exe", CancellationToken.None);
+
+            using Microsoft.Win32.RegistryKey? k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                "Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+            string? command = k?.GetValue("Hina.hinatest-args") as string;
+            Assert.NotNull(command);
+            Assert.Contains("\"--name=My App\"", command!);
+
+            await p.UnregisterAutostart(evidence, CancellationToken.None);
+        }
     }
 }

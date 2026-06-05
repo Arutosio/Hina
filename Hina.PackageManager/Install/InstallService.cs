@@ -48,9 +48,22 @@ namespace Hina.PackageManager.Install
         {
             options ??= new InstallOptions();
 
-            // [1-3] Fetch + parse + validate.
+            // [1] Fetch, then install the fetched descriptor.
             _logger.LogInformation("Fetching descriptor {Url}", descriptorUrl);
             AppDescriptor descriptor = await _fetcher.FetchAsync(descriptorUrl, ct);
+            return await InstallAsync(descriptor, descriptorUrl, options, ct);
+        }
+
+        // Install an ALREADY-fetched descriptor. ReinstallService uses this so the descriptor
+        // it fetched, key-pinned and signature-checked is the exact one installed — a second
+        // fetch here would let a malicious/compromised server swap in a different (but
+        // self-signed, so still passing the checks below) descriptor after the pin check, with
+        // the app already uninstalled (TOCTOU).
+        public async Task<InstallResult> InstallAsync(AppDescriptor descriptor, Uri descriptorUrl, InstallOptions? options, CancellationToken ct)
+        {
+            options ??= new InstallOptions();
+
+            // [2-3] Parse + validate.
             DescriptorValidator.Validate(descriptor, new ValidationContext { AllowInsecure = options.AllowInsecure }).EnsureValid();
 
             // [3a] Enforce descriptor.minHinaVersion against the running binary so an app

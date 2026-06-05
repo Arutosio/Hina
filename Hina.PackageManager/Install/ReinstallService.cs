@@ -85,12 +85,13 @@ namespace Hina.PackageManager.Install
             UninstallService uninstall = new UninstallService(_paths, _platform, _logger);
             await uninstall.UninstallAsync(name, ct);
 
-            // [4] Install. Auto-accept the TOFU prompt: the user already approved this
-            //     publisher (and explicitly --rotate-key'd if the key changed), so the
-            //     interactive prompt is unnecessary.
+            // [4] Install the SAME descriptor we just fetched and verified. Passing it in
+            //     (rather than letting InstallService re-fetch) closes the TOCTOU window: the
+            //     app is already uninstalled here, so a swapped descriptor on a second fetch
+            //     would install attacker-chosen content under the user's trust.
             InstallService install = new InstallService(_paths, _platform, _fetcher, _patchClientFactory, _logger);
             InstallOptions opts = new InstallOptions { OnFirstTimeTrust = _ => true };
-            return await install.InstallAsync(new Uri(descriptorUrl), opts, ct);
+            return await install.InstallAsync(descriptor, new Uri(descriptorUrl), opts, ct);
         }
     }
 }

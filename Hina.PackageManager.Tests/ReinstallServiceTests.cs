@@ -144,6 +144,38 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public async Task Reinstall_ServerSwapsDescriptorAfterVerify_InstallsVerifiedOne()
+        {
+            // The descriptor verified before uninstall must be the exact one installed.
+            // A server that returns a different (but self-signed) descriptor on the second
+            // fetch must NOT get its swapped content installed.
+            (string priv, string pub) = KeyGenerator.GenerateEd25519();
+            AppDescriptor good = BuildDescriptor(pub, "1.0.0");
+            DescriptorSigner.AttachSignature(good, Convert.FromBase64String(priv));
+
+            FakePatchClient PatchFactory(Hina.Core.Configuration.PatcherConfig cfg) =>
+                new FakePatchClient(cfg, NewExecFiles());
+
+            InstallService install = new InstallService(_paths, _platform, new StubFetcher(good), PatchFactory);
+            await install.InstallAsync(new Uri("https://example.com/demo.json"), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
+
+            // Attacker descriptor: same name, brand-new key, new version, validly self-signed.
+            (string evilPriv, string evilPub) = KeyGenerator.GenerateEd25519();
+            AppDescriptor swapped = BuildDescriptor(evilPub, "9.9.9");
+            DescriptorSigner.AttachSignature(swapped, Convert.FromBase64String(evilPriv));
+
+            // First fetch (reinstall's pin/signature check) returns the good descriptor; any
+            // later fetch returns the swapped one.
+            SequencingFetcher fetcher = new SequencingFetcher(good, swapped);
+            ReinstallService svc = new ReinstallService(_paths, _platform, fetcher, PatchFactory);
+            await svc.ReinstallAsync("demo", rotateKey: false, CancellationToken.None);
+
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal(pub, reg.Apps["demo"].PublicKey);
+            Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        [Fact]
         public async Task Reinstall_UnknownApp_Throws()
         {
             FakePatchClient PatchFactory(Hina.Core.Configuration.PatcherConfig cfg) =>
@@ -180,5 +212,23 @@ namespace Hina.PackageManager.Tests
         {
             [ExecRelative()] = new byte[] { 1, 2, 3 }
         };
+
+        // Returns the first descriptor on the first fetch and the second on every later fetch,
+        // simulating a server that swaps the descriptor between verify and install.
+        private sealed class SequencingFetcher : DescriptorFetcher
+        {
+            private readonly AppDescriptor _first;
+            private readonly AppDescriptor _rest;
+            private int _calls;
+
+            public SequencingFetcher(AppDescriptor first, AppDescriptor rest)
+            {
+                _first = first;
+                _rest = rest;
+            }
+
+            public override Task<AppDescriptor> FetchAsync(Uri url, CancellationToken ct) =>
+                Task.FromResult(_calls++ == 0 ? _first : _rest);
+        }
     }
 }

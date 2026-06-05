@@ -4,6 +4,16 @@ namespace Hina.CLI
 {
     internal static class Args
     {
+        // Flags that consume the following token as their value. FirstPositional must skip
+        // both the flag AND its value, or a flag placed before the positional (e.g.
+        // `hina install --retries 3 <url>`) would return the value ("3") as the positional.
+        private static readonly System.Collections.Generic.HashSet<string> ValuedFlags =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                "--in", "--key", "--out", "--dir", "--base", "--config", "--pubkey",
+                "--channel", "--jobs", "--retries", "--connect-timeout", "--request-timeout"
+            };
+
         public static bool HasFlag(string[] args, string name)
         {
             foreach (string arg in args)
@@ -28,7 +38,13 @@ namespace Hina.CLI
             for (int i = startIndex; i < args.Length; i++)
             {
                 string a = args[i];
-                if (a.StartsWith("-")) continue;
+                if (a.StartsWith("-"))
+                {
+                    // Skip the value token belonging to a valued flag so it isn't mistaken
+                    // for the positional argument.
+                    if (ValuedFlags.Contains(a) && i + 1 < args.Length) i++;
+                    continue;
+                }
                 return a;
             }
             return null;

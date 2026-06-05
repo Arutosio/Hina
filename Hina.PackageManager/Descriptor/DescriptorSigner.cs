@@ -59,13 +59,23 @@ namespace Hina.PackageManager.Descriptor
                 return false;
             }
 
-            if (publicKey.Length != 32)
+            if (publicKey.Length != 32 || signature.Length != 64)
             {
                 return false;
             }
 
-            PublicKey key = PublicKey.Import(Algorithm, publicKey, KeyBlobFormat.RawPublicKey);
-            return Algorithm.Verify(key, data, signature);
+            // NSec can throw on malformed key material. On the TOFU first-install path the key
+            // comes straight from an untrusted descriptor, so a bad-but-32-byte key must fail
+            // verification rather than crash the whole install with an unhandled exception.
+            try
+            {
+                PublicKey key = PublicKey.Import(Algorithm, publicKey, KeyBlobFormat.RawPublicKey);
+                return Algorithm.Verify(key, data, signature);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
     }
 }

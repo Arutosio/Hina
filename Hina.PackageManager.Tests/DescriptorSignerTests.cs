@@ -78,6 +78,26 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public void Verify_MalformedKeyOrSignature_ReturnsFalse_DoesNotThrow()
+        {
+            (string priv, string pub) = KeyGenerator.GenerateEd25519();
+            AppDescriptor d = SampleDescriptor(pub);
+            DescriptorSigner.AttachSignature(d, Convert.FromBase64String(priv));
+
+            // 32 valid base64 bytes that are not a real public key — must fail, not crash.
+            string junkKey = Convert.ToBase64String(new byte[32]);
+            Assert.False(DescriptorSigner.Verify(d, junkKey));
+
+            // Wrong-length signature (valid base64, decodes to <64 bytes) must fail cleanly.
+            d.DescriptorSignature!.Signature = Convert.ToBase64String(new byte[10]);
+            Assert.False(DescriptorSigner.Verify(d, pub));
+
+            // Empty / non-base64 trusted key must fail cleanly.
+            Assert.False(DescriptorSigner.Verify(d, ""));
+            Assert.False(DescriptorSigner.Verify(d, "!!!not base64!!!"));
+        }
+
+        [Fact]
         public void Sign_SurvivesSerializationRoundTrip()
         {
             (string priv, string pub) = KeyGenerator.GenerateEd25519();

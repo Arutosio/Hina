@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -125,7 +126,7 @@ namespace Hina.PackageManager.Install
 
             // [8] Resolve install dir and refuse to overwrite non-empty content.
             string appDir = _paths.AppDir(descriptor.Name);
-            if (Directory.Exists(appDir) && Directory.EnumerateFileSystemEntries(appDir).GetEnumerator().MoveNext())
+            if (Directory.Exists(appDir) && Directory.EnumerateFileSystemEntries(appDir).Any())
             {
                 throw new InvalidOperationException(
                     $"Install directory '{appDir}' already exists and is not empty.");

@@ -115,7 +115,10 @@ namespace Hina.PackageManager.Platform.Linux
             sb.AppendLine("[Desktop Entry]");
             sb.AppendLine("Type=Application");
             sb.AppendLine($"Name=Hina MIME {Escape(hook.MimeType)}");
-            sb.AppendLine($"Exec={QuoteExec(execValue + " %f")}");
+            // Field codes (%f) must sit OUTSIDE the quoted executable: per the Desktop Entry
+            // spec a %f inside double quotes is literal text, so the file path would never be
+            // substituted. Quote only the exec, then append the field code unquoted.
+            sb.AppendLine($"Exec={QuoteExec(execValue)} %f");
             sb.AppendLine("NoDisplay=true");
             sb.AppendLine($"MimeType={StripControl(hook.MimeType)};");
             sb.AppendLine($"X-Hina-Mime-Extensions={string.Join(",", hook.Extensions.ConvertAll(StripControl))}");
@@ -147,7 +150,8 @@ namespace Hina.PackageManager.Platform.Linux
             sb.AppendLine("[Desktop Entry]");
             sb.AppendLine("Type=Application");
             sb.AppendLine($"Name=Hina URL {Escape(hook.Scheme)}");
-            sb.AppendLine($"Exec={QuoteExec(execValue + " %u")}");
+            // %u must sit outside the quotes — see RegisterMimeType.
+            sb.AppendLine($"Exec={QuoteExec(execValue)} %u");
             sb.AppendLine("NoDisplay=true");
             sb.AppendLine($"MimeType={mime};");
             sb.AppendLine("X-Hina-Managed=true");
@@ -221,9 +225,18 @@ namespace Hina.PackageManager.Platform.Linux
         public Task<string> RegisterAutostart(AutostartHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
         {
             string execValue = entryExecAbs ?? "";
+
+            // Quote the executable and EACH argument independently. Joining args with spaces
+            // and quoting the whole string as one token would (a) merge the exec + args into a
+            // single quoted token the DE treats as one path, and (b) split any arg that itself
+            // contains a space. Per-token quoting is the only spec-correct shape.
+            StringBuilder execLine = new StringBuilder(QuoteExec(execValue));
             if (hook.Args is { Count: > 0 })
             {
-                execValue = execValue + " " + string.Join(" ", hook.Args);
+                foreach (string arg in hook.Args)
+                {
+                    execLine.Append(' ').Append(QuoteExec(StripControl(arg)));
+                }
             }
 
             Directory.CreateDirectory(_userAutostartDir);
@@ -234,7 +247,7 @@ namespace Hina.PackageManager.Platform.Linux
             sb.AppendLine("[Desktop Entry]");
             sb.AppendLine("Type=Application");
             sb.AppendLine($"Name=Hina Autostart {Escape(hook.EntryId)}");
-            sb.AppendLine($"Exec={QuoteExec(execValue)}");
+            sb.AppendLine($"Exec={execLine}");
             sb.AppendLine("X-GNOME-Autostart-enabled=true");
             sb.AppendLine("X-Hina-Managed=true");
 
@@ -277,13 +290,32 @@ namespace Hina.PackageManager.Platform.Linux
             return sb?.ToString() ?? value;
         }
 
+        // Quote a single Exec token per the freedesktop Desktop Entry spec. Reserved characters
+        // require the token to be double-quoted; inside double quotes the characters
+        // backslash, backtick, dollar and double-quote must each be escaped with a backslash.
         private static string QuoteExec(string path)
         {
-            if (path.IndexOf(' ') < 0 && path.IndexOf('"') < 0)
+            bool needsQuote = false;
+            foreach (char c in path)
+            {
+                if (c == ' ' || c == '\t' || c == '"' || c == '\'' || c == '\\' ||
+                    c == '>' || c == '<' || c == '~' || c == '|' || c == '&' || c == ';' ||
+                    c == '$' || c == '*' || c == '?' || c == '#' || c == '(' || c == ')' || c == '`')
+                {
+                    needsQuote = true;
+                    break;
+                }
+            }
+            if (!needsQuote)
             {
                 return path;
             }
-            return "\"" + path.Replace("\"", "\\\"") + "\"";
+            string escaped = path
+                .Replace("\\", "\\\\")
+                .Replace("`", "\\`")
+                .Replace("$", "\\$")
+                .Replace("\"", "\\\"");
+            return "\"" + escaped + "\"";
         }
 
         private static string DefaultUserAppsDir()

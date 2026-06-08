@@ -7,6 +7,7 @@ Hina is an open-source cross-platform package manager and rsync-like patcher for
 ## Table of Contents
 
 - [Architecture](Architecture.md) -- Project structure, core library internals, package-manager layer, data flow, class diagrams, and design decisions.
+- [Diagrams](Diagrams.md) -- Rendered Mermaid diagrams: architecture graph, CLI routing, class diagrams, every pipeline, and the sandbox/container isolation flow per OS.
 - [Install Script](Install-Script.md) -- The `curl | bash` / `iwr | iex` one-liner: capabilities, env vars, atomic install + rollback, SHA-256 verification, existing-install menu (reinstall / clean / integrity / uninstall), and a flow diagram.
 - [Package Manager Guide](PackageManager-Guide.md) -- End-user CLI (`hina install/update/uninstall`), descriptor schema, whitelisted hooks, TOFU + signature chain, per-OS install paths.
 - [Configuration](Configuration.md) -- Complete reference for all configuration properties, file resolution, host config, and environment-specific examples.
@@ -32,7 +33,7 @@ Hina is an open-source cross-platform package manager and rsync-like patcher for
 - Cross-platform package manager: `hina install <url>` / `update` / `uninstall` / `list` on Windows, Linux, macOS
 - Whitelisted declarative hooks (PATH symlink, MIME, URL scheme, font, autostart), all user-scope (no admin)
 - Ed25519 signed descriptors with TOFU on first install and pinned-key verification on update
-- Optional [filesystem sandboxing](Security.md) for apps that opt in — enforced on Linux via Landlock (`hina run`), declared-but-not-enforced on macOS/Windows
+- Optional [filesystem sandboxing](Security.md) for apps that opt in — enforced on Linux (Landlock) and macOS (Seatbelt) via `hina run`, declared-but-not-enforced on Windows
 - [`hina perms`](Security.md) to inspect declared scope/capabilities and grant or revoke filesystem paths per app
 - Update [permission consent](Security.md): an update that broadens an app's sandbox is refused until `--accept-new-permissions`
 - Integrity tooling: `hina verify` checks installed files against the descriptor, `verify --deep` hash-verifies every file against the manifest (see [Troubleshooting](Troubleshooting.md))

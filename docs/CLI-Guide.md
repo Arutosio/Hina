@@ -80,7 +80,7 @@ hina list
 
 ### info
 
-Show detailed info for one installed app: install path, channel, pinned key fingerprint, hooks executed, shell entries created, timestamps.
+Show detailed info for one installed app: install path, channel, pinned key fingerprint, hooks executed, shell entries created, timestamps, and — when the app is sandboxed — a compact **sandbox summary** (filesystem scope, network allowed/denied, and any declared-but-not-enforced capabilities). Run `hina perms <app>` for the full per-app breakdown.
 
 ```shell
 hina info foo

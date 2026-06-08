@@ -224,6 +224,7 @@ namespace Hina.PackageManager.Sandbox
 
             while (dir != null)
             {
+                _logger.LogDebug("AppContainer traverse-grant on {Path}", dir.FullName);
                 GrantAce(dir.FullName, containerSid, FILE_TRAVERSE, NO_INHERITANCE, throwOnFail: false, propagate: false);
                 dir = dir.Parent;
             }

@@ -82,6 +82,10 @@ Write-Host $err
 # "container cannot traverse / leaf ACE ineffective".
 Write-Host "---- icacls docs ----"
 icacls $docs 2>&1 | Out-String | Write-Host
+Write-Host "---- icacls work (ancestor) ----"
+icacls $work 2>&1 | Out-String | Write-Host
+Write-Host "---- icacls temp (ancestor) ----"
+icacls (Split-Path $work -Parent) 2>&1 | Out-String | Write-Host
 Write-Host "---- unsandboxed write sanity ----"
 try { Set-Content -Path (Join-Path $docs "sanity") -Value "ok"; Write-Host "unsandboxed docs write OK" }
 catch { Write-Host "unsandboxed docs write FAILED: $_" }

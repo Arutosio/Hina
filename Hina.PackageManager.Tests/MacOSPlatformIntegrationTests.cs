@@ -69,6 +69,30 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public async Task CreateMenuShortcut_WithLaunchOverride_WritesScriptStubNotSymlink()
+        {
+            if (!_supportsSymlinks) return;
+
+            string appDir = Path.Combine(_tempDir, "sandboxed");
+            string execAbs = Path.Combine(appDir, "bin", "demo");
+            Directory.CreateDirectory(Path.GetDirectoryName(execAbs)!);
+            File.WriteAllText(execAbs, "#!/bin/sh\necho hi\n");
+
+            ShellEntry entry = new ShellEntry { Id = "main", Name = "Boxed App", Exec = "bin/demo" };
+            string launchOverride = "\"/usr/local/bin/hina\" run boxed \"main\"";
+            string bundlePath = await _platform.CreateMenuShortcut(entry, appDir, launchOverride, CancellationToken.None);
+
+            string bundleExec = Path.Combine(bundlePath, "Contents", "MacOS", "Boxed App");
+            // A sandboxed app must launch via `hina run`, so the bundle exec is a
+            // script that invokes the override — NOT a symlink to the raw binary
+            // (which would bypass the sandbox).
+            Assert.Null(new FileInfo(bundleExec).LinkTarget);
+            string stub = File.ReadAllText(bundleExec);
+            Assert.Contains("hina", stub);
+            Assert.Contains("run boxed", stub);
+        }
+
+        [Fact]
         public async Task RemoveMenuShortcut_DeletesBundleRecursively_AndIsIdempotent()
         {
             if (!_supportsSymlinks) return;

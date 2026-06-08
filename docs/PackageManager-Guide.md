@@ -255,8 +255,8 @@ capabilities are **not enforced** — surfaced to the user (by `hina perms`) as
 provide.
 
 **What is enforced where** — the **filesystem** scope and the **`network`**
-capability are enforced on **Linux** (via Landlock; network needs kernel 6.7+).
-On macOS and Windows the declared scope is shown at
+capability are enforced on **Linux** (via Landlock; network needs kernel 6.7+) and
+on **macOS** (via `sandbox-exec`). On Windows the declared scope is shown at
 install time with a warning that it is *not* applied. See the [Sandboxing](#sandboxing)
 section for the full model.
 
@@ -340,11 +340,14 @@ deliberately narrow:
   Landlock — kernel ≥ 5.13, unprivileged, no root or bubblewrap). `hina run`
   installs the Landlock ruleset, then `execv`s the app; the restrictions are
   inherited across the exec, so the app's process is the restricted one.
-- **macOS and Windows do not enforce the sandbox yet** (those backends are
-  deferred). Installing a sandboxed app there warns that it runs with full user
-  privileges, and its shortcut launches the binary directly — it does **not**
-  route through `hina run` (which would gain nothing).
-- **Old kernel / no Landlock** → a no-op plus a one-time warning. A missing or
+- **macOS** enforces via `sandbox-exec` (Seatbelt): `hina run` generates a profile
+  from the declared scope and launches the app under `sandbox-exec -f <profile>`,
+  so its shortcut routes through `hina run` just like Linux.
+- **Windows does not enforce the sandbox yet** (that backend is deferred).
+  Installing a sandboxed app there warns that it runs with full user privileges,
+  and its shortcut launches the binary directly — it does **not** route through
+  `hina run` (which would gain nothing).
+- **Old kernel / no Landlock / no sandbox-exec** → a no-op plus a one-time warning. A missing or
   too-old sandbox backend never blocks a launch.
 - **`network` is enforced on Linux 6.7+.** A sandboxed app that doesn't declare
   `network: true` has all TCP bind/connect denied (Landlock ABI ≥ 4); on older

@@ -71,6 +71,15 @@ Write-Host $out
 Write-Host "---- probe stderr ----"
 Write-Host $err
 
+# Diagnostics: did the container-SID ACE actually land on docs, and is docs writable
+# at all from a normal (unsandboxed) context? Separates "grant code broken" from
+# "container cannot traverse / leaf ACE ineffective".
+Write-Host "---- icacls docs ----"
+icacls $docs 2>&1 | Out-String | Write-Host
+Write-Host "---- unsandboxed write sanity ----"
+try { Set-Content -Path (Join-Path $docs "sanity") -Value "ok"; Write-Host "unsandboxed docs write OK" }
+catch { Write-Host "unsandboxed docs write FAILED: $_" }
+
 $combined = "$out`n$err"
 
 try { Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue } catch { }

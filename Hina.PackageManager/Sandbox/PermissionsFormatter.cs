@@ -107,6 +107,61 @@ namespace Hina.PackageManager.Sandbox
             return sb.ToString();
         }
 
+        // Human-readable capability lines for install-time disclosure. Network is
+        // always shown (enforced); the other capabilities are listed only when the
+        // app declares them, each marked NOT enforced so the user is never misled.
+        public static IReadOnlyList<string> CapabilityDisclosure(CapabilitySpec? caps)
+        {
+            CapabilitySpec c = caps ?? new CapabilitySpec();
+            List<string> lines = new List<string>
+            {
+                c.Network
+                    ? "network: ALLOWED (declared by the app)"
+                    : "network: denied (enforced on Linux 6.7+/macOS)",
+            };
+            foreach ((string name, bool on) in DeclaredExtras(c))
+            {
+                if (on) lines.Add($"{name}: declared — NOT enforced (no portal/policy yet)");
+            }
+            return lines;
+        }
+
+        // A compact one-block permission summary for `hina info`.
+        public static string Compact(AppPermissions p)
+        {
+            StringBuilder sb = new StringBuilder();
+            if (!p.SandboxEnabled)
+            {
+                sb.Append("Sandbox:        disabled — full user privileges (no isolation)\n");
+                return sb.ToString();
+            }
+            sb.Append("Sandbox:        enabled\n");
+            sb.Append("  Filesystem:   ").Append(FsSummary(p)).Append("  (enforced: Linux/macOS)\n");
+            sb.Append("  Network:      ").Append(p.Network ? "allowed (enforced)" : "denied (enforced)").Append('\n');
+            List<string> extras = new List<string>();
+            foreach ((string name, bool on) in DeclaredExtras(new CapabilitySpec
+            {
+                Audio = p.Audio, Microphone = p.Microphone, Screen = p.Screen, Input = p.Input, Devices = p.Devices,
+            }))
+            {
+                if (on) extras.Add(name.ToLowerInvariant());
+            }
+            if (extras.Count > 0)
+            {
+                sb.Append("  Declared:     ").Append(string.Join(", ", extras)).Append("  (NOT enforced)\n");
+            }
+            return sb.ToString();
+        }
+
+        private static IEnumerable<(string, bool)> DeclaredExtras(CapabilitySpec c)
+        {
+            yield return ("Audio", c.Audio);
+            yield return ("Microphone", c.Microphone);
+            yield return ("Screen", c.Screen);
+            yield return ("Input", c.Input);
+            yield return ("Devices", c.Devices);
+        }
+
         private static void Capability(StringBuilder sb, string name, bool declared)
         {
             sb.Append("  ").Append(PadRight(name + ":", 12)).Append(' ');

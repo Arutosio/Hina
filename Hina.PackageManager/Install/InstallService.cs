@@ -15,6 +15,7 @@ using Hina.PackageManager.Hooks;
 using Hina.PackageManager.Paths;
 using Hina.PackageManager.Platform;
 using Hina.PackageManager.Registry;
+using Hina.PackageManager.Sandbox;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -259,6 +260,10 @@ namespace Hina.PackageManager.Install
                 {
                     _logger.LogInformation("  - {Path} ({Access})", rule.Path, rule.Access);
                 }
+            }
+            foreach (string line in PermissionsFormatter.CapabilityDisclosure(sandbox.Capabilities))
+            {
+                _logger.LogInformation("  - {Capability}", line);
             }
             if (enforceable)
             {

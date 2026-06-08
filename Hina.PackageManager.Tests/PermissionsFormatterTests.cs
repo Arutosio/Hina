@@ -104,6 +104,45 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public void CapabilityDisclosure_NetworkDeniedAndDeclaredExtras()
+        {
+            // network not declared -> denied & enforced; audio declared -> not enforced.
+            CapabilitySpec caps = new CapabilitySpec { Network = false, Audio = true };
+            string text = string.Join("\n", PermissionsFormatter.CapabilityDisclosure(caps)).ToLowerInvariant();
+            Assert.Contains("network", text);
+            Assert.Contains("denied", text);
+            Assert.Contains("audio", text);
+            Assert.Contains("not enforced", text);
+        }
+
+        [Fact]
+        public void CapabilityDisclosure_NetworkAllowed_OmitsUndeclaredCaps()
+        {
+            CapabilitySpec caps = new CapabilitySpec { Network = true };
+            var lines = PermissionsFormatter.CapabilityDisclosure(caps);
+            string text = string.Join("\n", lines).ToLowerInvariant();
+            Assert.Contains("network", text);
+            Assert.Contains("allowed", text);
+            // Undeclared caps are not listed (keep disclosure terse).
+            Assert.DoesNotContain("microphone", text);
+        }
+
+        [Fact]
+        public void Compact_SandboxedApp_ShowsScopeAndNetwork()
+        {
+            string c = PermissionsFormatter.Compact(Sample()).ToLowerInvariant();
+            Assert.Contains("sandbox", c);
+            Assert.Contains("network", c);
+        }
+
+        [Fact]
+        public void Compact_UnsandboxedApp_SaysNoIsolation()
+        {
+            string c = PermissionsFormatter.Compact(new AppPermissions { Name = "oldapp", SandboxEnabled = false }).ToLowerInvariant();
+            Assert.Contains("no isolation", c);
+        }
+
+        [Fact]
         public void Detail_DisabledSandboxWarnsNoIsolation()
         {
             string d = PermissionsFormatter.Detail(new AppPermissions { Name = "oldapp", SandboxEnabled = false });

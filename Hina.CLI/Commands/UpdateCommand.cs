@@ -13,6 +13,7 @@ namespace Hina.CLI.Commands
             string? name = Args.FirstPositional(args, startIndex: 1);
             bool force = Args.HasFlag(args, "--force");
             bool allowDowngrade = Args.HasFlag(args, "--allow-downgrade");
+            bool acceptNewPerms = Args.HasFlag(args, "--accept-new-permissions");
 
             int jobs = 4;
             string? jobsArg = Args.GetValue(args, "--jobs");
@@ -26,6 +27,7 @@ namespace Hina.CLI.Commands
             {
                 Force = force,
                 AllowDowngrade = allowDowngrade,
+                AcceptNewPermissions = acceptNewPerms,
                 MaxParallelism = jobs,
                 Network = NetworkArgs.FromArgs(args)
             };

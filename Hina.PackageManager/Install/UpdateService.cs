@@ -11,6 +11,7 @@ using Hina.PackageManager.Io;
 using Hina.PackageManager.Paths;
 using Hina.PackageManager.Platform;
 using Hina.PackageManager.Registry;
+using Hina.PackageManager.Sandbox;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -175,6 +176,31 @@ namespace Hina.PackageManager.Install
             // longer lists them, so it can't be the restore source.
             InstalledApp previousSnapshot = CloneInstalledApp(app);
             AppDescriptor? previousDescriptor = TryLoadCachedDescriptor(name);
+
+            // [5a] Sandbox permission diff. A new version that BROADENS the app's access
+            // (new paths, host, ro→rw, new capabilities, or dropping the sandbox) must be
+            // consented to — refuse BEFORE touching disk so nothing is half-applied.
+            SandboxDiff permDiff = SandboxDiff.Compute(previousDescriptor?.Sandbox, descriptor.Sandbox);
+            if (permDiff.Broadened && !options.AcceptNewPermissions)
+            {
+                _logger.LogWarning("Update of {Name} requests BROADER permissions:", name);
+                foreach (string a in permDiff.Added) _logger.LogWarning("  + {Added}", a);
+                return new UpdateResult
+                {
+                    Name = name,
+                    FromVersion = app.InstalledVersion,
+                    ToVersion = descriptor.Version,
+                    Status = UpdateStatus.Failed,
+                    Message = $"'{name}' {descriptor.Version} requests broader permissions ({string.Join(", ", permDiff.Added)}). " +
+                              "Re-run with `--accept-new-permissions` to allow it."
+                };
+            }
+            if (permDiff.Added.Count > 0 || permDiff.Removed.Count > 0)
+            {
+                _logger.LogInformation("Permission changes for {Name}:", name);
+                foreach (string a in permDiff.Added) _logger.LogInformation("  + {Added}", a);
+                foreach (string r in permDiff.Removed) _logger.LogInformation("  - {Removed}", r);
+            }
 
             // [6] PatchClient delta.
             PatcherConfig patchCfg = options.Network.ToPatchConfig(

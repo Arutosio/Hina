@@ -322,6 +322,73 @@ namespace Hina.PackageManager.Tests
             await install.InstallAsync(new Uri(descriptorUrl), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
         }
 
+        private async Task InstallSandboxedV1(SandboxSpec sandbox)
+        {
+            AppDescriptor v1 = BuildDescriptor(_pubKey, version: "1.0.0");
+            v1.Sandbox = sandbox;
+            DescriptorSigner.AttachSignature(v1, Convert.FromBase64String(_privKey));
+            InstallService install = new InstallService(
+                _paths, _platform,
+                fetcher: new StubFetcher(v1),
+                patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
+            await install.InstallAsync(new Uri("https://example.com/demo.json"),
+                new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
+        }
+
+        private async Task<UpdateResult> UpdateToSandboxed(SandboxSpec? sandbox, bool acceptNewPerms)
+        {
+            AppDescriptor v2 = BuildDescriptor(_pubKey, version: "1.1.0");
+            v2.Sandbox = sandbox;
+            DescriptorSigner.AttachSignature(v2, Convert.FromBase64String(_privKey));
+            UpdateService svc = new UpdateService(
+                _paths, _platform,
+                fetcher: new StubFetcher(v2),
+                patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
+            return await svc.UpdateAsync("demo",
+                new UpdateOptions { AcceptNewPermissions = acceptNewPerms }, CancellationToken.None);
+        }
+
+        private static SandboxSpec Sandbox(string path, string access) => new SandboxSpec
+        {
+            Enabled = true,
+            Filesystem = { new FsRule { Path = path, Access = access } },
+        };
+
+        [Fact]
+        public async Task Update_BroaderPermissions_WithoutConsent_IsRefused()
+        {
+            await InstallSandboxedV1(Sandbox("home", "ro"));
+
+            UpdateResult result = await UpdateToSandboxed(Sandbox("home", "rw"), acceptNewPerms: false);
+
+            Assert.Equal(UpdateStatus.Failed, result.Status);
+            Assert.Contains("permission", result.Message.ToLowerInvariant());
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        [Fact]
+        public async Task Update_BroaderPermissions_WithConsent_Proceeds()
+        {
+            await InstallSandboxedV1(Sandbox("home", "ro"));
+
+            UpdateResult result = await UpdateToSandboxed(Sandbox("home", "rw"), acceptNewPerms: true);
+
+            Assert.Equal(UpdateStatus.Updated, result.Status);
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("1.1.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        [Fact]
+        public async Task Update_NarrowerPermissions_ProceedsWithoutConsent()
+        {
+            await InstallSandboxedV1(Sandbox("home", "rw"));
+
+            UpdateResult result = await UpdateToSandboxed(Sandbox("home", "ro"), acceptNewPerms: false);
+
+            Assert.Equal(UpdateStatus.Updated, result.Status);
+        }
+
         private static AppDescriptor BuildDescriptor(string publicKey, string name = "demo", string version = "1.0.0")
         {
             return new AppDescriptor

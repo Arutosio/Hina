@@ -122,7 +122,10 @@ hina install <url-to-hina.app.json>
 | `hina which <name>` | Print the install path of an app |
 | `hina update [name]` | Update one app or all installed apps |
 | `hina reinstall <name>` | Reinstall (use `--rotate-key` to accept a new publisher key) |
-| `hina verify [name] [--repair]` | Reconcile registry against on-disk state; detect orphans (missing dirs, dangling shortcuts) and optionally clean them |
+| `hina run <app> [entryId] [-- args...]` | Launch a sandboxed app through Hina so its filesystem sandbox is installed before exec (the launch chokepoint a sandboxed app's shortcut points at) |
+| `hina perms` / `permissions` / `permessi` | Inspect each app's declared + granted permissions: `perms [list]` for a table, `perms <app>` for detail, `perms <app> --grant <path>[:ro\|:rw]` / `--revoke <path>` to manage runtime filesystem grants |
+| `hina verify [name] [--repair] [--deep]` | Reconcile registry against on-disk state; check local integrity (per-OS exec + every `entries[].exec` + descriptor cache present); detect orphans (missing dirs, dangling shortcuts) and optionally clean them. `--deep` re-fetches the manifest and hash-verifies every file |
+| `hina repair [name]` | Alias for `verify --repair`: remove orphan registry entries + dangling side-effects |
 | `hina dev <subcommand>` | Advanced patcher / publisher commands (`check`, `patch`, `verify`, `rollback`, `cleanup`, `sign-descriptor`) |
 
 Global flags:
@@ -141,6 +144,12 @@ Hina installs apps under user-scope OS-standard directories. No admin / sudo req
 | Windows | `%LOCALAPPDATA%\Hina\Apps\` | `%LOCALAPPDATA%\Hina\registry.json` | `%LOCALAPPDATA%\Hina\bin\` (auto-added to user PATH) |
 | Linux | `~/.local/share/hina/apps/` (or `$XDG_DATA_HOME/hina/apps`) | `~/.local/share/hina/registry.json` | `~/.local/bin/` |
 | macOS | `~/Library/Application Support/Hina/Apps/` | `~/Library/Application Support/Hina/registry.json` | `~/.local/bin/` |
+
+Each registry row also carries a `userGrants` list — the absolute filesystem paths
+the user has granted a sandboxed app via `hina perms --grant`, additive over the
+descriptor's declared scope and preserved across updates. The cached descriptor
+that backs `run`/`perms`/`verify` is written atomically, so a crash mid-write can
+never leave a half-written descriptor behind.
 
 Shortcut destinations:
 
@@ -189,6 +198,15 @@ Minimal example:
       "terminal": false }
   ],
 
+  "sandbox": {
+    "enabled": true,
+    "filesystem": [
+      { "path": "home",           "access": "ro" },
+      { "path": "xdg-documents",  "access": "rw" }
+    ],
+    "capabilities": { "network": true, "audio": false, "microphone": false, "screen": false, "input": false, "devices": false }
+  },
+
   "postInstall": [
     { "action": "addToPath",         "name": "fooedit", "target": "bin/fooedit" },
     { "action": "registerMimeType",  "mimeType": "application/x-fooedit", "extensions": [".foo"], "entryId": "main" },
@@ -205,6 +223,39 @@ Minimal example:
 }
 ```
 
+### The optional `sandbox` block
+
+`sandbox` is an optional top-level object and is part of the signed payload. Absent
+or `"enabled": false` ⇒ the app runs **unsandboxed** (legacy behavior, full user
+privileges). Set `"enabled": true` to opt in.
+
+**`filesystem[]`** — each entry is `{ "path": <token>, "access": "ro" | "rw" }`. The
+`path` is an **abstract token**, never a raw host path, so the same descriptor
+resolves correctly across machines and users:
+
+| Token | Resolves to |
+|-------|-------------|
+| `app` | the install directory — **always implicitly granted** (read-only + exec); listing it is harmless |
+| `home` | the user's home directory |
+| `xdg-documents` | the user's Documents directory |
+| `xdg-download` | the user's Downloads directory |
+| `xdg-config` | the user's config directory |
+| `tmp` | the temp directory |
+| `host` | **no filesystem restriction** — an escape hatch, flagged loudly at install. Use it only as a last resort |
+
+Any token outside this set is rejected at validation (fail closed — Hina never
+silently grants an unknown path).
+
+**`capabilities`** — declared-only booleans: `network`, `audio`, `microphone`,
+`screen`, `input`, `devices`. **None of these are enforced in v1.** They are
+surfaced to the user (by `hina perms`) as *"declared — not enforced"* so the
+display never implies isolation Hina does not provide.
+
+**What is enforced where** — only the **filesystem** scope is enforced, and only on
+**Linux** (via Landlock). On macOS and Windows the declared scope is shown at
+install time with a warning that it is *not* applied. See the [Sandboxing](#sandboxing)
+section for the full model.
+
 ### Validation rules
 
 - `name` matches `^[a-z][a-z0-9-]{1,63}$`
@@ -213,7 +264,10 @@ Minimal example:
 - `publicKey` is a valid base64 32-byte Ed25519 key
 - Hook paths (`target`, `exec`, `icon`, `files`) are relative — no `..`, no absolute paths
 - Every hook `entryId` must match an `entries[].id`
+- `entries[].id` matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` (it flows into the `.desktop` Exec via the `hina run` launch command)
 - `exec` must define at least one platform
+- `sandbox.filesystem[].path` must be a known token (`app`, `home`, `xdg-documents`, `xdg-download`, `xdg-config`, `tmp`, `host`); unknown tokens are rejected
+- `sandbox.filesystem[].access` is `ro` or `rw`
 
 ### `baseUrl` content
 
@@ -272,6 +326,48 @@ idempotent — repeated runs converge to "clean".
 
 ---
 
+## Sandboxing
+
+A publisher can opt an app into a Flatpak-style filesystem sandbox via the
+[`sandbox` block](#the-optional-sandbox-block). The enforcement model in v1 is
+deliberately narrow:
+
+- **Filesystem scope is the only enforced category**, and **only on Linux** (via
+  Landlock — kernel ≥ 5.13, unprivileged, no root or bubblewrap). `hina run`
+  installs the Landlock ruleset, then `execv`s the app; the restrictions are
+  inherited across the exec, so the app's process is the restricted one.
+- **macOS and Windows do not enforce the sandbox yet** (those backends are
+  deferred). Installing a sandboxed app there warns that it runs with full user
+  privileges, and its shortcut launches the binary directly — it does **not**
+  route through `hina run` (which would gain nothing).
+- **Old kernel / no Landlock** → a no-op plus a one-time warning. A missing or
+  too-old sandbox backend never blocks a launch.
+- **Capabilities are declared-only.** `network`, `audio`, `microphone`, `screen`,
+  `input`, and `devices` are surfaced to the user as *"declared — not enforced"*;
+  nothing restricts them in v1.
+- **No portals.** There are no dynamic file-picker grants. Scope is the static set
+  of declared paths plus any paths the user grants manually.
+
+The app dir is always granted read-only + exec, even when the descriptor doesn't
+list `app`.
+
+### Inspecting and granting permissions
+
+`hina perms` shows what each app declared and what the user has granted:
+
+```shell
+hina perms               # table of all installed apps
+hina perms <app>         # full detail for one app
+hina perms <app> --grant <path>[:ro|:rw]   # add a runtime filesystem grant (defaults to ro)
+hina perms <app> --revoke <path>           # remove a grant
+```
+
+User grants are stored as absolute resolved paths in the registry's `userGrants`
+and are **kept across updates** — they are the only way to widen a sandboxed app's
+filesystem reach beyond its declared scope.
+
+---
+
 ## Update Flow
 
 `hina update [name]` re-fetches the descriptor for one or all installed apps:
@@ -281,10 +377,19 @@ idempotent — repeated runs converge to "clean".
    up-to-date (use `--force` to re-run the patcher anyway).
 3. Diff hook identity and entry id between the old registry record and the new
    descriptor.
-4. Call `PatchClient.PatchAsync` for a delta download (rsync rolling checksums
+4. **Diff the sandbox permissions** of the old (cached) descriptor against the new
+   one. A **broadening** change — a new filesystem path, `host` added, a `ro → rw`
+   widening, a newly-declared capability, or the sandbox being removed/disabled —
+   is **refused** before anything touches disk, unless the user re-runs with
+   `--accept-new-permissions`. A **narrowing** change — a removed path, `rw → ro`,
+   a capability turned off, or an app becoming newly/more-tightly sandboxed —
+   applies automatically.
+5. Call `PatchClient.PatchAsync` for a delta download (rsync rolling checksums
    reuse local chunks).
-5. Remove obsolete hooks and entries; add new ones.
-6. Update the registry.
+6. Remove obsolete hooks and entries; add new ones.
+7. Update the registry.
+8. Refresh the cached descriptor (atomic write) so `run`/`perms` reflect the new
+   declared scope. The user's `userGrants` persist across the update untouched.
 
 On any post-patch failure: `PatchClient.RollbackAsync` restores files from backups,
 and the registry is reverted to the pre-update snapshot.
@@ -331,18 +436,37 @@ Hina's data dir, the registry will still reference the missing app. `hina list`
 flags the row with `[missing]` and points at:
 
 ```shell
-hina verify            # report orphans across all installed apps
-hina verify --repair   # remove orphan registry entries + dangling shortcuts/symlinks
+hina verify            # report problems across all installed apps
+hina verify --deep     # also re-fetch the manifest and hash-verify every file
+hina repair            # the primary recovery command: prune orphans + dangling side-effects
 ```
+
+`hina repair` is the equivalent of `hina verify --repair`.
 
 The verifier checks each installed app's:
 
 - Install directory presence
+- **Local integrity**: the per-OS executable, every `entries[].exec`, and the
+  cached descriptor are present. A missing exec or file means the install is
+  incomplete (deleted by hand, botched patch) — the fix is `hina reinstall`, not
+  repair. `verify --deep` goes further and hash-verifies every file against the
+  manifest.
 - Each recorded shell entry's evidence (symlink target, .lnk, .app bundle, .desktop)
 - Each recorded hook's evidence (`addToPath` symlink targets, `installFont` files, MIME/URL/autostart artifacts)
 
-`--repair` is fail-soft: it logs and continues on individual failures. Safe to
-run from cron.
+`hina repair` removes orphan registry rows (whose install dir is gone) along with
+their symlinks/`.desktop` entries and dangling evidence, and sweeps up
+**true-orphan artifacts** left after a manual `registry.json` deletion (on Linux,
+stray `hina-*.desktop` entries and installed fonts). Repair is fail-soft: it logs
+and continues on individual failures. Safe to run from cron.
+
+**Manual-deletion matrix.** What to run after a hand edit Hina didn't make:
+
+| You deleted… | `hina verify` reports | Fix |
+|--------------|-----------------------|-----|
+| the app's install directory | "app directory missing" | `hina repair`, or `hina uninstall <name>` (fail-soft on the missing dir) |
+| `registry.json` | nothing per-app (the rows are gone) | `hina repair` runs the orphan-artifact scan and cleans the leftovers |
+| files inside the install dir | missing file(s) | `hina reinstall <name>` |
 
 ---
 

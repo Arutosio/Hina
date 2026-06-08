@@ -46,6 +46,9 @@ namespace Hina.PackageManager.Platform.Linux
         // ---- Menu shortcut ----
 
         public Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, CancellationToken ct)
+            => CreateMenuShortcut(entry, appDir, launchOverride: null, ct);
+
+        public Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, string? launchOverride, CancellationToken ct)
         {
             Directory.CreateDirectory(_userAppsDir);
 
@@ -55,11 +58,16 @@ namespace Hina.PackageManager.Platform.Linux
             string execAbs = Path.Combine(appDir, entry.Exec);
             string? iconAbs = entry.Icon != null ? Path.Combine(appDir, entry.Icon) : null;
 
+            // A sandboxed app routes through `hina run` (launchOverride) so the
+            // sandbox is installed before the app starts. The override is built by
+            // InstallService from trusted values (app name + validated entry id).
+            string execLine = launchOverride != null ? StripControl(launchOverride) : QuoteExec(execAbs);
+
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("[Desktop Entry]");
             sb.AppendLine("Type=Application");
             sb.AppendLine($"Name={Escape(entry.Name)}");
-            sb.AppendLine($"Exec={QuoteExec(execAbs)}");
+            sb.AppendLine($"Exec={execLine}");
             if (iconAbs != null) sb.AppendLine($"Icon={Escape(iconAbs)}");
             sb.AppendLine($"Terminal={(entry.Terminal ? "true" : "false")}");
             if (entry.Categories.Count > 0)
@@ -259,6 +267,32 @@ namespace Hina.PackageManager.Platform.Linux
         {
             TryDeleteFile(evidencePath, _logger);
             return Task.CompletedTask;
+        }
+
+        // All Hina-managed artifacts on disk, by their `hina-*` filename marker: shortcuts +
+        // mime/url handlers in the applications dir, autostart entries, and per-app fonts. Bin
+        // symlinks are intentionally NOT scanned — they carry no Hina prefix, so distinguishing
+        // them from the user's own symlinks safely isn't possible. `hina repair` subtracts the
+        // registry-referenced paths from this to find true orphans.
+        public IEnumerable<string> EnumerateManagedArtifacts()
+        {
+            List<string> found = new List<string>();
+            AddManaged(found, _userAppsDir, "hina-*.desktop");
+            AddManaged(found, _userAutostartDir, "hina-*.desktop");
+            AddManaged(found, _userFontsDir, "hina-*");
+            return found;
+        }
+
+        private static void AddManaged(List<string> into, string dir, string pattern)
+        {
+            try
+            {
+                if (Directory.Exists(dir))
+                {
+                    into.AddRange(Directory.EnumerateFiles(dir, pattern));
+                }
+            }
+            catch { /* fail-soft: a scan error must not break repair */ }
         }
 
         // ---- Helpers ----

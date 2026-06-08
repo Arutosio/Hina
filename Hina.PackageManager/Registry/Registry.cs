@@ -32,6 +32,19 @@ namespace Hina.PackageManager.Registry
         // same hooks/entries.
         public List<HookEvidence> ExecutedHooks { get; set; } = new List<HookEvidence>();
         public List<ShellEntryRecord> ShellEntries { get; set; } = new List<ShellEntryRecord>();
+
+        // Extra filesystem paths the user has granted this app at runtime, beyond
+        // what the descriptor's sandbox block declared. Absolute resolved paths.
+        // Additive and default-empty so older registries round-trip unchanged.
+        public List<FsGrant> UserGrants { get; set; } = new List<FsGrant>();
+    }
+
+    // A user-granted absolute filesystem path for a sandboxed app.
+    public sealed class FsGrant
+    {
+        public string Path { get; set; } = string.Empty;
+        // "ro" or "rw".
+        public string Access { get; set; } = "ro";
     }
 
     public sealed class HookEvidence

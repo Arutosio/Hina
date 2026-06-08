@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Hina.Core.Configuration;
+using Hina.PackageManager.Io;
 using Hina.Core.Patching;
 using Hina.PackageManager.Descriptor;
 using Hina.PackageManager.Hooks;
@@ -175,10 +176,25 @@ namespace Hina.PackageManager.Install
                     throw new InvalidDataException($"Declared exec '{execRelative}' is missing from installed files.");
                 }
 
-                // [12] Shell entries.
+                // [12] Shell entries. Sandboxed apps launch via `hina run` so the
+                // filesystem sandbox is installed before the app process starts — but only Linux
+                // enforces it today. On other OSes the launchOverride is ignored (the app launches
+                // directly), so we must NOT route through `hina run` (it would gain nothing) and we
+                // must tell the user the sandbox is not actually enforced here.
+                bool sandboxRequested = descriptor.Sandbox?.Enabled == true;
+                bool sandboxEnforceable = RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
+                if (sandboxRequested)
+                {
+                    DiscloseSandbox(descriptor.Sandbox!, sandboxEnforceable);
+                }
+                bool routeThroughHina = sandboxRequested && sandboxEnforceable;
+                string hinaExe = Environment.ProcessPath ?? "hina";
                 foreach (ShellEntry entry in descriptor.Entries)
                 {
-                    string evidence = await _platform.CreateMenuShortcut(entry, appDir, ct);
+                    string? launchOverride = routeThroughHina
+                        ? $"\"{hinaExe}\" run {descriptor.Name} \"{entry.Id}\""
+                        : null;
+                    string evidence = await _platform.CreateMenuShortcut(entry, appDir, launchOverride, ct);
                     tx.RecordShellEntry(evidence);
                     newApp.ShellEntries.Add(new ShellEntryRecord { Id = entry.Id, Evidence = evidence });
                 }
@@ -191,13 +207,15 @@ namespace Hina.PackageManager.Install
                     newApp.ExecutedHooks.Add(evidence);
                 }
 
-                // [14] Commit registry entry.
+                // [14] Cache descriptor FIRST (atomic), so the committed registry row below always
+                // has a readable descriptor — `run`/`perms`/`update` depend on it. A crash between
+                // the two writes then leaves a cache with no registry row (harmless) rather than a
+                // registry row with no cache (breaks run/perms).
+                AtomicFile.WriteAllText(_paths.DescriptorCache(descriptor.Name), DescriptorParser.Serialize(descriptor));
+
+                // [15] Commit registry entry.
                 registry.Apps[descriptor.Name] = newApp;
                 await store.SaveAsync(registry, ct);
-
-                // [15] Cache descriptor.
-                Directory.CreateDirectory(_paths.DescriptorCacheRoot);
-                await File.WriteAllTextAsync(_paths.DescriptorCache(descriptor.Name), DescriptorParser.Serialize(descriptor), ct);
             }
             catch
             {
@@ -211,6 +229,40 @@ namespace Hina.PackageManager.Install
                 Version = descriptor.Version,
                 InstallPath = appDir
             };
+        }
+
+        // Tell the user exactly what filesystem scope a sandboxed app declares, with extra
+        // emphasis on the unrestricted "host" escape hatch. `enforceable` is false on OSes whose
+        // sandbox backend isn't implemented yet (macOS/Windows) — there the scope is declared but
+        // NOT applied, so we must say so plainly instead of implying isolation that won't happen.
+        private void DiscloseSandbox(SandboxSpec sandbox, bool enforceable)
+        {
+            if (!enforceable)
+            {
+                _logger.LogWarning(
+                    "This app DECLARES a filesystem sandbox, but Hina does not enforce sandboxing on this OS yet. " +
+                    "The app will run with FULL user privileges (no isolation). Its declared scope:");
+            }
+            else
+            {
+                _logger.LogInformation("This app runs sandboxed. It can access only:");
+            }
+            _logger.LogInformation("  - its own install directory (read-only)");
+            foreach (FsRule rule in sandbox.Filesystem)
+            {
+                if (rule.Path == SandboxTokens.Host)
+                {
+                    _logger.LogWarning("  - host: UNRESTRICTED filesystem access ({Access}) — this app is NOT isolated.", rule.Access);
+                }
+                else
+                {
+                    _logger.LogInformation("  - {Path} ({Access})", rule.Path, rule.Access);
+                }
+            }
+            if (enforceable)
+            {
+                _logger.LogInformation("Grant more paths later with: hina perms {Name} --grant <path>[:rw]", "<app>");
+            }
         }
 
         public static string? ExecForCurrentOs(AppDescriptor descriptor)

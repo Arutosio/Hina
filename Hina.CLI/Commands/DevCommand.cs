@@ -4,6 +4,7 @@ using System.Threading;
 using Hina.Core.Configuration;
 using Hina.Core.Patching;
 using Hina.PackageManager.Descriptor;
+using Hina.PackageManager.Sandbox;
 using Microsoft.Extensions.Logging;
 
 namespace Hina.CLI.Commands
@@ -41,6 +42,14 @@ namespace Hina.CLI.Commands
             if (subcommand == "sign-descriptor")
             {
                 return RunSignDescriptor(args, logger);
+            }
+
+            // sandbox-run applies a filesystem sandbox then execs a command. Used by the
+            // Landlock integration test (and handy for manual sandbox debugging). It does
+            // not operate on a patch dir, so route it before the --dir check.
+            if (subcommand == "sandbox-run")
+            {
+                return RunSandbox(args, logger);
             }
 
             if (string.IsNullOrWhiteSpace(root))
@@ -115,6 +124,57 @@ namespace Hina.CLI.Commands
             Console.WriteLine("Publisher subcommands:");
             Console.WriteLine("  sign-descriptor --in <hina.app.json> --key <ed25519.priv.b64> [--out <path>]");
             Console.WriteLine("                       Attach an Ed25519 signature to a descriptor file.");
+            Console.WriteLine();
+            Console.WriteLine("Sandbox subcommand:");
+            Console.WriteLine("  sandbox-run --app-dir <dir> [--allow <path>[:ro|:rw] ...] [--host] -- <exec> [args...]");
+            Console.WriteLine("                       Apply a filesystem sandbox (Landlock on Linux) then exec.");
+        }
+
+        // `hina dev sandbox-run --app-dir <dir> [--allow <path>[:ro|:rw] ...] [--host] -- <exec> [args...]`
+        // Applies a filesystem sandbox (Landlock on Linux) then execs the command. On
+        // success the process image is replaced, so the exec's exit code is the result.
+        // Drives the Landlock integration test; also useful for manual sandbox probing.
+        private static int RunSandbox(string[] args, ILogger logger)
+        {
+            string? appDir = Args.GetValue(args, "--app-dir");
+            if (string.IsNullOrWhiteSpace(appDir))
+            {
+                logger.LogError("Missing required --app-dir <path>");
+                return 2;
+            }
+
+            // Everything after the first bare "--" is the command to run.
+            int sep = Array.IndexOf(args, "--");
+            if (sep < 0 || sep + 1 >= args.Length)
+            {
+                logger.LogError("Missing '-- <exec> [args...]'");
+                return 2;
+            }
+            string exec = args[sep + 1];
+            System.Collections.Generic.List<string> execArgs = new System.Collections.Generic.List<string>();
+            for (int i = sep + 2; i < args.Length; i++) execArgs.Add(args[i]);
+
+            // Collect every --allow <path>[:ro|:rw] before the separator.
+            System.Collections.Generic.List<ResolvedFsRule> rules = new System.Collections.Generic.List<ResolvedFsRule>
+            {
+                new ResolvedFsRule(Path.GetFullPath(appDir), canWrite: false),
+            };
+            bool unrestricted = false;
+            for (int i = 0; i < sep; i++)
+            {
+                if (args[i] == "--host") { unrestricted = true; continue; }
+                if (args[i] != "--allow" || i + 1 >= sep) continue;
+                string spec = args[++i];
+                bool rw = spec.EndsWith(":rw", StringComparison.Ordinal);
+                string p = (spec.EndsWith(":rw", StringComparison.Ordinal) || spec.EndsWith(":ro", StringComparison.Ordinal))
+                    ? spec[..^3] : spec;
+                rules.Add(new ResolvedFsRule(Path.GetFullPath(p), rw));
+            }
+
+            SandboxPlan plan = new SandboxPlan(unrestricted, rules);
+            ISandboxLauncher launcher = SandboxLauncherFactory.Current(logger);
+            logger.LogDebug("Sandbox backend supported: {Supported}", launcher.IsSupported);
+            return launcher.Launch(Path.GetFullPath(exec), execArgs, plan, CancellationToken.None);
         }
 
         // `hina dev sign-descriptor --in hina.app.json --key priv.b64 [--out path]`

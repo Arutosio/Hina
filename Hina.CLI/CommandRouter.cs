@@ -53,7 +53,14 @@ namespace Hina.CLI
                     return UpdateCommand.RunAsync(ctx, args);
                 case "reinstall":
                     return ReinstallCommand.RunAsync(ctx, args);
+                case "run":
+                    return RunCommand.RunAsync(ctx, args);
+                case "perms":
+                case "permissions":
+                case "permessi":
+                    return PermsCommand.RunAsync(ctx, args);
                 case "verify":
+                case "repair":
                     return VerifyCommand.RunAsync(ctx, args);
                 case "version":
                     return Task.FromResult(VersionCommand.Run());

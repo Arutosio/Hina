@@ -264,6 +264,124 @@ For each file in manifest:
 
 ---
 
+## Sandboxing / App Isolation
+
+Hina's primary trust model is **signing-based**: a descriptor and its manifest are
+signed by a pinned publisher key (see the sections above), and whitelisted hooks
+mean a compromised publisher cannot run arbitrary code at install time. On top of
+that, an app may now opt into **filesystem isolation** so that even a fully-trusted
+but over-reaching app sees only the paths it declares.
+
+### What Is and Isn't Enforced
+
+| Surface | Status |
+|---------|--------|
+| **Filesystem scope** | Enforced **on Linux only**, via Landlock (unprivileged, kernel ≥ 5.13, no root / no bubblewrap). On macOS and Windows it is **declared but NOT enforced** — the app runs with full user privileges (warned at install time). |
+| **Capabilities** (`network`, `audio`, `microphone`, `screen`, `input`, `devices`) | **Declared-only, never enforced yet.** `hina perms` shows them as "declared — not enforced". No portals (PipeWire / Wayland / per-OS device policy) are wired up. |
+
+When a descriptor carries no `sandbox` block (or `sandbox.enabled` is `false`), the
+app launches unsandboxed exactly as before — full user privileges.
+
+### The Sandbox Block
+
+The optional `sandbox` block lives in the signed `hina.app.json`, so its scope is
+covered by the descriptor signature and cannot be tampered with in transit:
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "filesystem": [
+      { "path": "xdg-documents", "access": "ro" },
+      { "path": "xdg-config", "access": "rw" }
+    ],
+    "capabilities": { "network": true }
+  }
+}
+```
+
+`filesystem[].path` is an abstract token, never a raw host path, so the same
+descriptor resolves correctly across machines and users. The closed token set is:
+
+| Token | Meaning |
+|-------|---------|
+| `app` | The install directory. Always implicitly granted read-only + exec; listing it is harmless. |
+| `home` | The user's home directory. |
+| `xdg-documents` | The Documents folder. |
+| `xdg-download` | The Downloads folder. |
+| `xdg-config` | The user config folder. |
+| `tmp` | The temp directory. |
+| `host` | **Escape hatch — no filesystem restriction at all.** |
+
+Unknown tokens are rejected at descriptor validation (fail closed). `access` is
+`ro` (read-only) or `rw` (read-write); exec is implied for the app dir only.
+
+The `host` token grants **unrestricted** filesystem access — an app that requests
+it is effectively not isolated. Hina surfaces it loudly: the install-time
+disclosure prints it as an explicit `UNRESTRICTED filesystem access` warning, and
+`hina perms` renders it as `host(!)` / `host — UNRESTRICTED, no isolation`.
+
+### How Enforcement Works (`hina run`)
+
+For a sandboxed app on Linux, the shell shortcuts Hina creates do **not** point at
+the app binary — they route through `hina run <app> "<entryId>"`. `hina run`
+resolves the declared scope plus any user grants into a Landlock ruleset, applies
+it to itself (`landlock_restrict_self`), and then `execv`s the app, which inherits
+the restrictions (the app's PID is Hina's). On macOS/Windows the shortcut launches
+the app directly (routing through `hina run` would gain nothing there).
+
+If the kernel is too old for Landlock (or Landlock setup fails for any reason),
+enforcement degrades to a **no-op with a one-time warning** and the launch is never
+blocked.
+
+### Install-Time Disclosure
+
+When a sandboxed app is installed, Hina discloses the declared scope. On a host
+where the sandbox cannot be enforced (macOS/Windows), it warns plainly that the
+app **runs with FULL user privileges (no isolation)** before listing the declared
+scope, so the user is never misled into thinking isolation is in effect.
+
+### User-Granted Paths (`hina perms`)
+
+There are no portals, so a sandboxed app cannot prompt for additional paths at
+runtime. Instead the user grants them explicitly and out-of-band:
+
+```shell
+hina perms <app> --grant ~/Projects:rw
+hina perms <app> --revoke ~/Projects
+```
+
+Grants are persisted in the local registry (`InstalledApp.userGrants`) and folded
+into the Landlock ruleset alongside the descriptor-declared scope at launch. `hina
+perms` (aliases `permissions` / `permessi`) also prints a per-app table and a
+per-app detail view of declared scope, user grants, and capabilities.
+
+### Update Permission Consent
+
+A signed descriptor's sandbox scope can change between versions. Hina diffs the
+old (cached) descriptor against the new one and classifies the change:
+
+- **Narrowing** (tighter scope, `rw → ro`, a dropped capability, or newly enabling
+  the sandbox) applies automatically.
+- **Broadening** — a new path, the `host` token, `ro → rw`, a new capability, or
+  **removing the sandbox entirely** (which regains full filesystem access) — is
+  **refused before any file is touched** until the user re-runs with
+  `hina update --accept-new-permissions`.
+
+This stops a previously-narrow app from silently widening its own reach through a
+routine update.
+
+### Descriptor `entries[].id` Hardening
+
+Each `entries[].id` is charset-validated against `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`
+at descriptor validation. The id flows into the generated `.desktop` file (both its
+filename and, for sandboxed apps, the `Exec=` line as `hina run <app> "<id>"`).
+Restricting it to a safe token closes a command-injection surface: even a
+**signed-but-hostile** descriptor cannot smuggle shell metacharacters or path
+separators into the launch command.
+
+---
+
 ## Threat Model
 
 ### Attacks Hina Protects Against

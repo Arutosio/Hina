@@ -23,6 +23,10 @@ namespace Hina.PackageManager.Descriptor
         private static readonly Regex SchemeRegex = new Regex(@"^[a-z][a-z0-9+.-]{0,63}$", RegexOptions.Compiled);
         private static readonly Regex ExtensionRegex = new Regex(@"^\.?[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", RegexOptions.Compiled);
         private static readonly Regex CategoryRegex = new Regex(@"^[A-Za-z0-9-]{1,64}$", RegexOptions.Compiled);
+        // entries[].id is written into the .desktop filename (SanitizeId) and, for sandboxed apps,
+        // into the .desktop Exec= line via the `hina run <app> <id>` launchOverride. Constrain it to
+        // a safe token so a signed-but-hostile descriptor can't inject metacharacters / path separators.
+        private static readonly Regex EntryIdRegex = new Regex(@"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", RegexOptions.Compiled);
 
         public static ValidationResult Validate(AppDescriptor descriptor, ValidationContext? ctx = null)
         {
@@ -94,6 +98,10 @@ namespace Hina.PackageManager.Descriptor
                 {
                     errors.Add($"{prefix}.id is required.");
                 }
+                else if (!EntryIdRegex.IsMatch(e.Id))
+                {
+                    errors.Add($"{prefix}.id '{e.Id}' must match {EntryIdRegex}.");
+                }
                 else if (!entryIds.Add(e.Id))
                 {
                     errors.Add($"{prefix}.id '{e.Id}' is duplicated.");
@@ -132,7 +140,33 @@ namespace Hina.PackageManager.Descriptor
                 errors.Add($"minHinaVersion '{descriptor.MinHinaVersion}' is not valid SemVer.");
             }
 
+            ValidateSandbox(descriptor.Sandbox, errors);
+
             return new ValidationResult(errors);
+        }
+
+        private static void ValidateSandbox(SandboxSpec? sandbox, List<string> errors)
+        {
+            if (sandbox == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < sandbox.Filesystem.Count; i++)
+            {
+                FsRule rule = sandbox.Filesystem[i];
+                string prefix = $"sandbox.filesystem[{i}]";
+
+                if (!SandboxTokens.IsKnown(rule.Path))
+                {
+                    errors.Add($"{prefix}.path '{rule.Path}' is not a known sandbox path token.");
+                }
+
+                if (rule.Access != "ro" && rule.Access != "rw")
+                {
+                    errors.Add($"{prefix}.access '{rule.Access}' must be 'ro' or 'rw'.");
+                }
+            }
         }
 
         private static void ValidateHook(HookAction hook, int index, HashSet<string> entryIds, List<string> errors)

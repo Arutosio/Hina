@@ -26,6 +26,9 @@ namespace Hina.PackageManager.Descriptor
         public List<ShellEntry> Entries { get; set; } = new List<ShellEntry>();
         public List<HookAction> PostInstall { get; set; } = new List<HookAction>();
 
+        // Optional Flatpak-style filesystem isolation. Null/disabled ⇒ unsandboxed.
+        public SandboxSpec? Sandbox { get; set; }
+
         public DescriptorSignature? DescriptorSignature { get; set; }
     }
 }

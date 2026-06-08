@@ -15,6 +15,12 @@ namespace Hina.PackageManager.Install
         // could otherwise force a rollback to a known-vulnerable version.
         public bool AllowDowngrade { get; init; }
 
+        // Consent to a new version that BROADENS the app's sandbox (new filesystem paths,
+        // host access, ro→rw, new capabilities, or dropping the sandbox entirely). Without
+        // this, such an update is refused so an app can't silently gain access across a
+        // version bump. Narrowing changes apply without it.
+        public bool AcceptNewPermissions { get; init; }
+
         // How many apps UpdateAllAsync updates concurrently. Each per-app update is
         // still serial within itself; this just lets the registry-of-N walk overlap
         // network and disk I/O across apps. Default 4 mirrors PatchClient.Concurrency.

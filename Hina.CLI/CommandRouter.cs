@@ -60,6 +60,7 @@ namespace Hina.CLI
                 case "permessi":
                     return PermsCommand.RunAsync(ctx, args);
                 case "verify":
+                case "repair":
                     return VerifyCommand.RunAsync(ctx, args);
                 case "version":
                     return Task.FromResult(VersionCommand.Run());

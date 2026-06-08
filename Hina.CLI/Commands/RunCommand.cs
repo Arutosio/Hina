@@ -42,13 +42,34 @@ namespace Hina.CLI.Commands
                 return 1;
             }
 
+            // Install dir can be gone if the user deleted it by hand. (Each logger template binds
+            // placeholders positionally, so every {Token} must have exactly one matching argument —
+            // no repeated tokens.)
+            if (!Directory.Exists(app.InstallPath))
+            {
+                ctx.Logger.LogError("Install directory for '{Name}' is missing ({Path}). Restore it with `hina reinstall`.", name, app.InstallPath);
+                return 1;
+            }
+
             string descPath = ctx.Paths.DescriptorCache(name);
             if (!File.Exists(descPath))
             {
-                ctx.Logger.LogError("Cached descriptor for '{Name}' is missing; cannot launch.", name);
+                // Never fall back to launching unsandboxed: without the descriptor we cannot know
+                // the app's sandbox scope, and silently dropping isolation would defeat the point.
+                ctx.Logger.LogError("Cached descriptor for '{Name}' is missing; cannot launch safely. Restore it with `hina reinstall`.", name);
                 return 1;
             }
-            AppDescriptor desc = DescriptorParser.Parse(await File.ReadAllTextAsync(descPath, ctx.Ct));
+
+            AppDescriptor desc;
+            try
+            {
+                desc = DescriptorParser.Parse(await File.ReadAllTextAsync(descPath, ctx.Ct));
+            }
+            catch (Exception ex)
+            {
+                ctx.Logger.LogError("Cached descriptor for '{Name}' is corrupt ({Message}); cannot launch safely. Restore it with `hina reinstall`.", name, ex.Message);
+                return 1;
+            }
 
             string? execRel = ResolveExecRel(desc, entryId, out string? err);
             if (execRel == null)
@@ -57,6 +78,11 @@ namespace Hina.CLI.Commands
                 return 1;
             }
             string execAbs = Path.Combine(app.InstallPath, execRel);
+            if (!File.Exists(execAbs))
+            {
+                ctx.Logger.LogError("Executable '{Exec}' is missing from '{Name}'. Restore it with `hina reinstall`.", execRel, name);
+                return 1;
+            }
 
             SandboxPlan plan = desc.Sandbox?.Enabled == true
                 ? SandboxPlanner.Build(desc.Sandbox, app.UserGrants, app.InstallPath, SandboxEnv.FromSystem())

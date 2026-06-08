@@ -75,6 +75,62 @@ namespace Hina.PackageManager.Diagnostics
             return results;
         }
 
+        // Read-only. Hina-managed artifacts on disk that NO registry row references —
+        // the leftovers after a manual `registry.json` (or whole-row) deletion that
+        // per-app Inspect/Repair can't see. Empty on platforms without an artifact scanner.
+        public List<string> FindOrphanArtifacts()
+        {
+            Registry.Registry registry = new RegistryStore(_paths.RegistryFile, _logger).Load();
+            HashSet<string> referenced = ReferencedArtifactPaths(registry);
+
+            List<string> orphans = new List<string>();
+            foreach (string path in _platform.EnumerateManagedArtifacts())
+            {
+                if (!referenced.Contains(path)) orphans.Add(path);
+            }
+            return orphans;
+        }
+
+        // Mutating. Removes the orphan artifacts found above (fail-soft). Takes the lock
+        // so the registry read used to compute "referenced" is consistent with writers.
+        public async Task<List<string>> RepairOrphanArtifactsAsync(CancellationToken ct)
+        {
+            LockManager locks = new LockManager(_paths.LockFile);
+            using RegistryLock l = await locks.AcquireAsync(ct);
+
+            Registry.Registry registry = new RegistryStore(_paths.RegistryFile, _logger).Load();
+            HashSet<string> referenced = ReferencedArtifactPaths(registry);
+
+            List<string> removed = new List<string>();
+            foreach (string path in _platform.EnumerateManagedArtifacts())
+            {
+                if (referenced.Contains(path)) continue;
+                // RemoveMenuShortcut is a plain fail-soft file delete; reused for any artifact path.
+                try { await _platform.RemoveMenuShortcut(path, ct); removed.Add(path); }
+                catch { /* fail-soft */ }
+            }
+            return removed;
+        }
+
+        // Every artifact path the registry still points at. Font hook evidence packs
+        // multiple paths joined with '|' (see HookExecutor), so split on it.
+        private static HashSet<string> ReferencedArtifactPaths(Registry.Registry registry)
+        {
+            HashSet<string> referenced = new HashSet<string>(StringComparer.Ordinal);
+            foreach (InstalledApp app in registry.Apps.Values)
+            {
+                foreach (ShellEntryRecord e in app.ShellEntries) referenced.Add(e.Evidence);
+                foreach (HookEvidence ev in app.ExecutedHooks)
+                {
+                    foreach (string p in ev.Evidence.Split('|', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        referenced.Add(p);
+                    }
+                }
+            }
+            return referenced;
+        }
+
         // Mutating. Takes the registry lock for the duration of repairs.
         public async Task<List<AppRepairResult>> RepairAsync(string? appName, CancellationToken ct)
         {

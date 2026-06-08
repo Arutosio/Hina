@@ -7,6 +7,7 @@ using Hina.Core.Configuration;
 using Hina.Core.Patching;
 using Hina.PackageManager.Descriptor;
 using Hina.PackageManager.Hooks;
+using Hina.PackageManager.Io;
 using Hina.PackageManager.Paths;
 using Hina.PackageManager.Platform;
 using Hina.PackageManager.Registry;
@@ -60,6 +61,19 @@ namespace Hina.PackageManager.Install
                     return new UpdateResult { Name = name, Status = UpdateStatus.Failed, Message = $"'{name}' is not installed." };
                 }
                 app = found;
+            }
+
+            // [0] The install dir can be gone if the user deleted it by hand. Patching a missing
+            // directory would crash mid-operation; fail cleanly and point at the recovery path.
+            if (!Directory.Exists(app.InstallPath))
+            {
+                return new UpdateResult
+                {
+                    Name = name,
+                    FromVersion = app.InstalledVersion,
+                    Status = UpdateStatus.Failed,
+                    Message = $"Install directory for '{name}' is missing ({app.InstallPath}). Run `hina reinstall {name}` to restore it."
+                };
             }
 
             // [1] Re-fetch descriptor.
@@ -344,13 +358,17 @@ namespace Hina.PackageManager.Install
                 };
             }
 
-            // [8] Refresh descriptor cache.
+            // [8] Refresh descriptor cache (atomic). Not fatal if it fails — a cache from the
+            // previous version already exists, so the worst case is `run`/`perms` showing stale
+            // scope until the next update/reinstall — but log it rather than swallow silently.
             try
             {
-                Directory.CreateDirectory(_paths.DescriptorCacheRoot);
-                await File.WriteAllTextAsync(_paths.DescriptorCache(name), DescriptorParser.Serialize(descriptor), ct);
+                AtomicFile.WriteAllText(_paths.DescriptorCache(name), DescriptorParser.Serialize(descriptor));
             }
-            catch { /* non-critical */ }
+            catch (Exception cacheEx)
+            {
+                _logger.LogWarning(cacheEx, "Updated {Name} but could not refresh its descriptor cache; run/perms may show stale scope until the next update.", name);
+            }
 
             return new UpdateResult
             {

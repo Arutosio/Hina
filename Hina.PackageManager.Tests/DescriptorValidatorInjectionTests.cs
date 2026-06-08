@@ -37,6 +37,32 @@ namespace Hina.PackageManager.Tests
         }
 
         [Theory]
+        [InlineData("main")]
+        [InlineData("Main-2")]
+        [InlineData("com.acme.app_v1")]
+        public void EntryId_SafeCharset_IsAccepted(string id)
+        {
+            AppDescriptor d = Base();
+            d.Entries[0].Id = id;
+            Assert.True(DescriptorValidator.Validate(d).IsValid, string.Join("; ", DescriptorValidator.Validate(d).Errors));
+        }
+
+        [Theory]
+        [InlineData("x;touch /tmp/pwned")]   // shell metachars (reaches .desktop Exec via launchOverride)
+        [InlineData("main app")]              // space splits the freedesktop Exec line
+        [InlineData("../evil")]               // path separator (also the .desktop filename)
+        [InlineData("a\tb")]                  // control char
+        [InlineData("-leading")]              // must start alphanumeric
+        public void EntryId_UnsafeCharset_IsRejected(string id)
+        {
+            AppDescriptor d = Base();
+            d.Entries[0].Id = id;
+            ValidationResult r = DescriptorValidator.Validate(d);
+            Assert.False(r.IsValid);
+            Assert.Contains(r.Errors, e => e.Contains("id"));
+        }
+
+        [Theory]
         [InlineData("text/plain\nExec=/bin/sh")]
         [InlineData("not a mime")]
         [InlineData("text/")]

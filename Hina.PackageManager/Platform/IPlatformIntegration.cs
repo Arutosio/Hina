@@ -51,5 +51,13 @@ namespace Hina.PackageManager.Platform
         // the shellEntry / shellEntryLink synthetic actions documented in
         // RegistryVerifier.
         bool IsEvidenceDangling(string action, string evidence) => false;
+
+        // All Hina-managed artifact paths currently on disk, identified by their
+        // markers (e.g. X-Hina-Managed `.desktop` files, `hina-*` fonts) — independent
+        // of the registry. `hina repair` subtracts the registry-referenced ones to find
+        // true orphans left after a manual `registry.json` deletion. Default: none
+        // (platforms without an orphan scanner). Each path can be removed with
+        // RemoveMenuShortcut (a plain file delete).
+        System.Collections.Generic.IEnumerable<string> EnumerateManagedArtifacts() => System.Array.Empty<string>();
     }
 }

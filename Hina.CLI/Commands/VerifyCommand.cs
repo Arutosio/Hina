@@ -15,15 +15,20 @@ namespace Hina.CLI.Commands
         public static async Task<int> RunAsync(CommandContext ctx, string[] args)
         {
             string? name = Args.FirstPositional(args, startIndex: 1);
-            bool repair = Args.HasFlag(args, "--repair");
+            // `hina repair [name]` is `hina verify [name] --repair`.
+            bool repair = Args.HasFlag(args, "--repair")
+                          || args[0].Equals("repair", StringComparison.OrdinalIgnoreCase);
 
             RegistryVerifier verifier = ctx.NewRegistryVerifier();
 
             try
             {
                 List<AppDiagnostic> diags = verifier.Inspect(name);
+                // Orphan artifacts (leftovers after a manual registry deletion) are global, not
+                // tied to one app — only meaningful for a whole-system check.
+                List<string> orphans = name == null ? verifier.FindOrphanArtifacts() : new List<string>();
 
-                if (diags.Count == 0)
+                if (diags.Count == 0 && orphans.Count == 0)
                 {
                     Console.WriteLine(name != null
                         ? $"'{name}' is not in the registry."
@@ -57,6 +62,16 @@ namespace Hina.CLI.Commands
                     }
                 }
 
+                if (orphans.Count > 0)
+                {
+                    problemCount++;
+                    Console.WriteLine($"orphaned artifacts (no registry entry): {orphans.Count}");
+                    foreach (string o in orphans)
+                    {
+                        Console.WriteLine($"  - orphan: {o}");
+                    }
+                }
+
                 if (problemCount == 0)
                 {
                     return 0;
@@ -65,13 +80,22 @@ namespace Hina.CLI.Commands
                 if (!repair)
                 {
                     Console.WriteLine();
-                    Console.WriteLine("Run `hina verify --repair` to remove orphaned entries and side-effects.");
+                    Console.WriteLine("Run `hina repair` to remove orphaned entries and side-effects.");
                     return 1;
                 }
 
                 Console.WriteLine();
                 Console.WriteLine("Repairing...");
                 List<AppRepairResult> repaired = await verifier.RepairAsync(name, ctx.Ct);
+
+                if (name == null)
+                {
+                    List<string> removedOrphans = await verifier.RepairOrphanArtifactsAsync(ctx.Ct);
+                    foreach (string o in removedOrphans)
+                    {
+                        Console.WriteLine($"  removed orphan artifact: {o}");
+                    }
+                }
 
                 int healed = 0;
                 foreach (AppRepairResult r in repaired)

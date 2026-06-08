@@ -269,6 +269,32 @@ namespace Hina.PackageManager.Platform.Linux
             return Task.CompletedTask;
         }
 
+        // All Hina-managed artifacts on disk, by their `hina-*` filename marker: shortcuts +
+        // mime/url handlers in the applications dir, autostart entries, and per-app fonts. Bin
+        // symlinks are intentionally NOT scanned — they carry no Hina prefix, so distinguishing
+        // them from the user's own symlinks safely isn't possible. `hina repair` subtracts the
+        // registry-referenced paths from this to find true orphans.
+        public IEnumerable<string> EnumerateManagedArtifacts()
+        {
+            List<string> found = new List<string>();
+            AddManaged(found, _userAppsDir, "hina-*.desktop");
+            AddManaged(found, _userAutostartDir, "hina-*.desktop");
+            AddManaged(found, _userFontsDir, "hina-*");
+            return found;
+        }
+
+        private static void AddManaged(List<string> into, string dir, string pattern)
+        {
+            try
+            {
+                if (Directory.Exists(dir))
+                {
+                    into.AddRange(Directory.EnumerateFiles(dir, pattern));
+                }
+            }
+            catch { /* fail-soft: a scan error must not break repair */ }
+        }
+
         // ---- Helpers ----
 
         private static string Escape(string value)

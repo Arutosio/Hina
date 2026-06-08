@@ -16,9 +16,12 @@ namespace Hina.CLI
             Console.WriteLine("  list                   List installed apps");
             Console.WriteLine("  info <name>            Show details for an installed app");
             Console.WriteLine("  which <name>           Print the install path of an app");
+            Console.WriteLine("  run <app> [entry]      Launch an installed app (applies its sandbox first, if any)");
             Console.WriteLine("  update [name]          Update one app or all installed apps");
             Console.WriteLine("  reinstall <name>       Reinstall an app (use --rotate-key for key change)");
+            Console.WriteLine("  perms [name]           Show sandbox permissions; --grant <path>[:rw] / --revoke <path>");
             Console.WriteLine("  verify [name]          Reconcile registry against on-disk state (--repair to clean orphans)");
+            Console.WriteLine("  repair [name]          Alias for verify --repair (clean orphans + dangling artifacts)");
             Console.WriteLine("  version                Print the installed Hina version");
             Console.WriteLine("  check-update           Check whether a newer Hina release is available");
             Console.WriteLine("  dev <subcommand>       Advanced patcher commands");

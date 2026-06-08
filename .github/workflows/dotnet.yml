@@ -36,3 +36,10 @@ jobs:
       run: dotnet build --no-restore -c Release
     - name: Test
       run: dotnet test --no-build -c Release --verbosity normal
+    - name: Landlock sandbox integration probe
+      run: |
+        HINA="$(find Hina.CLI/bin/Release -type f -name Hina.CLI | head -1)"
+        if [ -z "$HINA" ]; then echo "hina binary not found" >&2; exit 1; fi
+        echo "Using hina: $HINA (kernel $(uname -r))"
+        chmod +x scripts/landlock-probe.sh
+        bash scripts/landlock-probe.sh "$HINA"

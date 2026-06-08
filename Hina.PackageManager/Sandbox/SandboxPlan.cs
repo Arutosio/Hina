@@ -12,10 +12,16 @@ namespace Hina.PackageManager.Sandbox
 
         public IReadOnlyList<ResolvedFsRule> Rules { get; }
 
-        public SandboxPlan(bool unrestricted, IReadOnlyList<ResolvedFsRule> rules)
+        // True if the app's network access should be denied. Enforced on Linux via
+        // Landlock net rules (ABI >= 4 / kernel 6.7+); declared-only on older
+        // kernels and other OSes. Never set when Unrestricted (host opt-out).
+        public bool RestrictNetwork { get; }
+
+        public SandboxPlan(bool unrestricted, IReadOnlyList<ResolvedFsRule> rules, bool restrictNetwork = false)
         {
             Unrestricted = unrestricted;
             Rules = rules;
+            RestrictNetwork = restrictNetwork;
         }
     }
 

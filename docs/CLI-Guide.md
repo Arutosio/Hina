@@ -80,7 +80,7 @@ hina list
 
 ### info
 
-Show detailed info for one installed app: install path, channel, pinned key fingerprint, hooks executed, shell entries created, timestamps.
+Show detailed info for one installed app: install path, channel, pinned key fingerprint, hooks executed, shell entries created, timestamps, and — when the app is sandboxed — a compact **sandbox summary** (filesystem scope, network allowed/denied, and any declared-but-not-enforced capabilities). Run `hina perms <app>` for the full per-app breakdown.
 
 ```shell
 hina info foo
@@ -161,14 +161,15 @@ hina perms foo             # full detail for one app
 The overview table has columns `APP SANDBOX FS NET AUDIO MIC SCREEN INPUT DEV`.
 The `FS` column summarizes the filesystem scope: declared tokens, `host(!)` when
 the app requests unrestricted host access, and `+Ng` for N user grants. A legend
-notes that **only the filesystem (FS) is enforced** (Linux/Landlock); the other
-capability columns are declared by the app but not yet enforced.
+notes that **the filesystem (FS) and network (NET) are enforced** (Linux/Landlock +
+macOS/sandbox-exec; NET needs Linux 6.7+); the other capability columns are
+declared by the app but not yet enforced.
 
 `hina perms <app>` prints the per-app detail: whether the sandbox is on or off;
 the **Filesystem (enforced)** section listing the install dir, each declared
-token with its access, and each user-granted absolute path; then Network, Audio,
-Microphone, Screen, Input and Devices, each shown as `declared (not enforced)`
-or `not declared`.
+token with its access, and each user-granted absolute path; then **Network**
+(`allowed (enforced)` or `denied (enforced …)`); then Audio, Microphone, Screen,
+Input and Devices, each shown as `declared (not enforced)` or `not declared`.
 
 Manage the user's extra runtime filesystem grants (persisted in the registry):
 

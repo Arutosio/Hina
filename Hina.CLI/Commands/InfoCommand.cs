@@ -1,8 +1,10 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
+using Hina.PackageManager.Descriptor;
 using Hina.PackageManager.Install;
 using Hina.PackageManager.Registry;
+using Hina.PackageManager.Sandbox;
 using Microsoft.Extensions.Logging;
 
 namespace Hina.CLI.Commands
@@ -49,6 +51,23 @@ namespace Hina.CLI.Commands
                 Console.WriteLine("Hooks:");
                 foreach (HookEvidence h in app.ExecutedHooks) Console.WriteLine($"  - {h.Action}: {h.Evidence}");
             }
+            // Sandbox / permission summary, from the cached descriptor (best-effort:
+            // a missing or corrupt cache just omits the block — info must not fail).
+            string descPath = ctx.Paths.DescriptorCache(name);
+            if (File.Exists(descPath))
+            {
+                try
+                {
+                    AppDescriptor desc = DescriptorParser.Parse(await File.ReadAllTextAsync(descPath, ctx.Ct));
+                    AppPermissions perms = AppPermissions.From(desc, app);
+                    Console.Write(PermissionsFormatter.Compact(perms));
+                }
+                catch (Exception ex)
+                {
+                    ctx.Logger.LogDebug(ex, "Could not render sandbox summary for {Name}", name);
+                }
+            }
+
             if (!string.IsNullOrEmpty(installSuffix))
             {
                 Console.WriteLine();

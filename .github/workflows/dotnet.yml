@@ -43,3 +43,28 @@ jobs:
         echo "Using hina: $HINA (kernel $(uname -r))"
         chmod +x scripts/landlock-probe.sh
         bash scripts/landlock-probe.sh "$HINA"
+    - name: Landlock network sandbox probe
+      run: |
+        HINA="$(find Hina.CLI/bin/Release -type f -name Hina.CLI | head -1)"
+        if [ -z "$HINA" ]; then echo "hina binary not found" >&2; exit 1; fi
+        echo "Using hina: $HINA (kernel $(uname -r))"
+        chmod +x scripts/landlock-net-probe.sh
+        bash scripts/landlock-net-probe.sh "$HINA"
+
+  macos-sandbox:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: 10.0.x
+    - name: Restore dependencies
+      run: dotnet restore
+    - name: Build
+      run: dotnet build --no-restore -c Release
+    # The macOS sandbox-exec backend is enforced here: MacOsSandboxTests runs a real
+    # sandbox-exec child and asserts an ungranted read is denied + a granted write
+    # allowed. It is a no-op assert off macOS, so this job is its real proof.
+    - name: Test (incl. sandbox-exec enforcement)
+      run: dotnet test --no-build -c Release --verbosity normal

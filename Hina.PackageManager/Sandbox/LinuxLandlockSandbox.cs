@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Microsoft.Extensions.Logging;
@@ -46,6 +47,45 @@ namespace Hina.PackageManager.Sandbox
         private const ulong FS_REFER = 1ul << 13;      // ABI v2
         private const ulong FS_TRUNCATE = 1ul << 14;   // ABI v3
 
+        // Network access-right bits (ABI v4 / kernel 6.7+). Scoping TCP bind/connect
+        // lets us actually ENFORCE the declared `network` capability.
+        private const int NET_ABI = 4;
+        private const ulong NET_BIND_TCP = 1ul << 0;
+        private const ulong NET_CONNECT_TCP = 1ul << 1;
+
+        // Implicit system-runtime grants. A dynamically-linked Linux app must read
+        // the loader (/lib64/ld-linux-*), libc, and system libraries to even start;
+        // it also reads /etc/ld.so.cache + /etc/ld.so.conf.d. Without these grants
+        // Landlock denies them and the app EACCESs at startup — only fully
+        // self-contained (static/AOT) binaries would run. So when a sandbox IS
+        // enforced we grant read+exec on the standard system dirs and read+write on
+        // the handful of device nodes apps commonly need.
+        //
+        // Landlock is layered ON TOP OF normal DAC: granting read+exec on /etc does
+        // NOT make /etc/shadow readable to a non-root user — the kernel still checks
+        // file permissions first. These grants only relax the Landlock layer, never
+        // the underlying ownership/mode checks. Paths that don't exist are skipped
+        // (AddPath's open() fails harmlessly).
+        internal static readonly IReadOnlyList<ResolvedFsRule> SystemRuntimePaths = new[]
+        {
+            // Loader + system libraries + binaries (read + execute, never writable).
+            new ResolvedFsRule("/usr", false),
+            new ResolvedFsRule("/lib", false),
+            new ResolvedFsRule("/lib64", false),
+            new ResolvedFsRule("/bin", false),
+            new ResolvedFsRule("/sbin", false),
+            new ResolvedFsRule("/etc", false),   // ld.so.cache, ld.so.conf.d, resolv.conf, …
+            // Common device nodes apps open (and write to, e.g. /dev/null). Granted
+            // individually — NOT all of /dev, which would expose block devices,
+            // /dev/mem, etc.
+            new ResolvedFsRule("/dev/null", true),
+            new ResolvedFsRule("/dev/zero", true),
+            new ResolvedFsRule("/dev/full", true),
+            new ResolvedFsRule("/dev/random", true),
+            new ResolvedFsRule("/dev/urandom", true),
+            new ResolvedFsRule("/dev/tty", true),
+        };
+
         private readonly ILogger _logger;
         private readonly int _abi;
 
@@ -88,8 +128,32 @@ namespace Hina.PackageManager.Sandbox
 
             ulong handled = HandledMask(_abi);
 
-            RulesetAttr attr = new RulesetAttr { handled_access_fs = handled };
-            long rulesetFd = syscall(SYS_landlock_create_ruleset, ref attr, (UIntPtr)Marshal.SizeOf<RulesetAttr>(), 0u);
+            // Enforce the network capability when the plan denies it AND the kernel
+            // is new enough (ABI >= 4). We "handle" TCP bind+connect but add NO
+            // net-port allow rules, so every TCP bind/connect is denied. On older
+            // kernels we cannot enforce — log it so the app/operator knows the
+            // declared denial is not actually applied here.
+            ulong netHandled = 0;
+            if (plan.RestrictNetwork)
+            {
+                if (_abi >= NET_ABI)
+                {
+                    netHandled = NET_BIND_TCP | NET_CONNECT_TCP;
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "Sandbox requested network denial but Landlock ABI {Abi} < {NetAbi} (kernel < 6.7); network not enforced.",
+                        _abi, NET_ABI);
+                }
+            }
+
+            RulesetAttr attr = new RulesetAttr { handled_access_fs = handled, handled_access_net = netHandled };
+            // Pass only the fs field's size on pre-net kernels so an old Landlock
+            // doesn't reject a struct it doesn't understand; include the net field
+            // only when we actually use it.
+            UIntPtr attrSize = (UIntPtr)(netHandled != 0 ? Marshal.SizeOf<RulesetAttr>() : sizeof(ulong));
+            long rulesetFd = syscall(SYS_landlock_create_ruleset, ref attr, attrSize, 0u);
             if (rulesetFd < 0)
             {
                 _logger.LogWarning("Landlock ruleset creation failed; running unsandboxed.");
@@ -98,6 +162,14 @@ namespace Hina.PackageManager.Sandbox
 
             try
             {
+                // Grant the implicit system runtime FIRST so dynamically-linked apps
+                // can load their loader + libc. DAC still applies on top (see
+                // SystemRuntimePaths docs), so this does not expose /etc/shadow etc.
+                foreach (ResolvedFsRule rule in SystemRuntimePaths)
+                {
+                    AddPath(rulesetFd, rule, handled);
+                }
+
                 foreach (ResolvedFsRule rule in plan.Rules)
                 {
                     AddPath(rulesetFd, rule, handled);
@@ -135,12 +207,31 @@ namespace Hina.PackageManager.Sandbox
             }
             try
             {
-                ulong allowed = (FS_READ_FILE | FS_READ_DIR | FS_EXECUTE);
-                if (rule.CanWrite)
+                // Landlock rejects (EINVAL) a path_beneath rule that carries
+                // directory-only rights (READ_DIR, MAKE_*, REMOVE_*, REFER) when the
+                // target is NOT a directory — e.g. a device node like /dev/null or a
+                // single granted file. Such a rule fails wholesale and the path ends
+                // up ungranted. So scope the access mask to what the object type
+                // supports: dirs get the full set, files/devices get file rights only.
+                bool isDir = Directory.Exists(rule.Path);
+                ulong allowed;
+                if (isDir)
                 {
-                    allowed |= FS_WRITE_FILE | FS_REMOVE_DIR | FS_REMOVE_FILE
-                             | FS_MAKE_CHAR | FS_MAKE_DIR | FS_MAKE_REG | FS_MAKE_SOCK
-                             | FS_MAKE_FIFO | FS_MAKE_BLOCK | FS_MAKE_SYM | FS_REFER | FS_TRUNCATE;
+                    allowed = FS_READ_FILE | FS_READ_DIR | FS_EXECUTE;
+                    if (rule.CanWrite)
+                    {
+                        allowed |= FS_WRITE_FILE | FS_REMOVE_DIR | FS_REMOVE_FILE
+                                 | FS_MAKE_CHAR | FS_MAKE_DIR | FS_MAKE_REG | FS_MAKE_SOCK
+                                 | FS_MAKE_FIFO | FS_MAKE_BLOCK | FS_MAKE_SYM | FS_REFER | FS_TRUNCATE;
+                    }
+                }
+                else
+                {
+                    allowed = FS_READ_FILE | FS_EXECUTE;
+                    if (rule.CanWrite)
+                    {
+                        allowed |= FS_WRITE_FILE | FS_TRUNCATE;
+                    }
                 }
                 allowed &= handled;
 
@@ -191,6 +282,7 @@ namespace Hina.PackageManager.Sandbox
         private struct RulesetAttr
         {
             public ulong handled_access_fs;
+            public ulong handled_access_net; // ABI v4+; passed only when used (see attrSize).
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]

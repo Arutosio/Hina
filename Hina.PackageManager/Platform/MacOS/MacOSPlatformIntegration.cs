@@ -48,6 +48,13 @@ namespace Hina.PackageManager.Platform.MacOS
         // ---- Menu shortcut: minimal .app bundle ----
 
         public Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, CancellationToken ct)
+            => CreateMenuShortcut(entry, appDir, launchOverride: null, ct);
+
+        // A sandboxed app routes through `hina run` (launchOverride) so the Seatbelt
+        // sandbox is installed before the app process starts. The bundle exec then
+        // becomes a tiny script that execs the override command — symlinking straight
+        // to the binary would bypass the sandbox.
+        public Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, string? launchOverride, CancellationToken ct)
         {
             string bundlePath = WriteAppBundle(
                 bundleName: entry.Name,
@@ -55,7 +62,8 @@ namespace Hina.PackageManager.Platform.MacOS
                 execTarget: Path.Combine(appDir, entry.Exec),
                 iconRelative: entry.Icon != null ? Path.Combine(appDir, entry.Icon) : null,
                 documentTypes: null,
-                urlTypes: null);
+                urlTypes: null,
+                launchOverride: launchOverride);
             return Task.FromResult(bundlePath);
         }
 
@@ -234,7 +242,7 @@ $@"<?xml version=""1.0"" encoding=""UTF-8""?>
 
         // ---- App bundle writer ----
 
-        private string WriteAppBundle(string bundleName, string bundleId, string? execTarget, string? iconRelative, string? documentTypes, string? urlTypes)
+        private string WriteAppBundle(string bundleName, string bundleId, string? execTarget, string? iconRelative, string? documentTypes, string? urlTypes, string? launchOverride = null)
         {
             Directory.CreateDirectory(_userAppsDir);
 
@@ -246,7 +254,18 @@ $@"<?xml version=""1.0"" encoding=""UTF-8""?>
             // Stub or symlinked executable so Launch Services treats the bundle as launchable.
             string execName = SanitizeFileName(bundleName);
             string execPath = Path.Combine(macosDir, execName);
-            if (execTarget != null)
+            if (launchOverride != null)
+            {
+                // Sandboxed app: the bundle exec is a script that routes through
+                // `hina run` so the sandbox is applied before the real binary starts.
+                if (File.Exists(execPath) || new FileInfo(execPath).LinkTarget != null)
+                {
+                    TryDeleteFile(execPath, _logger);
+                }
+                File.WriteAllText(execPath, "#!/bin/sh\nexec " + StripControl(launchOverride) + " \"$@\"\n");
+                TrySetExecutable(execPath);
+            }
+            else if (execTarget != null)
             {
                 if (File.Exists(execPath) || new FileInfo(execPath).LinkTarget != null)
                 {
@@ -259,14 +278,7 @@ $@"<?xml version=""1.0"" encoding=""UTF-8""?>
                 // Helper bundles (MIME/URL) don't launch anything; tiny no-op stub keeps Launch
                 // Services happy by giving the bundle a valid CFBundleExecutable target.
                 File.WriteAllText(execPath, "#!/bin/sh\nexit 0\n");
-                try
-                {
-                    // 0755 — owner rwx, group/others rx. Best-effort: ignore on platforms that don't support it.
-                    File.SetUnixFileMode(execPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
-                        | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
-                        | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-                }
-                catch (Exception ex) { _logger.LogDebug(ex, "Best-effort: could not set exec mode on {Path}", execPath); }
+                TrySetExecutable(execPath);
             }
 
             string plistPath = Path.Combine(contentsDir, "Info.plist");
@@ -274,6 +286,30 @@ $@"<?xml version=""1.0"" encoding=""UTF-8""?>
             File.WriteAllText(plistPath, plist);
 
             return bundlePath;
+        }
+
+        private void TrySetExecutable(string execPath)
+        {
+            try
+            {
+                // 0755 — owner rwx, group/others rx. Best-effort: ignore on platforms that don't support it.
+                File.SetUnixFileMode(execPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                    | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+                    | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+            }
+            catch (Exception ex) { _logger.LogDebug(ex, "Best-effort: could not set exec mode on {Path}", execPath); }
+        }
+
+        // Drop control characters (newlines especially) so a launch override can't
+        // inject extra script lines into the bundle exec.
+        private static string StripControl(string s)
+        {
+            StringBuilder sb = new StringBuilder(s.Length);
+            foreach (char c in s)
+            {
+                if (!char.IsControl(c)) sb.Append(c);
+            }
+            return sb.ToString();
         }
 
         private static string BuildInfoPlist(string bundleName, string bundleId, string execName, string? documentTypes, string? urlTypes)

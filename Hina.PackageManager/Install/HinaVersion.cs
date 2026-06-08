@@ -12,7 +12,7 @@ namespace Hina.PackageManager.Install
         // Single source of truth for the running version. The release tag MUST equal
         // "v" + this value (release.yml verifies it), so `hina version`, `hina check-update`,
         // and the published GitHub tag never drift.
-        public const string Current = "1.2.0";
+        public const string Current = "1.3.0";
 
         // True if running version >= required minimum. Both sides parsed as SemVer
         // major.minor.patch; pre-release / build-metadata suffix is tolerated but

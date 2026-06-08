@@ -4,6 +4,13 @@ All notable changes to Hina are documented in this file.
 
 ---
 
+## v1.3.1 — help fix
+
+- `hina` with no args now lists the sandbox-era verbs **run**, **perms**, and
+  **repair** in the main help (they were missing from `Help.PrintMain`).
+
+---
+
 ## v1.3.0 — macOS & network enforcement, tech debt, Windows investigation
 
 Builds on the v1.2.0 sandbox (Linux/Landlock, filesystem-only) by enforcing on a

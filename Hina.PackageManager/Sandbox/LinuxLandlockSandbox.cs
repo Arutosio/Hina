@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Microsoft.Extensions.Logging;
@@ -176,12 +177,31 @@ namespace Hina.PackageManager.Sandbox
             }
             try
             {
-                ulong allowed = (FS_READ_FILE | FS_READ_DIR | FS_EXECUTE);
-                if (rule.CanWrite)
+                // Landlock rejects (EINVAL) a path_beneath rule that carries
+                // directory-only rights (READ_DIR, MAKE_*, REMOVE_*, REFER) when the
+                // target is NOT a directory — e.g. a device node like /dev/null or a
+                // single granted file. Such a rule fails wholesale and the path ends
+                // up ungranted. So scope the access mask to what the object type
+                // supports: dirs get the full set, files/devices get file rights only.
+                bool isDir = Directory.Exists(rule.Path);
+                ulong allowed;
+                if (isDir)
                 {
-                    allowed |= FS_WRITE_FILE | FS_REMOVE_DIR | FS_REMOVE_FILE
-                             | FS_MAKE_CHAR | FS_MAKE_DIR | FS_MAKE_REG | FS_MAKE_SOCK
-                             | FS_MAKE_FIFO | FS_MAKE_BLOCK | FS_MAKE_SYM | FS_REFER | FS_TRUNCATE;
+                    allowed = FS_READ_FILE | FS_READ_DIR | FS_EXECUTE;
+                    if (rule.CanWrite)
+                    {
+                        allowed |= FS_WRITE_FILE | FS_REMOVE_DIR | FS_REMOVE_FILE
+                                 | FS_MAKE_CHAR | FS_MAKE_DIR | FS_MAKE_REG | FS_MAKE_SOCK
+                                 | FS_MAKE_FIFO | FS_MAKE_BLOCK | FS_MAKE_SYM | FS_REFER | FS_TRUNCATE;
+                    }
+                }
+                else
+                {
+                    allowed = FS_READ_FILE | FS_EXECUTE;
+                    if (rule.CanWrite)
+                    {
+                        allowed |= FS_WRITE_FILE | FS_TRUNCATE;
+                    }
                 }
                 allowed &= handled;
 

@@ -4,6 +4,44 @@ All notable changes to Hina are documented in this file.
 
 ---
 
+## v1.3.0 — macOS & network enforcement, tech debt, Windows investigation
+
+Builds on the v1.2.0 sandbox (Linux/Landlock, filesystem-only) by enforcing on a
+second OS and adding network enforcement, plus tech-debt cleanup and a documented
+(but not-yet-working) Windows backend.
+
+### Sandbox enforcement broadened
+
+- **macOS filesystem + network enforcement** via `sandbox-exec` (Seatbelt): `hina run`
+  generates a deny-default `.sb` profile from the declared scope and launches the app
+  under it. macOS is no longer "declared-only".
+- **`network` capability enforced** on Linux 6.7+ (Landlock ABI ≥ 4) and macOS: a
+  sandboxed app that doesn't declare `network: true` has outbound network denied.
+- **Implicit system-runtime grants** so dynamically-linked apps actually start under
+  Landlock (loader/libc/device nodes), with a device-node access-rights fix.
+- **Capability disclosure** at install time and in `hina info` / `hina perms`; non-
+  filesystem capabilities are clearly shown as "declared — not enforced".
+
+### Windows sandbox — investigated, NOT enforced (stays NoOp)
+
+- An AppContainer backend (`WindowsSandbox`) is implemented and its ACL plumbing is
+  proven correct on CI, but the lowbox denied all granted access on the runner, so it
+  is **not wired in** — Windows keeps the honest NoOp + install warning. Full
+  investigation and resume steps in `docs/Windows-Sandbox-Resume.md`.
+
+### Tech debt & internals
+
+- Registry **schema-migration framework** (forward-upgrade `registry.json` on load).
+- `UpdateService` refactor (extracted rollback + cache-refresh); shared
+  `PlatformText.StripControl`; expanded CLI router test coverage.
+
+### Docs
+
+- New **`docs/Diagrams.md`**: 20 Mermaid diagrams (architecture, class diagrams, every
+  pipeline, and the sandbox/container isolation flow per OS).
+
+---
+
 ## Sandboxing, Permissions & Integrity
 
 Apps can now opt into filesystem isolation, users can inspect and grant

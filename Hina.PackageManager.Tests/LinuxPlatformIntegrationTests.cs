@@ -40,6 +40,9 @@ namespace Hina.PackageManager.Tests
         [Fact]
         public async Task CreateMenuShortcut_WritesValidDesktopEntry()
         {
+            // Path.Combine produces a backslash separator on Windows, breaking the Unix Exec=
+            // path assertion; the Linux integration only runs on Unix in practice.
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
             ShellEntry entry = new ShellEntry
             {
                 Id = "main",

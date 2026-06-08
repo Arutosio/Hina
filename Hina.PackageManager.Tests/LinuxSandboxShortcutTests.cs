@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Hina.PackageManager.Descriptor;
@@ -53,6 +54,9 @@ namespace Hina.PackageManager.Tests
         [Fact]
         public async Task NullOverride_PointsAtAppBinary()
         {
+            // Path.Combine yields a backslash separator on Windows, breaking the Unix path
+            // assertion; the Linux integration only runs on Unix in practice.
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
             string path = await _platform.CreateMenuShortcut(Entry(), "/apps/demo", null, CancellationToken.None);
             string exec = await ExecLine(path);
             Assert.Contains("/apps/demo/bin/demo", exec);

@@ -180,7 +180,8 @@ namespace Hina.PackageManager.Tests
 
             string evidence = await p.InstallFont(src, CancellationToken.None);
 
-            string[] parts = evidence.Split('|');
+            // Evidence is "<destPath><US><fontName>" (US = unit separator U+001F), not '|'.
+            string[] parts = evidence.Split('');
             Assert.Equal(2, parts.Length);
             string destPath = parts[0];
             string fontName = parts[1];

@@ -4,6 +4,61 @@ All notable changes to Hina are documented in this file.
 
 ---
 
+## Sandboxing, Permissions & Integrity
+
+Apps can now opt into filesystem isolation, users can inspect and grant
+permissions, and the install can be checked and repaired.
+
+### Sandbox (v1)
+
+- **Optional `sandbox` block** in the signed `hina.app.json`: a filesystem scope
+  (abstract tokens `app`, `home`, `xdg-documents`, `xdg-download`, `xdg-config`,
+  `tmp`, `host`, each `ro`/`rw`) plus declared capabilities (`network`, `audio`,
+  `microphone`, `screen`, `input`, `devices`).
+- **Filesystem enforcement on Linux only**, via Landlock (unprivileged, kernel
+  ≥ 5.13, no root / no bubblewrap). Old kernel / no Landlock → no-op with a
+  one-time warning, never blocks the launch. macOS/Windows: scope is **declared
+  but NOT enforced** — install warns the app runs with full user privileges.
+- **Capabilities are declared-only**, never enforced yet (no portals). `hina
+  perms` shows them as "declared — not enforced".
+- **`hina run <app> [entryId] [-- args]`**: the launch chokepoint. Sandboxed apps'
+  shortcuts route through it so the Landlock ruleset is installed before `execv`.
+- The `host` token grants unrestricted access and is surfaced loudly at install
+  and in `hina perms`.
+
+### Permissions
+
+- **`hina perms`** (aliases `permissions` / `permessi`): table of all apps'
+  permissions, per-app detail view, and `--grant <path>[:ro|:rw]` / `--revoke
+  <path>` to manage user filesystem grants (persisted in the registry, folded into
+  the Landlock ruleset at launch).
+- **Update permission consent**: an update that *broadens* an app's access (new
+  path, `host`, `ro → rw`, a new capability, or removing the sandbox) is refused
+  before any file is touched until `hina update --accept-new-permissions`.
+  Narrowing applies automatically.
+
+### Integrity & Repair
+
+- **`hina verify [name]`**: offline check that each per-OS exec, `entries[].exec`,
+  and the descriptor cache are present. Missing files point the user at `hina
+  reinstall`.
+- **`hina verify --deep`**: re-fetches the manifest and hash-verifies every
+  installed file against it (network required).
+- **`hina repair`** (= `hina verify --repair`): removes orphan registry rows,
+  dangling shortcuts/hooks, and true-orphan artifacts left after a manual
+  `registry.json` deletion. Idempotent.
+- **`hina uninstall <name>`** is now fail-soft — it works even when the install
+  directory is already gone.
+
+### Hardening
+
+- `entries[].id` is charset-validated against `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`.
+  The id flows into the `.desktop` `Exec=` line (`hina run <app> "<id>"`), so this
+  closes a command-injection surface for a signed-but-hostile descriptor.
+- Descriptor-cache writes are atomic.
+- `Registry.InstalledApp` gained a `userGrants` list (schemaVersion still `1`;
+  older registries round-trip unchanged).
+
 ## Network Resilience (Round 3)
 
 Targeted at flaky / mobile / changing-IP connections.

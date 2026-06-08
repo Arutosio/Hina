@@ -32,6 +32,11 @@ Hina is an open-source cross-platform package manager and rsync-like patcher for
 - Cross-platform package manager: `hina install <url>` / `update` / `uninstall` / `list` on Windows, Linux, macOS
 - Whitelisted declarative hooks (PATH symlink, MIME, URL scheme, font, autostart), all user-scope (no admin)
 - Ed25519 signed descriptors with TOFU on first install and pinned-key verification on update
+- Optional [filesystem sandboxing](Security.md) for apps that opt in — enforced on Linux via Landlock (`hina run`), declared-but-not-enforced on macOS/Windows
+- [`hina perms`](Security.md) to inspect declared scope/capabilities and grant or revoke filesystem paths per app
+- Update [permission consent](Security.md): an update that broadens an app's sandbox is refused until `--accept-new-permissions`
+- Integrity tooling: `hina verify` checks installed files against the descriptor, `verify --deep` hash-verifies every file against the manifest (see [Troubleshooting](Troubleshooting.md))
+- `hina repair` (`verify --repair`) cleans orphan registry rows and dangling shortcuts/hooks after a manual deletion (see [Troubleshooting](Troubleshooting.md))
 - rsync-like delta patching with rolling checksum matching reuses local chunks
 - Content-defined chunking (CDC) for superior deduplication
 - Brotli-compressed chunk storage

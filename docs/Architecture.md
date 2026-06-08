@@ -12,7 +12,7 @@ Hina is organized into five projects plus two test projects:
 |---------|------|-------------|
 | **Hina.Core** | Class Library | Core engine: patching, rsync matching, manifest handling, chunking, hashing, signing, compression, networking, configuration |
 | **Hina.PackageManager** | Class Library | Package-manager layer: descriptor schema, validator, signer/fetcher, install/uninstall/update/reinstall services, hook executor, per-OS shell integration, local registry |
-| **Hina.CLI** | Console App (NativeAOT) | End-user CLI (`hina install/update/uninstall/list/info/which/reinstall`) plus developer subcommands under `hina dev <cmd>` |
+| **Hina.CLI** | Console App (NativeAOT) | End-user CLI (`hina install/update/uninstall/list/info/which/reinstall/run/perms/verify`) plus developer subcommands under `hina dev <cmd>` |
 | **Hina.Builder** | Console App | Manifest generator and chunk store builder |
 | **Hina.Host** | ASP.NET Core App | Lightweight static file server for serving patches |
 | **Hina.Core.Tests** | xUnit Test Project | Unit and integration tests for the core engine |
@@ -164,7 +164,8 @@ The local index of installed apps.
 | Class | Purpose |
 |-------|---------|
 | `Registry` | Root JSON object: `apps: Dictionary<name, InstalledApp>` |
-| `InstalledApp` | Per-app row: pinned baseUrl/publicKey/channel, install path, descriptorUrl, executed hooks, shell entries |
+| `InstalledApp` | Per-app row: pinned baseUrl/publicKey/channel, install path, descriptorUrl, executed hooks, shell entries, plus `UserGrants` (the extra filesystem paths the user has granted a sandboxed app at runtime, as resolved absolute `FsGrant` rows) |
+| `FsGrant` | A user-granted absolute filesystem path for a sandboxed app: `Path` + `Access` (`ro`/`rw`). Additive and default-empty so older registries round-trip; `schemaVersion` stays 1. |
 | `HookEvidence` | What was actually written on disk by a hook — read at uninstall time |
 | `ShellEntryRecord` | Id-keyed pair so update-flow diff can replace renamed/removed entries |
 | `RegistryStore` | Atomic read/write (tmp + fsync + rename); uses source-gen JSON |
@@ -196,11 +197,11 @@ Per-OS shell integration. Pure interface + factory + three implementations.
 
 | Class | Purpose |
 |-------|---------|
-| `IPlatformIntegration` | All shell-touching operations: shortcuts, AddToPath, MIME, URL scheme, font, autostart (+ `Remove`/`Unregister` counterparts). Returns "evidence" strings stored in the registry. |
+| `IPlatformIntegration` | All shell-touching operations: shortcuts, AddToPath, MIME, URL scheme, font, autostart (+ `Remove`/`Unregister` counterparts). Returns "evidence" strings stored in the registry. Two sandbox-related additions, both with default-impl fallbacks so platforms without a backend are unaffected: a 4-arg `CreateMenuShortcut(entry, appDir, launchOverride, ct)` overload that sets the shortcut's launch command to `launchOverride` verbatim (e.g. `hina run <app> <entry>`) instead of the app binary; and `EnumerateManagedArtifacts()`, which returns every Hina-managed artifact path on disk (independent of the registry) so `FindOrphanArtifacts` can find leftovers. |
 | `PlatformIntegrationFactory` | Picks the right impl via `RuntimeInformation.IsOSPlatform` |
-| `LinuxPlatformIntegration` | `.desktop` files in `~/.local/share/applications`, symlinks in `~/.local/bin`, fonts in `~/.local/share/fonts`, `~/.config/autostart/*.desktop` |
-| `WindowsPlatformIntegration` | `.lnk` shortcuts via COM `IShellLink`, `.cmd` shims in `%LOCALAPPDATA%\Hina\bin` (PATH-extended), HKCU registry for MIME/URL/autostart, per-user fonts |
-| `MacOSPlatformIntegration` | Minimal `.app` bundles in `~/Applications` with generated Info.plist, helper bundles with `CFBundleDocumentTypes` / `CFBundleURLTypes`, `~/Library/Fonts`, `~/Library/LaunchAgents/*.plist` |
+| `LinuxPlatformIntegration` | `.desktop` files in `~/.local/share/applications`, symlinks in `~/.local/bin`, fonts in `~/.local/share/fonts`, `~/.config/autostart/*.desktop`. The only impl that honors `launchOverride` (writes it as the `.desktop` `Exec` line) and implements `EnumerateManagedArtifacts()` (scans `hina-*` shortcuts / handlers / fonts; bin symlinks are excluded as they carry no Hina marker). |
+| `WindowsPlatformIntegration` | `.lnk` shortcuts via COM `IShellLink`, `.cmd` shims in `%LOCALAPPDATA%\Hina\bin` (PATH-extended), HKCU registry for MIME/URL/autostart, per-user fonts. Falls back to the default `CreateMenuShortcut` (ignores `launchOverride`) and `EnumerateManagedArtifacts` (empty) — no sandbox enforcement yet. |
+| `MacOSPlatformIntegration` | Minimal `.app` bundles in `~/Applications` with generated Info.plist, helper bundles with `CFBundleDocumentTypes` / `CFBundleURLTypes`, `~/Library/Fonts`, `~/Library/LaunchAgents/*.plist`. Same default fallbacks as Windows — no sandbox enforcement yet. |
 | `Windows/ShellLink.cs` | Hand-rolled COM interop (`IShellLinkW` + `IPersistFile`) using the `[CoClass]` idiom; AOT-compatible |
 
 ### Paths/
@@ -227,12 +228,40 @@ Per-OS shell integration. Pure interface + factory + three implementations.
 
 | Class | Purpose |
 |-------|---------|
-| `RegistryVerifier` | Reconciles the local registry against on-disk state. `Inspect` reports orphans (missing AppDir, dangling shell entries, dangling hook evidence); `RepairAsync` calls the platform `Unregister*` / `Remove*` and rewrites the registry. Used by `hina verify [--repair]`. |
-| `AppDiagnostic` / `AppRepairResult` | Plain data shapes for the verifier's output. |
+| `RegistryVerifier` | Reconciles the local registry against on-disk state. `Inspect` reports orphans (missing AppDir, dangling shell entries, dangling hook evidence) **plus a local integrity check** (reads the cached descriptor and confirms the declared exec + entry files exist on disk, reporting `DescriptorCacheMissing` / `MissingFiles`); `RepairAsync` calls the platform `Unregister*` / `Remove*` and rewrites the registry. `FindOrphanArtifacts` scans `IPlatformIntegration.EnumerateManagedArtifacts()` and subtracts every registry-referenced path to surface leftovers from a manual `registry.json` deletion; `RepairOrphanArtifactsAsync` deletes them (fail-soft, under the registry lock). Used by `hina verify [--repair] [--deep]`. |
+| `AppDiagnostic` / `AppRepairResult` | Plain data shapes for the verifier's output. `AppDiagnostic` carries `AppDirMissing`, `DescriptorCacheMissing`, `MissingFiles`, `DanglingShellEntries`, `DanglingHooks`, and an `IsHealthy` roll-up. |
 
 `InstallOptions` and `UpdateOptions` carry a `NetworkOptions` struct that
 threads `MaxRetries`, `MaxRetryDelayMs`, `ConnectTimeoutMs`, and
 `RequestTimeoutMs` into the `PatcherConfig` for the per-call `PatchClient`.
+
+### Io/
+
+| Class | Purpose |
+|-------|---------|
+| `AtomicFile` | Crash-safe small-file text write: serializes to a sibling `.tmp`, `Flush(flushToDisk: true)`, then `File.Move(..., overwrite: true)` — atomic for a same-volume rename on POSIX and Windows. A crash mid-write leaves the old file (or no file) intact, never a truncated one. The same pattern `RegistryStore` uses for `registry.json`, centralised so the descriptor cache and any future small-file writes share it. |
+
+### Sandbox/
+
+Optional Flatpak-style filesystem isolation. v1 enforces **filesystem scope only**, on **Linux/Landlock only**; declared non-filesystem capabilities are surfaced but not enforced, and there are no portals.
+
+The architecture mirrors `Platform/`: a per-OS interface (`ISandboxLauncher`) with a factory that selects one implementation. The pivot is that **Hina becomes the launcher for sandboxed apps** — their shell shortcut's launch command points at `hina run <app> <entry>` instead of the app binary, so `hina run` can build the filesystem plan and install the sandbox before the app starts. Non-sandboxed apps continue to launch their binary directly.
+
+| Class | Purpose |
+|-------|---------|
+| `SandboxPlanner` | `Build(spec, userGrants, appDir, env)` folds the descriptor's declared `FsRule`s and the user's runtime `FsGrant`s into a resolved `SandboxPlan`. The install dir is always granted read-only; a `host` rule short-circuits to `Unrestricted`; when the same concrete path appears twice, read-write wins. |
+| `SandboxPlan` / `ResolvedFsRule` | `SandboxPlan { bool Unrestricted, IReadOnlyList<ResolvedFsRule> Rules }`; each `ResolvedFsRule` is an absolute `Path` + `CanWrite` flag. |
+| `SandboxEnv` | Resolved user-directory roots (`Home`, `Documents`, `Download`, `Config`, `Tmp`) that abstract tokens map onto. `FromSystem()` reads the live XDG vars with home-relative fallbacks; constructed explicitly in tests for determinism. |
+| `SandboxPaths` | `Resolve(token, appDir, env)` maps a `SandboxTokens` value to an absolute path. Returns `null` for `host` (means "no restriction", not a path) and for unknown tokens (already rejected by `DescriptorValidator`). |
+| `ISandboxLauncher` | Per-OS launcher: `bool IsSupported` + `int Launch(execAbs, appArgs, plan, ct)`. A backend MAY replace the current process image (`execv`) rather than spawn a child — in that case `Launch` returns only on exec failure. |
+| `LinuxLandlockSandbox` | Linux backend (kernel 5.13+). Unprivileged P/Invoke into `landlock_create_ruleset` / `landlock_add_rule` / `landlock_restrict_self` plus `prctl(NO_NEW_PRIVS)`, then `execv`. Builds a ruleset that denies every filesystem access right the running ABI knows and grants back only the resolved paths; restrictions apply to `hina` itself and are inherited across `execv`, so the sandboxed app's PID is hina's. ABI-probed; any failure logs a warning and execs unsandboxed — it never blocks a launch. |
+| `NoOpSandbox` | Fallback for macOS, Windows, or a too-old Linux kernel. Spawns the app and waits; warns once if the plan asked for real scoping it cannot enforce. `IsSupported` is `false`. |
+| `SandboxLauncherFactory` | `Current(logger)` returns `LinuxLandlockSandbox` when on Linux and supported, otherwise `NoOpSandbox`. |
+| `AppPermissions` | Pure flat view of one app's permissions, folded from the cached descriptor (declared scope + capabilities) and the registry row (`UserGrants`). No I/O. Drives `hina perms`. |
+| `PermissionsFormatter` | Renders `AppPermissions` as the `hina perms` table (all apps) and detail (one app). Every non-filesystem capability is rendered with a "declared — not enforced" caveat. |
+| `SandboxDiff` | `Compute(oldSpec, newSpec)` → `{ Broadened, Added, Removed }`. A null/disabled sandbox means "unsandboxed = full access", so dropping or loosening a sandbox broadens (needs consent) while enabling or tightening it narrows (applies silently). Drives the update-flow permission-consent gate (a broadening update fails unless re-run with `--accept-new-permissions`). |
+
+The descriptor wire model for the sandbox lives in `Descriptor/`: `SandboxSpec` (`Enabled`, `List<FsRule> Filesystem`, `CapabilitySpec? Capabilities`), `FsRule` (`Path` token + `Access` `ro`/`rw`), `CapabilitySpec` (`Network`/`Audio`/`Microphone`/`Screen`/`Input`/`Devices` bools — **declared only**), and `SandboxTokens` (the closed token set: `app`, `home`, `xdg-documents`, `xdg-download`, `xdg-config`, `tmp`, `host`). Unknown tokens are rejected at validation — fail closed.
 
 ---
 
@@ -373,10 +402,13 @@ The client (`PatchClient`) downloads the manifest, matches local data, and appli
  [10] Sanity check: descriptor.Exec[os] exists on disk
         |
  [11] CreateMenuShortcut for each entry → record evidence
+      (sandboxed app → launchOverride "hina run <name> <entry>"; else direct binary)
         |
  [12] HookExecutor.ApplyAsync in declared order → record HookEvidence
         |
- [13] Write registry entry; cache descriptor
+ [13] Cache descriptor FIRST via AtomicFile.WriteAllText, THEN commit registry entry.
+      A crash between the two leaves a cache with no registry row (harmless) rather
+      than a registry row with no cache (would break run/perms/update).
         |
  [14] Release lock
 
@@ -407,6 +439,10 @@ The client (`PatchClient`) downloads the manifest, matches local data, and appli
         |
  [5] Snapshot pre-update registry entry
         |
+ [5a] SandboxDiff.Compute(oldDescriptor.sandbox, newDescriptor.sandbox)
+      If it BROADENS access (new paths, host, ro→rw, new capability, or sandbox
+      dropped) and not --accept-new-permissions → fail BEFORE touching disk
+        |
  [6] PatchClient.PatchAsync(appDir, Backup=true)
      On failure → PatchClient.RollbackAsync + restore registry snapshot
         |
@@ -436,6 +472,54 @@ The client (`PatchClient`) downloads the manifest, matches local data, and appli
  Critical: hook side-effects are read from the registry, NEVER from
  the live descriptor — a newer descriptor might list different hooks.
 ```
+
+### Run Flow (Hina.PackageManager)
+
+The launch chokepoint. A sandboxed app's shell shortcut runs `hina run` instead of
+the app binary, so the filesystem sandbox is installed before the app starts.
+
+```
+ hina run <app> [entryId] [-- appArgs...]
+        |
+ [1] Load registry; app missing → error
+ [2] AppDir missing → error (suggest reinstall)
+ [3] Read cached descriptor; missing/corrupt → error
+     (NEVER launch unsandboxed without the descriptor — that would silently drop isolation)
+        |
+ [4] Resolve the entry's exec (entryId → entries[]; else entries[0]; else Exec[os])
+     Resolved exec missing on disk → error
+        |
+ [5] Build the plan:
+        sandbox.Enabled → SandboxPlanner.Build(spec, app.UserGrants, appDir, SandboxEnv.FromSystem())
+        else            → SandboxPlan(Unrestricted: true)
+        |
+ [6] SandboxLauncherFactory.Current(logger).Launch(execAbs, appArgs, plan, ct)
+     Linux+supported → Landlock installs the ruleset then execv's the app (app PID = hina PID)
+     else            → spawn + wait (warns once if scoping was requested but unenforceable)
+```
+
+### Permissions Flow (Hina.PackageManager)
+
+```
+ hina perms                          → table of every app's permissions
+ hina perms <app>                    → detail for one app
+ hina perms <app> --grant <path>[:ro|:rw]   → add a runtime FsGrant   (takes the registry lock)
+ hina perms <app> --revoke <path>           → remove a runtime FsGrant (takes the registry lock)
+```
+
+`AppPermissions.From(cachedDescriptor, registryRow)` folds the declared sandbox scope
+and the registry `UserGrants` into a flat view; `PermissionsFormatter` renders it.
+Filesystem is the only enforced category; every other capability is shown "declared —
+not enforced".
+
+`hina verify [name] [--repair] [--deep]` extends the diagnostic: the default offline
+pass adds local integrity checks (descriptor cache + declared files present) and a global
+orphan-artifact scan; `--repair` (also reachable as `hina repair`) prunes orphan entries,
+dangling side-effects, and orphan artifacts; `--deep` re-fetches the manifest and hashes
+every file via `PatchClient.VerifyAsync`. `hina dev sandbox-run --app-dir <dir>
+[--allow <path>[:ro|:rw] ...] [--host] -- <exec> [args...]` applies a filesystem sandbox
+(Landlock on Linux) then execs — it drives the Landlock integration test and is handy for
+manual sandbox probing.
 
 ---
 

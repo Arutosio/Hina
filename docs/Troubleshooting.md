@@ -576,6 +576,179 @@ If you re-built the app without bumping the version, no update is performed.
 
 ---
 
+### PM8. App Declares a Sandbox but Isn't Isolated on macOS/Windows
+
+**Symptom:**
+
+The app's `hina.app.json` declares a `sandbox` block, but on macOS or Windows the
+app can still read and write anywhere. At install time you saw:
+
+```
+warn: This app DECLARES a filesystem sandbox, but Hina does not enforce sandboxing
+      on this OS yet. The app will run with FULL user privileges (no isolation).
+```
+
+**Cause:**
+
+Filesystem sandboxing is enforced **only on Linux** (via Landlock). On macOS and
+Windows the declared scope is shown but **not applied** — the app runs with full
+user privileges. This is expected, not a bug.
+
+**Solutions:**
+
+- Treat the declared scope as advisory on macOS/Windows.
+- Run `hina perms <app>` to see what the app declares; the table footer and the
+  detail view both state which surfaces are actually enforced.
+
+---
+
+### PM9. Update Fails Asking for `--accept-new-permissions`
+
+**Error:**
+
+```
+'demo' 2.0.0 requests broader permissions (home (rw), capability: network).
+Re-run with `--accept-new-permissions` to allow it.
+```
+
+**Cause:**
+
+The new version of the descriptor *broadens* the app's sandbox: a new path, the
+`host` token, a `ro → rw` upgrade, a new capability, or removing the sandbox
+entirely. Hina refuses to silently widen an installed app's reach, so it stops
+before touching any files.
+
+**Solutions:**
+
+- Review the listed `+` permission changes. If you trust them, re-run:
+
+  ```shell
+  hina update demo --accept-new-permissions
+  ```
+
+- If the new scope looks wrong, verify with the publisher before accepting.
+  *Narrowing* changes never require this flag — they apply automatically.
+
+---
+
+### PM10. `hina verify` Reports a Missing File / App Corrupt
+
+**Symptom:**
+
+```
+demo (1.2.0)
+  install path: ...
+  - descriptor cache missing
+  - missing file: bin/demo
+
+Some apps are missing files — run `hina reinstall <app>` to restore them.
+```
+
+`hina run` may also refuse to launch with a "descriptor is missing/corrupt;
+cannot launch safely" message. Or `hina verify --deep` reports
+`N file(s) corrupt or missing (hash check)`.
+
+**Cause:**
+
+A declared executable, an `entries[].exec`, or the cached descriptor is missing,
+or (with `--deep`) a file's content no longer matches the manifest hash — i.e. the
+install is incomplete or has been tampered with.
+
+**Solutions:**
+
+```shell
+hina verify <app>          # offline: missing exec / entries / descriptor cache
+hina verify <app> --deep   # network: hash every file against the manifest
+hina reinstall <app>       # re-run the full install to restore the files
+```
+
+`hina reinstall` is the recovery path Hina points you at for any "missing file" /
+"descriptor cache missing" condition.
+
+---
+
+### PM11. I Deleted an App Folder or `registry.json` by Hand — Now There Are Leftovers
+
+**Symptom:**
+
+`hina list` shows an app with `[missing]`, or shortcuts / PATH symlinks / MIME and
+URL-scheme registrations point at a directory that no longer exists. After deleting
+`registry.json` itself, the app directories and their side-effects are still on
+disk with no registry to track them.
+
+**Cause:**
+
+The registry row and the on-disk side-effects (shortcuts, hooks) outlived the app
+directory, or the whole registry was removed leaving "orphan" artifacts with no
+backing entry.
+
+**Solutions:**
+
+```shell
+hina verify          # show every dangling entry / shortcut / hook / orphan
+hina repair          # = `hina verify --repair`: remove them all (idempotent)
+hina uninstall <app> # also works even when the app directory is already gone
+```
+
+`hina repair` prunes orphan registry rows, dangling shortcuts/hooks, and
+true-orphan artifacts left after a manual `registry.json` deletion. It is safe to
+re-run (e.g. from cron).
+
+---
+
+### PM12. Sandboxed App Won't Start / Landlock
+
+**Symptom:**
+
+Launching a sandboxed app on Linux, the log shows one of:
+
+```
+warn: Landlock ruleset creation failed; running unsandboxed.
+warn: This app requested filesystem sandboxing, but this platform cannot enforce
+      it. Running unsandboxed.
+```
+
+The app still starts.
+
+**Cause:**
+
+The kernel is older than 5.13 (or lacks Landlock), so Hina cannot build the
+ruleset. Enforcement degrades to a **no-op with a one-time warning** — by design,
+Hina never blocks a launch over an unenforceable sandbox.
+
+**Solutions:**
+
+- If you want enforcement, run on a kernel ≥ 5.13 with Landlock available
+  (unprivileged Landlock; no root or bubblewrap needed).
+- Otherwise the app runs unsandboxed; this is safe to ignore if you trust the
+  publisher (the descriptor is still signature-verified).
+
+---
+
+### PM13. `hina perms` Shows ✓ but the App Still Can't Access X
+
+**Symptom:**
+
+`hina perms <app>` shows a capability (e.g. `Network`, `Audio`, `Microphone`) as
+`✓` / "declared (not enforced)", but the app behaves as if it has — or lacks —
+that access regardless.
+
+**Cause:**
+
+Non-filesystem **capabilities are declared intent only**. Hina does not enforce
+`network` / `audio` / `microphone` / `screen` / `input` / `devices` yet (no
+portals). The `✓` records what the app *asked for*, not a grant Hina is policing.
+Only the filesystem column (`FS`) is actually enforced, and only on Linux.
+
+**Solutions:**
+
+- For filesystem access, use `hina perms <app> --grant <path>[:rw]` — that is the
+  one surface Hina enforces (Linux/Landlock).
+- For capabilities, the OS itself governs access; treat the `hina perms` marker as
+  a disclosure of the app's declared intent, not a Hina-applied control.
+
+---
+
 ## Reporting Bugs
 
 If you encounter an issue not covered here:

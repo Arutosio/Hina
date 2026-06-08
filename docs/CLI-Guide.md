@@ -19,7 +19,10 @@ Top-level (end-user package manager):
   which <name>              Print the install path of an app
   update [name]             Update one app or every installed app
   reinstall <name>          Reinstall an app
-  verify [name]             Reconcile registry against on-disk state
+  run <app> [entry]         Launch a sandboxed app through Hina
+  perms [app]               Show app permissions (aliases: permissions, permessi)
+  verify [name]             Reconcile registry + check local integrity (--deep)
+  repair [name]             Alias for `verify [name] --repair`
   version                   Print the installed Hina version
   check-update              Check whether a newer Hina release is available
 
@@ -30,6 +33,7 @@ hina dev <subcommand> (patcher engine + publisher helpers):
   rollback    --dir <path> --base <url>
   cleanup     --dir <path> --base <url>
   sign-descriptor --in <hina.app.json> --key <ed25519.priv.b64> [--out <path>]
+  sandbox-run --app-dir <dir> [--allow <path>[:ro|:rw]] [--host] -- <exec> [args]
 
 Global flags:
   -v, --verbose      Enable debug logging
@@ -100,6 +104,15 @@ hina update foo      # just one
 hina update --force  # run patcher even if version unchanged
 ```
 
+If a new version **broadens** the app's sandbox, the update is refused (nothing
+written to disk) and the new permissions are listed. Re-run with
+`--accept-new-permissions` to consent. Permission **narrowing** applies
+automatically.
+
+```shell
+hina update foo --accept-new-permissions
+```
+
 **Exit codes:** `0` all updated (or already up to date), `2` at least one failure.
 
 ### reinstall
@@ -113,21 +126,104 @@ hina reinstall foo --rotate-key   # accept a publisher key change
 
 Without `--rotate-key`, reinstall refuses to proceed if the new descriptor declares a different publisher key than the one pinned at original install time (silent key-rotation guard). The check happens before uninstall, so a refusal leaves the install intact.
 
-### verify
+### run
 
-Reconcile the local registry against on-disk state. Detects orphans created when
-the user manually deletes an app directory, breaks a symlink, or removes a
-shortcut. `--repair` cleans the orphans.
+Launch a sandboxed app's executable **through Hina**, so the filesystem sandbox
+is installed before the binary execs. Shell shortcuts for sandboxed apps point
+their launch command at `hina run <app> <entry>` instead of at the binary.
 
 ```shell
-hina verify                # report orphans across all apps
-hina verify foo            # one app
-hina verify --repair       # report + clean
+hina run foo                 # default entry / per-OS executable
+hina run foo editor          # a specific shell entry by id
+hina run foo -- --flag arg   # everything after -- is passed to the app
 ```
 
+The optional second positional is the entry id; everything after a bare `--` is
+forwarded to the app unchanged. If the app declares no sandbox, it runs
+unrestricted.
+
+`run` never falls back to an unsandboxed launch when it can't read the sandbox
+scope. It exits `1` (and suggests `hina reinstall`) if the app isn't installed,
+the install directory is missing, the cached descriptor is missing or corrupt,
+or the resolved executable is gone. Missing args exit `2`.
+
+### perms
+
+Show the declared and granted permissions of installed apps. Aliases:
+`permissions`, `permessi`.
+
+```shell
+hina perms                 # overview table of all apps
+hina perms list            # same as above
+hina perms foo             # full detail for one app
+```
+
+The overview table has columns `APP SANDBOX FS NET AUDIO MIC SCREEN INPUT DEV`.
+The `FS` column summarizes the filesystem scope: declared tokens, `host(!)` when
+the app requests unrestricted host access, and `+Ng` for N user grants. A legend
+notes that **only the filesystem (FS) is enforced** (Linux/Landlock); the other
+capability columns are declared by the app but not yet enforced.
+
+`hina perms <app>` prints the per-app detail: whether the sandbox is on or off;
+the **Filesystem (enforced)** section listing the install dir, each declared
+token with its access, and each user-granted absolute path; then Network, Audio,
+Microphone, Screen, Input and Devices, each shown as `declared (not enforced)`
+or `not declared`.
+
+Manage the user's extra runtime filesystem grants (persisted in the registry):
+
+```shell
+hina perms foo --grant ~/Documents          # default access: ro
+hina perms foo --grant ~/Projects:rw         # read-write
+hina perms foo --revoke ~/Documents
+```
+
+Paths support `~` and are stored absolute. A grant with no `:ro`/`:rw` suffix is
+read-only. Granting a path that already has a grant replaces it.
+
+### verify
+
+Reconcile the local registry against on-disk state **and** check local
+integrity. Detects orphans created when the user manually deletes an app
+directory, breaks a symlink, or removes a shortcut, and — always, offline —
+confirms that the per-OS executable and every `entries[].exec` exist under the
+install dir, flagging a missing or corrupt descriptor cache.
+
+```shell
+hina verify                # report problems across all apps
+hina verify foo            # one app
+hina verify --repair       # report + clean repairable problems
+hina verify --deep         # also re-fetch the manifest and hash every file
+```
+
+`--repair` cleans the repairable problems (orphan registry rows, dangling
+shortcuts/hooks, a missing app directory). The `hina repair` hint is only shown
+when such repairable problems exist. Missing **files** can't be restored by
+repair, so those instead suggest `hina reinstall`.
+
+`--deep` additionally re-fetches the manifest and hash-verifies every file,
+catching modified or truncated content the offline check can't see. It needs
+network; if the manifest is unreachable the app is reported as not deep-verified
+rather than crashing.
+
 Detection is read-only; only `--repair` mutates anything. Exit code `0` when all
-inspected apps are healthy or when `--repair` succeeds; `1` when orphans were
+inspected apps are healthy or when `--repair` succeeds; `1` when problems were
 found and not repaired; `2` on internal error.
+
+### repair
+
+Alias for `hina verify [name] --repair`.
+
+```shell
+hina repair                # repair all apps
+hina repair foo            # one app
+```
+
+Removes orphan registry rows (left when an app directory was deleted by hand),
+dangling shortcuts/hooks, and true-orphan artifacts left after a manual
+`registry.json` deletion — on Linux, `hina-*.desktop` files in the applications
+and autostart directories and `hina-*` fonts. Fail-soft: it cleans what it can
+and does not abort on a single failure.
 
 ### version
 
@@ -233,6 +329,22 @@ hina dev sign-descriptor --in hina.app.json --key ./keys/myapp.key.b64 --out sig
 
 Validates the descriptor against the schema, attaches `descriptorSignature`, writes back (in-place if `--out` is omitted). Generate the key pair with `Hina.Builder keygen`.
 
+### dev sandbox-run
+
+Apply a filesystem sandbox (Landlock on Linux) then exec a command. Drives the
+Landlock CI integration test and is handy for manual sandbox debugging.
+
+```shell
+hina dev sandbox-run --app-dir ./client -- ./client/foo
+hina dev sandbox-run --app-dir ./client --allow ~/data:rw -- ./client/foo
+hina dev sandbox-run --app-dir ./client --host -- ./client/foo
+```
+
+The app dir is added read-only; each `--allow <path>[:ro|:rw]` (default `ro`)
+grants an additional path; `--host` runs unrestricted. Everything after the bare
+`--` is the executable and its arguments. On success the process image is
+replaced, so the exec's own exit code is the result.
+
 ---
 
 ## Flags Reference
@@ -244,8 +356,12 @@ Validates the descriptor against the schema, attaches `descriptorSignature`, wri
 | `--allow-insecure` | `install` | Permit HTTP descriptor URLs (default: HTTPS only) |
 | `--rotate-key` | `reinstall` | Accept a publisher key change |
 | `--force` | `update` | Re-run patcher even if descriptor version unchanged |
+| `--accept-new-permissions` | `update` | Consent to an update that broadens the app's sandbox |
 | `--jobs N` | `update` | Update N apps concurrently (default 4) |
 | `--repair` | `verify` | Remove orphan registry entries + dangling side-effects |
+| `--deep` | `verify` | Re-fetch the manifest and hash-verify every file (needs network) |
+| `--grant <path>[:ro\|:rw]` | `perms` | Add a user filesystem grant (default `ro`); `~` expanded |
+| `--revoke <path>` | `perms` | Remove a user filesystem grant |
 | `--retries N` | `install`, `update` | Max retry attempts per HTTP request (default 8) |
 | `--connect-timeout SEC` | `install`, `update` | TCP connect timeout in seconds (default 10) |
 | `--request-timeout SEC` | `install`, `update` | Overall request timeout in seconds (default 60) |
@@ -299,6 +415,15 @@ Every long-running command honours Ctrl-C cooperatively:
 | `--key <path>` | Yes | Ed25519 private key file (base64) |
 | `--out <path>` | No | Output path (default: overwrite input) |
 
+### hina dev sandbox-run
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--app-dir <path>` | Yes | Install dir, added read-only |
+| `--allow <path>[:ro\|:rw]` | No | Extra path to allow (default `ro`); repeatable |
+| `--host` | No | Run unrestricted (no filesystem isolation) |
+| `-- <exec> [args...]` | Yes | Command to exec after the sandbox is applied |
+
 ---
 
 ## Exit Codes (Summary)
@@ -310,6 +435,8 @@ Every long-running command honours Ctrl-C cooperatively:
 | `1` | `dev check` | Updates available |
 | `1` | `install` | User cancelled at TOFU prompt |
 | `1` | `info` / `which` | App not installed |
+| `1` | `run` | App / install dir / descriptor cache / executable missing or corrupt |
+| `1` | `verify` / `repair` | Problems found and not repaired |
 | `2` | any | Missing required args, invalid input, or operation failed |
 | `3` | `dev verify` | Verification failed (broken files detected) |
 
@@ -370,16 +497,21 @@ hina dev sign-descriptor --in hina.app.json --key ./keys/foo.key.b64
 #    hina install https://foo.example/hina.app.json
 ```
 
-### Verify and repair a corrupted install (advanced)
+### Verify and repair a corrupted install
 
-`hina` doesn't expose `verify` at the top level for installed apps — use the
-patcher engine directly with the app's recorded baseUrl from `hina info`:
+Use the top-level `verify` / `repair` commands:
 
 ```shell
-hina info foo                                  # note the BaseUrl
-hina dev verify --dir <install path> --base <BaseUrl>
-hina dev patch  --dir <install path> --base <BaseUrl>   # re-patch only broken chunks
+hina verify foo            # offline integrity + registry check
+hina verify foo --deep     # also re-fetch the manifest and hash every file
+hina repair foo            # clean orphans / dangling side-effects (= verify --repair)
+hina reinstall foo         # restore missing or modified files
 ```
+
+`verify` reports the problem and points you at the right fix: repairable
+problems (orphan registry rows, dangling shortcuts/hooks, a missing app dir) at
+`hina repair`; missing or corrupt files (which repair can't restore) at
+`hina reinstall`.
 
 ### Scripted update with error handling
 

@@ -528,6 +528,57 @@ public partial class UpdateForm : Form
 
 ---
 
+## Declaring a Sandbox (Publishers)
+
+If you ship your app through Hina's package manager (a `hina.app.json` descriptor),
+you can opt it into a Flatpak-style filesystem sandbox by adding an optional
+top-level `sandbox` block. It is part of the signed descriptor payload.
+
+```json
+"sandbox": {
+  "enabled": true,
+  "filesystem": [
+    { "path": "home",          "access": "ro" },
+    { "path": "xdg-documents", "access": "rw" }
+  ],
+  "capabilities": { "network": true, "audio": false, "microphone": false, "screen": false, "input": false, "devices": false }
+}
+```
+
+- `enabled` — opt-in. Absent or `false` ⇒ the app runs unsandboxed with full user
+  privileges (legacy behavior).
+- `filesystem[]` — each `{ "path": <token>, "access": "ro" | "rw" }` grants access to
+  an **abstract token**, never a raw host path. Valid tokens: `app` (the install
+  dir, always implicitly granted ro+exec), `home`, `xdg-documents`, `xdg-download`,
+  `xdg-config`, `tmp`, and `host` (no restriction — an escape hatch). Unknown tokens
+  fail validation.
+- `capabilities` — declared-only booleans (`network`, `audio`, `microphone`,
+  `screen`, `input`, `devices`).
+
+**Enforcement is narrow in v1:** filesystem scope is enforced only on Linux (via
+Landlock); macOS and Windows show the declared scope at install but do not yet
+enforce it; capabilities are surfaced to the user but not enforced anywhere. See
+[`docs/PackageManager-Guide.md`](PackageManager-Guide.md#sandboxing) for the full model.
+
+### Best practices
+
+- **Least privilege.** Declare the narrowest filesystem scope your app actually
+  needs (and prefer `ro` over `rw`). The install dir is always available, so you
+  rarely need to list `app`.
+- **Avoid `host`.** It disables filesystem isolation entirely and is flagged loudly
+  to the user at install. Reach for a specific `xdg-*` token instead whenever you can.
+- **Declare capabilities truthfully** even though they aren't enforced yet. They are
+  shown to users as declared intent, and they form the baseline Hina diffs against on
+  every update — under-declaring now means a later honest declaration registers as a
+  broadening change.
+- **Broadening permissions across versions requires user consent.** When a new
+  version widens access — a new path, `host`, a `ro → rw` change, a new capability,
+  or dropping the sandbox — the update is **refused** until the user re-runs with
+  `--accept-new-permissions`. Narrowing applies automatically. Plan your scope up
+  front so routine updates don't stall on a consent prompt.
+
+---
+
 ## Cleanup
 
 After a successful patch (or to recover from a failed one), use `PatchCleanup` to remove leftover temporary files:

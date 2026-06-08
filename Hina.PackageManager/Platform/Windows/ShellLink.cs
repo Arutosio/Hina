@@ -11,13 +11,17 @@ namespace Hina.PackageManager.Platform.Windows
     [SupportedOSPlatform("windows")]
     internal static class ShellLink
     {
-        public static void Create(string linkPath, string targetPath, string workingDir, string description, string? iconPath = null)
+        public static void Create(string linkPath, string targetPath, string workingDir, string description, string? iconPath = null, string? arguments = null)
         {
             IShellLinkW shellLink = new IShellLinkW_Coclass();
             try
             {
                 shellLink.SetPath(targetPath);
                 shellLink.SetWorkingDirectory(workingDir);
+                if (!string.IsNullOrEmpty(arguments))
+                {
+                    shellLink.SetArguments(arguments);
+                }
                 if (!string.IsNullOrEmpty(description))
                 {
                     shellLink.SetDescription(description);

@@ -1,53 +1,73 @@
-# Windows sandbox backend — design note (deferred)
+# Windows sandbox backend — AppContainer (implemented)
 
-Status: **not implemented.** On Windows a sandboxed app currently falls back to
-`NoOpSandbox` (runs unsandboxed, warns once at install). This note records the
-intended design so the work can be picked up without re-deriving it.
+Status: **implemented.** On Windows a sandboxed app runs inside a low-privilege
+AppContainer, the deny-by-default analogue of Linux/Landlock and macOS/Seatbelt.
+Backend: `Hina.PackageManager/Sandbox/WindowsSandbox.cs`; pure policy:
+`WindowsAppContainerPolicy.cs`. Proven by the `windows-sandbox` CI job
+(`scripts/windows-sandbox-probe.ps1`), since AppContainer cannot be exercised on
+the macOS/Linux dev host.
 
-Why deferred: the AppContainer path is large and easy to get subtly wrong (ACL
-inheritance, profile lifecycle, the app needing read on system DLLs), and it cannot
-be verified on the macOS/Linux dev host. Per the project rule "do not ship a
-half-enforcing backend that *looks* like it isolates but doesn't", it is better to
-keep the honest NoOp + warning than to ship an unverified AppContainer.
+## How it works: low-privilege AppContainer
 
-## Intended approach: low-privilege AppContainer
-
-Implement `WindowsSandbox : ISandboxLauncher`:
+`WindowsSandbox : ISandboxLauncher`:
 
 1. **Create / derive an AppContainer profile** for the app
-   (`CreateAppContainerProfile`, or `DeriveAppContainerSidFromAppContainerName` if it
-   already exists). Use a stable per-app container name (e.g. `Hina.<appName>`).
+   (`CreateAppContainerProfile`, or `DeriveAppContainerSidFromAppContainerName` when
+   the profile already exists). Stable per-app container name `Hina.<appName>`
+   (sanitized, ≤ 64 chars) so re-launches derive the same SID.
 2. **Grant explicit ACEs** for the container SID on the app dir + each declared
-   `ro`/`rw` path and each user grant (`SetEntriesInAcl` / `SetNamedSecurityInfo`),
-   plus read+execute on the system DLL directories the app needs to load
-   (`C:\Windows\System32`, the app's own dir). Without these the process can't start
-   — the Windows analogue of the Linux `SystemRuntimePaths` / macOS system baseline.
-3. **Launch** with `CreateProcess` using `STARTUPINFOEX` +
+   `ro`/`rw` path and user grant (`GetNamedSecurityInfo` → `SetEntriesInAcl` →
+   `SetNamedSecurityInfo`). `ro` → read+execute, `rw` → +write. The ACEs are
+   inheritable (`SUB_CONTAINERS_AND_OBJECTS_INHERIT`).
+3. **Launch** with `CreateProcess` + `STARTUPINFOEX` +
    `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` pointing at a
-   `SECURITY_CAPABILITIES` built from the container SID (and any capability SIDs).
-   All via AOT-safe `[LibraryImport]`/`[DllImport]` P/Invoke — no reflection.
-4. **`IsSupported`** = AppContainer APIs available (Windows 8+). Fail-soft: any
-   failure logs a warning and runs the app, never blocks the launch.
+   `SECURITY_CAPABILITIES` built from the container SID (plus any capability SIDs).
+   All via AOT-safe `[DllImport]` P/Invoke — no reflection. Wait, return the exit
+   code, free the SIDs / attribute list / capability array.
+4. **`IsSupported`** = `OperatingSystem.IsWindowsVersionAtLeast(6, 2)` (Windows 8 /
+   Server 2012+). Fail-soft: any setup failure logs a warning and runs the app
+   directly, never blocking the launch. The factory hands back NoOp when unsupported.
 
-Network: AppContainer denies network unless the `internetClient` /
-`internetClientServer` capability SID is added — so `capabilities.network` maps
-naturally (omit the SID to deny, add it to allow), mirroring Landlock/Seatbelt.
+### Why the system DLL dirs are NOT ACL'd
+
+An AppContainer is denied every securable object unless its DACL grants the
+container SID, a capability SID, or `ALL APPLICATION PACKAGES` (S-1-15-2-1).
+`C:\Windows\System32`, `WinSxS`, and the .NET GAC already carry an
+`ALL APPLICATION PACKAGES` read+execute ACE — that is how Store apps load system
+DLLs — so the container can load them without any change from Hina. Adding our own
+ACEs there would need admin and would edit a **shared system DACL**, so we
+deliberately don't: only the app dir and the plan rules get container-SID ACEs.
+
+### Network
+
+An AppContainer denies network unless the `internetClient` capability SID
+(`S-1-15-3-1`) is attached. `WindowsAppContainerPolicy.BuildCapabilitySids` maps
+`plan.RestrictNetwork`: omit the SID to deny, add it to allow — mirroring
+Landlock/Seatbelt.
 
 ## Shortcut routing
 
-Wire `WindowsPlatformIntegration`'s 4-arg `CreateMenuShortcut(launchOverride)` so a
-sandboxed app's `.lnk` invokes `hina run <app> <entry>` (like Linux/macOS). Then
-flip `InstallService.sandboxEnforceable` to include Windows. Until the backend
-exists, leave the `.lnk` pointing at the binary and keep the not-enforced warning.
+`WindowsPlatformIntegration`'s 4-arg `CreateMenuShortcut(launchOverride)` writes a
+`.lnk` whose target is the hina executable with `run <app> "<entry>"` as its
+arguments (the opaque override string is split by `WindowsLaunchOverride.Parse` and
+control-stripped), so a sandboxed app's shortcut routes through `hina run` and the
+AppContainer is installed before the app starts — like Linux/macOS.
+`InstallService.sandboxEnforceable` includes Windows, so the install-time
+disclosure says the app runs sandboxed.
 
-## Verification (when implemented)
+## Verification
 
-Add a `windows-latest` CI job analogous to `macos-sandbox`: a probe that runs a
-child under the AppContainer, asserts an ungranted read is denied and a granted
-write allowed, and skip-passes if the AppContainer APIs are unavailable.
+The `windows-sandbox` job in `.github/workflows/dotnet.yml` runs
+`scripts/windows-sandbox-probe.ps1`: a child runs under an AppContainer granted only
+a `docs:rw` dir (not a `secret` dir) and must be **denied** the secret read while
+**allowed** the docs write (`READ=0 WRITE=1`). It skip-passes where AppContainer is
+unavailable. Same contract as `landlock-probe.sh` / the macOS sandbox test.
 
-## Scope guard
+## Known limitations
 
-If time-boxed, ship a **correct minimal** version (deny-by-default AppContainer +
-app dir + declared paths + system DLL dirs) and clearly log/doc the limitations —
-never a backend that appears to isolate but leaks.
+- The container profile and the path ACEs are left in place after exit (the
+  container name / SID is stable per app, so re-grants are idempotent and the ACE
+  only ever benefits that one Hina-managed container). Full teardown on uninstall is
+  future work.
+- `rw` grants read+write+execute but not `DELETE`; apps that must delete files in a
+  granted dir may need a wider right (future work).

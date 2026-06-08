@@ -276,8 +276,8 @@ but over-reaching app sees only the paths it declares.
 
 | Surface | Status |
 |---------|--------|
-| **Filesystem scope** | Enforced on **Linux** via Landlock (unprivileged, kernel ≥ 5.13, no root / no bubblewrap) and on **macOS** via `sandbox-exec` (Seatbelt). On **Windows** it is **declared but NOT enforced** — the app runs with full user privileges (warned at install time). |
-| **`network` capability** | Enforced on **Linux 6.7+** (Landlock ABI ≥ 4) and **macOS** (Seatbelt `deny default` network): when a sandboxed app does not declare `network: true`, TCP bind/connect is denied. On older Linux kernels (ABI < 4) and Windows it is declared-only (a log line notes it is not enforced). |
+| **Filesystem scope** | Enforced on **Linux** via Landlock (unprivileged, kernel ≥ 5.13, no root / no bubblewrap), on **macOS** via `sandbox-exec` (Seatbelt), and on **Windows** via **AppContainer** (NT 6.2+): a deny-by-default low-privilege container that can reach only the app dir and the granted paths. |
+| **`network` capability** | Enforced on **Linux 6.7+** (Landlock ABI ≥ 4), **macOS** (Seatbelt `deny default` network), and **Windows** (AppContainer without the `internetClient` capability SID): when a sandboxed app does not declare `network: true`, outbound network is denied. On older Linux kernels (ABI < 4) it is declared-only (a log line notes it is not enforced). |
 | **Other capabilities** (`audio`, `microphone`, `screen`, `input`, `devices`) | **Declared-only, never enforced yet.** `hina perms` shows them as "declared — not enforced". No portals (PipeWire / Wayland / per-OS device policy) are wired up. |
 
 When a descriptor carries no `sandbox` block (or `sandbox.enabled` is `false`), the
@@ -324,27 +324,32 @@ disclosure prints it as an explicit `UNRESTRICTED filesystem access` warning, an
 
 ### How Enforcement Works (`hina run`)
 
-For a sandboxed app on Linux **and macOS**, the shell shortcuts Hina creates do
-**not** point at the app binary — they route through `hina run <app> "<entryId>"`.
-`hina run` resolves the declared scope plus any user grants into a backend ruleset
-and applies it before the app starts:
+For a sandboxed app on Linux, macOS **and Windows**, the shell shortcuts Hina
+creates do **not** point at the app binary — they route through
+`hina run <app> "<entryId>"`. `hina run` resolves the declared scope plus any user
+grants into a backend ruleset and applies it before the app starts:
 - **Linux**: builds a Landlock ruleset, applies it to itself
   (`landlock_restrict_self`), then `execv`s the app, which inherits the
   restrictions (the app's PID is Hina's).
 - **macOS**: generates a Seatbelt profile and launches the app under
   `sandbox-exec -f <profile>`.
+- **Windows**: creates a per-app AppContainer profile, grants the container SID an
+  ACE on the app dir + each granted path, then launches the app under a
+  `SECURITY_CAPABILITIES` built from the container SID. The container is denied
+  every other securable object by default; system DLL dirs stay reachable via the
+  pre-existing `ALL APPLICATION PACKAGES` ACE (so Hina never edits a system DACL).
 
-On **Windows** the shortcut launches the app directly (no backend yet). If the
-Linux kernel is too old for Landlock, or `sandbox-exec` is unavailable, or backend
-setup fails for any reason, enforcement degrades to a **no-op with a one-time
-warning** and the launch is never blocked.
+If the Linux kernel is too old for Landlock, `sandbox-exec` is unavailable, the
+host predates AppContainer, or backend setup fails for any reason, enforcement
+degrades to a **no-op with a one-time warning** and the launch is never blocked.
 
 ### Install-Time Disclosure
 
 When a sandboxed app is installed, Hina discloses the declared scope. On a host
-where the sandbox cannot be enforced (Windows), it warns plainly that the app
-**runs with FULL user privileges (no isolation)** before listing the declared
-scope, so the user is never misled into thinking isolation is in effect.
+where the sandbox cannot be enforced (e.g. a Linux kernel too old for Landlock), it
+warns plainly that the app **runs with FULL user privileges (no isolation)** before
+listing the declared scope, so the user is never misled into thinking isolation is
+in effect.
 
 ### User-Granted Paths (`hina perms`)
 

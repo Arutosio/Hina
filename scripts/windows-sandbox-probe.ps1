@@ -53,8 +53,7 @@ $stderrFile = Join-Path $work "stderr.txt"
 $inner = "set R=0& set W=0& ( type $secret\key 1>nul 2>nul && set R=1 ) & ( echo data 1>$docs\out 2>nul && set W=1 ) & echo READ=!R! WRITE=!W!"
 
 $hinaArgs = @(
-    '--verbose',
-    'dev', 'sandbox-run',
+    'dev', 'sandbox-run', '--verbose',
     '--app-dir', $app,
     '--allow', ($docs + ':rw'),
     '--',

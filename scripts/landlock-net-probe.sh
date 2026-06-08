@@ -22,7 +22,8 @@ if [ "$#" -lt 1 ]; then
 fi
 HINA=( "$@" )
 
-if ! command -v python3 >/dev/null 2>&1; then
+PY="$(command -v python3 || true)"
+if [ -z "$PY" ]; then
   echo "SKIP: python3 not available; passing."
   exit 0
 fi
@@ -63,11 +64,11 @@ except Exception as e:
 DENY_ERR="$WORK/deny.err"
 DENY_OUT="$(
   "${HINA[@]}" dev sandbox-run --app-dir "$APP" --allow /proc:ro --deny-network \
-    -- python3 -c "$CONNECT" 2>"$DENY_ERR"
+    -- "$PY" -c "$CONNECT" 2>"$DENY_ERR"
 )"
 ALLOW_OUT="$(
   "${HINA[@]}" dev sandbox-run --app-dir "$APP" --allow /proc:ro \
-    -- python3 -c "$CONNECT" 2>/dev/null
+    -- "$PY" -c "$CONNECT" 2>/dev/null
 )"
 
 echo "---- deny-network stdout ----"; echo "$DENY_OUT"

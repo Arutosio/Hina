@@ -47,6 +47,12 @@ namespace Hina.PackageManager.Sandbox
         private const ulong FS_REFER = 1ul << 13;      // ABI v2
         private const ulong FS_TRUNCATE = 1ul << 14;   // ABI v3
 
+        // Network access-right bits (ABI v4 / kernel 6.7+). Scoping TCP bind/connect
+        // lets us actually ENFORCE the declared `network` capability.
+        private const int NET_ABI = 4;
+        private const ulong NET_BIND_TCP = 1ul << 0;
+        private const ulong NET_CONNECT_TCP = 1ul << 1;
+
         // Implicit system-runtime grants. A dynamically-linked Linux app must read
         // the loader (/lib64/ld-linux-*), libc, and system libraries to even start;
         // it also reads /etc/ld.so.cache + /etc/ld.so.conf.d. Without these grants
@@ -122,8 +128,32 @@ namespace Hina.PackageManager.Sandbox
 
             ulong handled = HandledMask(_abi);
 
-            RulesetAttr attr = new RulesetAttr { handled_access_fs = handled };
-            long rulesetFd = syscall(SYS_landlock_create_ruleset, ref attr, (UIntPtr)Marshal.SizeOf<RulesetAttr>(), 0u);
+            // Enforce the network capability when the plan denies it AND the kernel
+            // is new enough (ABI >= 4). We "handle" TCP bind+connect but add NO
+            // net-port allow rules, so every TCP bind/connect is denied. On older
+            // kernels we cannot enforce — log it so the app/operator knows the
+            // declared denial is not actually applied here.
+            ulong netHandled = 0;
+            if (plan.RestrictNetwork)
+            {
+                if (_abi >= NET_ABI)
+                {
+                    netHandled = NET_BIND_TCP | NET_CONNECT_TCP;
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "Sandbox requested network denial but Landlock ABI {Abi} < {NetAbi} (kernel < 6.7); network not enforced.",
+                        _abi, NET_ABI);
+                }
+            }
+
+            RulesetAttr attr = new RulesetAttr { handled_access_fs = handled, handled_access_net = netHandled };
+            // Pass only the fs field's size on pre-net kernels so an old Landlock
+            // doesn't reject a struct it doesn't understand; include the net field
+            // only when we actually use it.
+            UIntPtr attrSize = (UIntPtr)(netHandled != 0 ? Marshal.SizeOf<RulesetAttr>() : sizeof(ulong));
+            long rulesetFd = syscall(SYS_landlock_create_ruleset, ref attr, attrSize, 0u);
             if (rulesetFd < 0)
             {
                 _logger.LogWarning("Landlock ruleset creation failed; running unsandboxed.");
@@ -252,6 +282,7 @@ namespace Hina.PackageManager.Sandbox
         private struct RulesetAttr
         {
             public ulong handled_access_fs;
+            public ulong handled_access_net; // ABI v4+; passed only when used (see attrSize).
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]

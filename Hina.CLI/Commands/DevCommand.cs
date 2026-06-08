@@ -126,8 +126,9 @@ namespace Hina.CLI.Commands
             Console.WriteLine("                       Attach an Ed25519 signature to a descriptor file.");
             Console.WriteLine();
             Console.WriteLine("Sandbox subcommand:");
-            Console.WriteLine("  sandbox-run --app-dir <dir> [--allow <path>[:ro|:rw] ...] [--host] -- <exec> [args...]");
+            Console.WriteLine("  sandbox-run --app-dir <dir> [--allow <path>[:ro|:rw] ...] [--host] [--deny-network] -- <exec> [args...]");
             Console.WriteLine("                       Apply a filesystem sandbox (Landlock on Linux) then exec.");
+            Console.WriteLine("                       --deny-network blocks TCP bind/connect (Landlock ABI >= 4 / kernel 6.7+).");
         }
 
         // `hina dev sandbox-run --app-dir <dir> [--allow <path>[:ro|:rw] ...] [--host] -- <exec> [args...]`
@@ -160,9 +161,11 @@ namespace Hina.CLI.Commands
                 new ResolvedFsRule(Path.GetFullPath(appDir), canWrite: false),
             };
             bool unrestricted = false;
+            bool denyNetwork = false;
             for (int i = 0; i < sep; i++)
             {
                 if (args[i] == "--host") { unrestricted = true; continue; }
+                if (args[i] == "--deny-network") { denyNetwork = true; continue; }
                 if (args[i] != "--allow" || i + 1 >= sep) continue;
                 string spec = args[++i];
                 bool rw = spec.EndsWith(":rw", StringComparison.Ordinal);
@@ -171,7 +174,7 @@ namespace Hina.CLI.Commands
                 rules.Add(new ResolvedFsRule(Path.GetFullPath(p), rw));
             }
 
-            SandboxPlan plan = new SandboxPlan(unrestricted, rules);
+            SandboxPlan plan = new SandboxPlan(unrestricted, rules, restrictNetwork: denyNetwork);
             ISandboxLauncher launcher = SandboxLauncherFactory.Current(logger);
             logger.LogDebug("Sandbox backend supported: {Supported}", launcher.IsSupported);
             return launcher.Launch(Path.GetFullPath(exec), execArgs, plan, CancellationToken.None);

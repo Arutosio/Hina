@@ -277,7 +277,8 @@ but over-reaching app sees only the paths it declares.
 | Surface | Status |
 |---------|--------|
 | **Filesystem scope** | Enforced **on Linux only**, via Landlock (unprivileged, kernel ≥ 5.13, no root / no bubblewrap). On macOS and Windows it is **declared but NOT enforced** — the app runs with full user privileges (warned at install time). |
-| **Capabilities** (`network`, `audio`, `microphone`, `screen`, `input`, `devices`) | **Declared-only, never enforced yet.** `hina perms` shows them as "declared — not enforced". No portals (PipeWire / Wayland / per-OS device policy) are wired up. |
+| **`network` capability** | **Enforced on Linux 6.7+** (Landlock ABI ≥ 4): when a sandboxed app does not declare `network: true`, all TCP bind/connect is denied via Landlock net rules. On older kernels (ABI < 4) and other OSes it is declared-only (a log line notes it is not enforced). |
+| **Other capabilities** (`audio`, `microphone`, `screen`, `input`, `devices`) | **Declared-only, never enforced yet.** `hina perms` shows them as "declared — not enforced". No portals (PipeWire / Wayland / per-OS device policy) are wired up. |
 
 When a descriptor carries no `sandbox` block (or `sandbox.enabled` is `false`), the
 app launches unsandboxed exactly as before — full user privileges.

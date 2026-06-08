@@ -81,6 +81,55 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public void Build_NoCapabilities_RestrictsNetwork()
+        {
+            // A sandbox that declares no capability block grants no network — the
+            // secure default is to deny it (enforced on Landlock ABI >= 4).
+            SandboxSpec spec = new SandboxSpec { Enabled = true };
+            SandboxPlan plan = SandboxPlanner.Build(spec, new List<FsGrant>(), AppDir, Env);
+            Assert.True(plan.RestrictNetwork);
+        }
+
+        [Fact]
+        public void Build_NetworkCapabilityFalse_RestrictsNetwork()
+        {
+            SandboxSpec spec = new SandboxSpec
+            {
+                Enabled = true,
+                Capabilities = new CapabilitySpec { Network = false },
+            };
+            SandboxPlan plan = SandboxPlanner.Build(spec, new List<FsGrant>(), AppDir, Env);
+            Assert.True(plan.RestrictNetwork);
+        }
+
+        [Fact]
+        public void Build_NetworkCapabilityTrue_AllowsNetwork()
+        {
+            SandboxSpec spec = new SandboxSpec
+            {
+                Enabled = true,
+                Capabilities = new CapabilitySpec { Network = true },
+            };
+            SandboxPlan plan = SandboxPlanner.Build(spec, new List<FsGrant>(), AppDir, Env);
+            Assert.False(plan.RestrictNetwork);
+        }
+
+        [Fact]
+        public void Build_HostRule_DoesNotRestrictNetwork()
+        {
+            // host = unrestricted filesystem; there is nothing to scope, and the
+            // app explicitly opted out of isolation — don't restrict its network.
+            SandboxSpec spec = new SandboxSpec
+            {
+                Enabled = true,
+                Capabilities = new CapabilitySpec { Network = false },
+                Filesystem = new List<FsRule> { new FsRule { Path = SandboxTokens.Host, Access = "rw" } },
+            };
+            SandboxPlan plan = SandboxPlanner.Build(spec, new List<FsGrant>(), AppDir, Env);
+            Assert.False(plan.RestrictNetwork);
+        }
+
+        [Fact]
         public void Build_DuplicatePath_RwWins()
         {
             SandboxSpec spec = new SandboxSpec

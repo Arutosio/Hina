@@ -48,7 +48,12 @@ namespace Hina.PackageManager.Sandbox
                 rules.Add(new ResolvedFsRule(kv.Key, kv.Value));
             }
 
-            return new SandboxPlan(unrestricted, rules);
+            // Network is denied unless the app explicitly declares the capability.
+            // A "host" rule opts out of all isolation, so don't restrict it there.
+            // A missing capability block means nothing is granted (secure default).
+            bool restrictNetwork = !unrestricted && spec.Capabilities?.Network != true;
+
+            return new SandboxPlan(unrestricted, rules, restrictNetwork);
         }
     }
 }

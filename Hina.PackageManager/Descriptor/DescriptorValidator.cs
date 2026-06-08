@@ -132,7 +132,33 @@ namespace Hina.PackageManager.Descriptor
                 errors.Add($"minHinaVersion '{descriptor.MinHinaVersion}' is not valid SemVer.");
             }
 
+            ValidateSandbox(descriptor.Sandbox, errors);
+
             return new ValidationResult(errors);
+        }
+
+        private static void ValidateSandbox(SandboxSpec? sandbox, List<string> errors)
+        {
+            if (sandbox == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < sandbox.Filesystem.Count; i++)
+            {
+                FsRule rule = sandbox.Filesystem[i];
+                string prefix = $"sandbox.filesystem[{i}]";
+
+                if (!SandboxTokens.IsKnown(rule.Path))
+                {
+                    errors.Add($"{prefix}.path '{rule.Path}' is not a known sandbox path token.");
+                }
+
+                if (rule.Access != "ro" && rule.Access != "rw")
+                {
+                    errors.Add($"{prefix}.access '{rule.Access}' must be 'ro' or 'rw'.");
+                }
+            }
         }
 
         private static void ValidateHook(HookAction hook, int index, HashSet<string> entryIds, List<string> errors)

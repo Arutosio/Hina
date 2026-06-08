@@ -175,10 +175,20 @@ namespace Hina.PackageManager.Install
                     throw new InvalidDataException($"Declared exec '{execRelative}' is missing from installed files.");
                 }
 
-                // [12] Shell entries.
+                // [12] Shell entries. Sandboxed apps launch via `hina run` so the
+                // filesystem sandbox is installed before the app process starts.
+                bool sandboxed = descriptor.Sandbox?.Enabled == true;
+                if (sandboxed)
+                {
+                    DiscloseSandbox(descriptor.Sandbox!);
+                }
+                string hinaExe = Environment.ProcessPath ?? "hina";
                 foreach (ShellEntry entry in descriptor.Entries)
                 {
-                    string evidence = await _platform.CreateMenuShortcut(entry, appDir, ct);
+                    string? launchOverride = sandboxed
+                        ? $"\"{hinaExe}\" run {descriptor.Name} {entry.Id}"
+                        : null;
+                    string evidence = await _platform.CreateMenuShortcut(entry, appDir, launchOverride, ct);
                     tx.RecordShellEntry(evidence);
                     newApp.ShellEntries.Add(new ShellEntryRecord { Id = entry.Id, Evidence = evidence });
                 }
@@ -211,6 +221,26 @@ namespace Hina.PackageManager.Install
                 Version = descriptor.Version,
                 InstallPath = appDir
             };
+        }
+
+        // Tell the user exactly what filesystem scope a sandboxed app is getting,
+        // with extra emphasis on the unrestricted "host" escape hatch.
+        private void DiscloseSandbox(SandboxSpec sandbox)
+        {
+            _logger.LogInformation("This app runs sandboxed. It can access only:");
+            _logger.LogInformation("  - its own install directory (read-only)");
+            foreach (FsRule rule in sandbox.Filesystem)
+            {
+                if (rule.Path == SandboxTokens.Host)
+                {
+                    _logger.LogWarning("  - host: UNRESTRICTED filesystem access ({Access}) — this app is NOT isolated.", rule.Access);
+                }
+                else
+                {
+                    _logger.LogInformation("  - {Path} ({Access})", rule.Path, rule.Access);
+                }
+            }
+            _logger.LogInformation("Grant more paths later with: hina perms {Name} --grant <path>[:rw]", "<app>");
         }
 
         public static string? ExecForCurrentOs(AppDescriptor descriptor)

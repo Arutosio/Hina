@@ -46,6 +46,9 @@ namespace Hina.PackageManager.Platform.Linux
         // ---- Menu shortcut ----
 
         public Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, CancellationToken ct)
+            => CreateMenuShortcut(entry, appDir, launchOverride: null, ct);
+
+        public Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, string? launchOverride, CancellationToken ct)
         {
             Directory.CreateDirectory(_userAppsDir);
 
@@ -55,11 +58,16 @@ namespace Hina.PackageManager.Platform.Linux
             string execAbs = Path.Combine(appDir, entry.Exec);
             string? iconAbs = entry.Icon != null ? Path.Combine(appDir, entry.Icon) : null;
 
+            // A sandboxed app routes through `hina run` (launchOverride) so the
+            // sandbox is installed before the app starts. The override is built by
+            // InstallService from trusted values (app name + validated entry id).
+            string execLine = launchOverride != null ? StripControl(launchOverride) : QuoteExec(execAbs);
+
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("[Desktop Entry]");
             sb.AppendLine("Type=Application");
             sb.AppendLine($"Name={Escape(entry.Name)}");
-            sb.AppendLine($"Exec={QuoteExec(execAbs)}");
+            sb.AppendLine($"Exec={execLine}");
             if (iconAbs != null) sb.AppendLine($"Icon={Escape(iconAbs)}");
             sb.AppendLine($"Terminal={(entry.Terminal ? "true" : "false")}");
             if (entry.Categories.Count > 0)

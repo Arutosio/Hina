@@ -13,11 +13,14 @@ namespace Hina.PackageManager.Json
     [JsonSerializable(typeof(AutostartHook))]
     [JsonSerializable(typeof(ShellEntry))]
     [JsonSerializable(typeof(ExecMap))]
+    [JsonSerializable(typeof(SandboxSpec))]
+    [JsonSerializable(typeof(FsRule))]
     [JsonSerializable(typeof(DescriptorSignature))]
     [JsonSerializable(typeof(Registry.Registry))]
     [JsonSerializable(typeof(Registry.InstalledApp))]
     [JsonSerializable(typeof(Registry.HookEvidence))]
     [JsonSerializable(typeof(Registry.ShellEntryRecord))]
+    [JsonSerializable(typeof(Registry.FsGrant))]
     public partial class PackageManagerJsonContext : JsonSerializerContext { }
 
     [JsonSourceGenerationOptions(WriteIndented = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]

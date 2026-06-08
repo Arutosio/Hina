@@ -14,6 +14,12 @@ namespace Hina.PackageManager.Platform
         string UserAppsDir { get; }
 
         Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, CancellationToken ct);
+        // Sandbox-aware overload: when launchOverride is non-null the shortcut's launch
+        // command is set to it verbatim (e.g. "hina run app entry") instead of pointing
+        // directly at the app binary, so launches route through Hina's sandbox. Default
+        // impl ignores the override so platforms without a sandbox backend are unaffected.
+        Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, string? launchOverride, CancellationToken ct)
+            => CreateMenuShortcut(entry, appDir, ct);
         Task RemoveMenuShortcut(string evidencePath, CancellationToken ct);
 
         Task<string> AddToPath(string name, string targetExec, CancellationToken ct);

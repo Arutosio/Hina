@@ -2,12 +2,15 @@
 #
 # Landlock filesystem-sandbox integration probe.
 #
-# Runs a child (/bin/sh) under a Hina sandbox that grants:
-#   - the system dirs the interpreter needs (read-only)
+# Runs a child (/bin/sh) under a Hina sandbox that grants ONLY:
 #   - a "documents" dir (read-write)
-# but deliberately does NOT grant a "secret" dir. Under real Landlock
-# enforcement the child must be DENIED reading the secret and ALLOWED writing
-# the document. On a host without Landlock (old kernel / disabled), Hina logs
+# and NOTHING else. The system dirs the interpreter needs (loader, libc, /bin)
+# are granted IMPLICITLY by LinuxLandlockSandbox.SystemRuntimePaths — this probe
+# is the end-to-end proof of that: if implicit grants were missing, /bin/sh +
+# cat would EACCES at startup and the probe would FAIL. It deliberately does NOT
+# grant a "secret" dir. Under real Landlock enforcement the child must be DENIED
+# reading the secret and ALLOWED writing the document (proving isolation still
+# holds). On a host without Landlock (old kernel / disabled), Hina logs
 # "cannot enforce" and runs unsandboxed — the probe then skips with success so
 # the CI job stays green on non-Landlock runners (e.g. macOS).
 #
@@ -40,8 +43,6 @@ echo \"READ=\$r WRITE=\$w\""
 OUT="$(
   "${HINA[@]}" dev sandbox-run \
     --app-dir "$APP" \
-    --allow /usr:ro --allow /lib:ro --allow /lib64:ro --allow /bin:ro \
-    --allow /etc:ro --allow /dev:rw \
     --allow "$DOCS:rw" \
     -- /bin/sh -c "$INNER" 2>"$STDERR"
 )"

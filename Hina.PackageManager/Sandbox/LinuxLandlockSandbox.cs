@@ -46,6 +46,39 @@ namespace Hina.PackageManager.Sandbox
         private const ulong FS_REFER = 1ul << 13;      // ABI v2
         private const ulong FS_TRUNCATE = 1ul << 14;   // ABI v3
 
+        // Implicit system-runtime grants. A dynamically-linked Linux app must read
+        // the loader (/lib64/ld-linux-*), libc, and system libraries to even start;
+        // it also reads /etc/ld.so.cache + /etc/ld.so.conf.d. Without these grants
+        // Landlock denies them and the app EACCESs at startup — only fully
+        // self-contained (static/AOT) binaries would run. So when a sandbox IS
+        // enforced we grant read+exec on the standard system dirs and read+write on
+        // the handful of device nodes apps commonly need.
+        //
+        // Landlock is layered ON TOP OF normal DAC: granting read+exec on /etc does
+        // NOT make /etc/shadow readable to a non-root user — the kernel still checks
+        // file permissions first. These grants only relax the Landlock layer, never
+        // the underlying ownership/mode checks. Paths that don't exist are skipped
+        // (AddPath's open() fails harmlessly).
+        internal static readonly IReadOnlyList<ResolvedFsRule> SystemRuntimePaths = new[]
+        {
+            // Loader + system libraries + binaries (read + execute, never writable).
+            new ResolvedFsRule("/usr", false),
+            new ResolvedFsRule("/lib", false),
+            new ResolvedFsRule("/lib64", false),
+            new ResolvedFsRule("/bin", false),
+            new ResolvedFsRule("/sbin", false),
+            new ResolvedFsRule("/etc", false),   // ld.so.cache, ld.so.conf.d, resolv.conf, …
+            // Common device nodes apps open (and write to, e.g. /dev/null). Granted
+            // individually — NOT all of /dev, which would expose block devices,
+            // /dev/mem, etc.
+            new ResolvedFsRule("/dev/null", true),
+            new ResolvedFsRule("/dev/zero", true),
+            new ResolvedFsRule("/dev/full", true),
+            new ResolvedFsRule("/dev/random", true),
+            new ResolvedFsRule("/dev/urandom", true),
+            new ResolvedFsRule("/dev/tty", true),
+        };
+
         private readonly ILogger _logger;
         private readonly int _abi;
 
@@ -98,6 +131,14 @@ namespace Hina.PackageManager.Sandbox
 
             try
             {
+                // Grant the implicit system runtime FIRST so dynamically-linked apps
+                // can load their loader + libc. DAC still applies on top (see
+                // SystemRuntimePaths docs), so this does not expose /etc/shadow etc.
+                foreach (ResolvedFsRule rule in SystemRuntimePaths)
+                {
+                    AddPath(rulesetFd, rule, handled);
+                }
+
                 foreach (ResolvedFsRule rule in plan.Rules)
                 {
                     AddPath(rulesetFd, rule, handled);

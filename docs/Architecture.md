@@ -20,14 +20,7 @@ Hina is organized into five projects plus two test projects:
 
 ### Dependency Graph
 
-```
-Hina.CLI ------------------> Hina.PackageManager ----> Hina.Core
-Hina.CLI ------------------> Hina.Core                 (also direct, for `hina dev`)
-Hina.Builder --------------> Hina.Core
-Hina.Host                     (standalone, serves static files)
-Hina.Core.Tests -----------> Hina.Core
-Hina.PackageManager.Tests -> Hina.PackageManager + Hina.Core
-```
+> 📊 Rendered: [System architecture](Diagrams.md#system-architecture) in [Diagrams.md](Diagrams.md).
 
 `Hina.CLI` references both `Hina.PackageManager` (for the top-level package commands)
 and `Hina.Core` directly (for the patcher subcommands surfaced under `hina dev`).
@@ -243,7 +236,12 @@ threads `MaxRetries`, `MaxRetryDelayMs`, `ConnectTimeoutMs`, and
 
 ### Sandbox/
 
-Optional Flatpak-style filesystem isolation. v1 enforces **filesystem scope only**, on **Linux/Landlock only**; declared non-filesystem capabilities are surfaced but not enforced, and there are no portals.
+Optional Flatpak-style filesystem isolation. Filesystem scope (and the `network`
+capability) is **enforced on Linux (Landlock) and macOS (Seatbelt)**; **Windows is NoOp**
+(an unwired experimental AppContainer backend exists — see
+[Windows-Sandbox-Resume.md](Windows-Sandbox-Resume.md)). The other declared capabilities
+are surfaced but not enforced, and there are no portals. See the rendered
+[sandbox isolation per OS](Diagrams.md#sandbox--container-isolation-per-os) diagrams.
 
 The architecture mirrors `Platform/`: a per-OS interface (`ISandboxLauncher`) with a factory that selects one implementation. The pivot is that **Hina becomes the launcher for sandboxed apps** — their shell shortcut's launch command points at `hina run <app> <entry>` instead of the app binary, so `hina run` can build the filesystem plan and install the sandbox before the app starts. Non-sandboxed apps continue to launch their binary directly.
 
@@ -255,8 +253,10 @@ The architecture mirrors `Platform/`: a per-OS interface (`ISandboxLauncher`) wi
 | `SandboxPaths` | `Resolve(token, appDir, env)` maps a `SandboxTokens` value to an absolute path. Returns `null` for `host` (means "no restriction", not a path) and for unknown tokens (already rejected by `DescriptorValidator`). |
 | `ISandboxLauncher` | Per-OS launcher: `bool IsSupported` + `int Launch(execAbs, appArgs, plan, ct)`. A backend MAY replace the current process image (`execv`) rather than spawn a child — in that case `Launch` returns only on exec failure. |
 | `LinuxLandlockSandbox` | Linux backend (kernel 5.13+). Unprivileged P/Invoke into `landlock_create_ruleset` / `landlock_add_rule` / `landlock_restrict_self` plus `prctl(NO_NEW_PRIVS)`, then `execv`. Builds a ruleset that denies every filesystem access right the running ABI knows and grants back only the resolved paths; restrictions apply to `hina` itself and are inherited across `execv`, so the sandboxed app's PID is hina's. ABI-probed; any failure logs a warning and execs unsandboxed — it never blocks a launch. |
-| `NoOpSandbox` | Fallback for macOS, Windows, or a too-old Linux kernel. Spawns the app and waits; warns once if the plan asked for real scoping it cannot enforce. `IsSupported` is `false`. |
-| `SandboxLauncherFactory` | `Current(logger)` returns `LinuxLandlockSandbox` when on Linux and supported, otherwise `NoOpSandbox`. |
+| `MacOsSandbox` / `MacOsSeatbeltProfile` | macOS backend. `MacOsSeatbeltProfile.Build` generates a Seatbelt `.sb` profile from the plan (deny-default, `bsd.sb` import, system read baseline, plan rules `ro`→read / `rw`→+write, network unless `RestrictNetwork`); `MacOsSandbox` canonicalizes paths and launches the app as a **child** under `sandbox-exec -f <profile>`, cleaning up the temp profile on exit. |
+| `WindowsSandbox` | Windows AppContainer backend — **EXPERIMENTAL, not wired into the factory**. The ACL plumbing is correct but the lowbox denied all granted access on CI; Windows stays NoOp until debugged on a real Windows box. See [Windows-Sandbox-Resume.md](Windows-Sandbox-Resume.md). |
+| `NoOpSandbox` | Fallback for Windows or a too-old Linux kernel (no `sandbox-exec`/Landlock). Spawns the app and waits; warns once if the plan asked for real scoping it cannot enforce. `IsSupported` is `false`. |
+| `SandboxLauncherFactory` | `Current(logger)` returns `LinuxLandlockSandbox` on Linux (when supported), `MacOsSandbox` on macOS, otherwise `NoOpSandbox` (Windows + unsupported hosts). |
 | `AppPermissions` | Pure flat view of one app's permissions, folded from the cached descriptor (declared scope + capabilities) and the registry row (`UserGrants`). No I/O. Drives `hina perms`. |
 | `PermissionsFormatter` | Renders `AppPermissions` as the `hina perms` table (all apps) and detail (one app). Every non-filesystem capability is rendered with a "declared — not enforced" caveat. |
 | `SandboxDiff` | `Compute(oldSpec, newSpec)` → `{ Broadened, Added, Removed }`. A null/disabled sandbox means "unsandboxed = full access", so dropping or loosening a sandbox broadens (needs consent) while enabling or tightening it narrows (applies silently). Drives the update-flow permission-consent gate (a broadening update fails unless re-run with `--accept-new-permissions`). |
@@ -271,241 +271,44 @@ The descriptor wire model for the sandbox lives in `Descriptor/`: `SandboxSpec` 
 
 The builder (`Hina.Builder`) takes a directory of application files and produces a manifest and chunk store.
 
-```
- Input directory (game/app files)
-         |
-         v
- [1] Enumerate all files recursively
-         |
-         v
- [2] For each file:
-     +-- Open FileStream
-     +-- Chunk the file (IChunker: RsyncChunker or ContentDefinedChunker)
-     |   +-- Compute rolling checksum (weak) for each chunk
-     |   +-- Compute SHA-256 hash (strong) for each chunk
-     +-- Compute full-file SHA-256 hash
-     +-- Produce ManifestFile with chunk list
-         |
-         v
- [3] Assemble Manifest object
-     +-- Set Version, BaseUrl, BuildId
-     +-- Attach ManifestFile entries
-         |
-         v
- [4] (Optional) Sign manifest with Ed25519 private key
-     +-- Serialize manifest without signature to canonical JSON
-     +-- Sign canonical bytes with NSec Ed25519
-     +-- Attach ManifestSignature (algorithm, signature, public key)
-         |
-         v
- [5] Write manifest.json to output directory
-         |
-         v
- [6] Write chunks to output/chunks/ directory
-     +-- For each chunk, Brotli-compress the raw bytes
-     +-- Store as chunks/<bucket>/<hash>.chunk.br
-     +-- Bucket = first 2 hex characters of hash
-     +-- Deduplicate: skip if file already exists
-         |
-         v
- Output: manifest.json + chunks/ directory
-```
+> 📊 Rendered: [Build pipeline](Diagrams.md#build-pipeline-hinabuilder) in [Diagrams.md](Diagrams.md).
 
 ### Client Patch Pipeline
 
 The client (`PatchClient`) downloads the manifest, matches local data, and applies changes.
 
-```
- [1] Fetch manifest.json from server
-     +-- URL: <BaseUrl>/manifest.json (or manifest.<channel>.json)
-     +-- Retry with exponential backoff on transient errors
-         |
-         v
- [2] Verify Ed25519 signature (if TrustedPublicKey is configured)
-     +-- Serialize manifest without signature to canonical JSON
-     +-- Verify signature against trusted public key
-     +-- Reject patch if verification fails
-         |
-         v
- [3] Check for incomplete previous patch
-     +-- Load journal from .hina/journal.json
-     +-- If found, rollback previous patch first
-         |
-         v
- [4] Create new PatchJournal
-         |
-         v
- [5] For each file in manifest:
-     +-- Compute local file hash
-     +-- Skip if hash matches (already up to date)
-     +-- Build weak checksum lookup table from manifest chunks
-     +-- Rsync match: slide rolling checksum window over local file
-     |   +-- On weak match, compute strong hash to confirm
-     |   +-- Record matched chunks with their local file offsets
-     +-- Rebuild file to temp path (.hina.tmp):
-     |   +-- For matched chunks: copy bytes from local file
-     |   +-- For missing chunks: download from server
-     |       +-- URL: <BaseUrl>/chunks/<bucket>/<hash>.chunk.br
-     |       +-- Decompress Brotli, write to output
-     +-- Verify rebuilt file hash against manifest
-     +-- Backup original file (.hina.bak) if Backup is enabled
-     +-- Record backup in journal
-     +-- Swap temp file into place
-         |
-         v
- [6] On success: mark journal as "Completed"
-     On failure: rollback all files from backups, mark journal as "Failed"
-```
+> 📊 Rendered: [Client patch pipeline](Diagrams.md#client-patch-pipeline-patchclient) in [Diagrams.md](Diagrams.md).
 
 ### Rollback Flow
 
-```
- [1] Load journal from .hina/journal.json
- [2] For each journal entry:
-     +-- Copy .hina.bak back to original path
-     +-- Delete .hina.bak
- [3] Delete journal file
-```
+> 📊 Rendered: [Rollback flow](Diagrams.md#rollback-flow) in [Diagrams.md](Diagrams.md).
 
 ### Cleanup Flow
 
-```
- [1] Recursively scan target directory
- [2] Delete all *.hina.tmp files
- [3] Delete all *.hina.bak files
- [4] Delete .hina/journal.json
-```
+> 📊 Rendered: [Cleanup flow](Diagrams.md#cleanup-flow) in [Diagrams.md](Diagrams.md).
 
 ### Install Flow (Hina.PackageManager)
 
-```
- hina install <url-to-hina.app.json>
-        |
- [1] DescriptorFetcher.FetchAsync (5 MB cap, 30s timeout)
-        |
- [2] DescriptorParser.Parse (source-gen JSON)
-        |
- [3] DescriptorValidator.Validate (name/SemVer/HTTPS/no path traversal/entry refs)
-        |
- [4] DescriptorSigner.Verify against descriptor.publicKey
-        |
- [5] TOFU prompt: publisher + Ed25519 fingerprint → user accept/reject
-        |
- [6] LockManager.AcquireAsync (registry-wide exclusive)
-        |
- [7] If already installed → abort, suggest reinstall/update
-        |
- [8] Create InstallPaths.AppDir(name) (must be empty)
-        |
- [9] PatchClient.PatchAsync(appDir) — downloads chunks, verifies manifest signature with descriptor.publicKey
-        |
- [10] Sanity check: descriptor.Exec[os] exists on disk
-        |
- [11] CreateMenuShortcut for each entry → record evidence
-      (sandboxed app → launchOverride "hina run <name> <entry>"; else direct binary)
-        |
- [12] HookExecutor.ApplyAsync in declared order → record HookEvidence
-        |
- [13] Cache descriptor FIRST via AtomicFile.WriteAllText, THEN commit registry entry.
-      A crash between the two leaves a cache with no registry row (harmless) rather
-      than a registry row with no cache (would break run/perms/update).
-        |
- [14] Release lock
-
- On any exception in [8]-[13]: InstallTransaction.RollbackAsync unwinds
- in reverse — hooks undone, shortcuts removed, AppDir deleted, registry untouched.
-```
+> 📊 Rendered: [Install flow](Diagrams.md#install-flow-installservice) in [Diagrams.md](Diagrams.md).
 
 ### Update Flow (Hina.PackageManager)
 
-```
- hina update [name]
-        |
- For each app (one or all):
-        |
- [1] Re-fetch descriptor from registry.descriptorUrl
-        |
- [2] Validate; verify signature against REGISTRY publicKey (pin)
-     A mismatch is a potential key-rotation attack → fail unless --rotate-key
-     (handled by ReinstallService, not UpdateService)
-        |
- [3] If descriptor.version == registry.installedVersion and not --force,
-     return AlreadyUpToDate
-        |
- [4] Compute diffs by stable identity:
-        hooksToAdd      = descriptor.postInstall  \  registry.executedHooks
-        hooksToRemove   = registry.executedHooks  \  descriptor.postInstall
-        entriesToAdd / entriesToRemove similarly (by entry.id)
-        |
- [5] Snapshot pre-update registry entry
-        |
- [5a] SandboxDiff.Compute(oldDescriptor.sandbox, newDescriptor.sandbox)
-      If it BROADENS access (new paths, host, ro→rw, new capability, or sandbox
-      dropped) and not --accept-new-permissions → fail BEFORE touching disk
-        |
- [6] PatchClient.PatchAsync(appDir, Backup=true)
-     On failure → PatchClient.RollbackAsync + restore registry snapshot
-        |
- [7] Apply hooksToRemove (Undo), entriesToRemove
- [8] Apply hooksToAdd, entriesToAdd
-        |
- [9] Update registry: installedVersion, lastUpdatedAt, hooks, entries
- [10] Refresh descriptor cache
-```
+> 📊 Rendered: [Update flow](Diagrams.md#update-flow-updateservice) in [Diagrams.md](Diagrams.md).
 
 ### Uninstall Flow (Hina.PackageManager)
 
-```
- hina uninstall <name>
-        |
- [1] LockManager.AcquireAsync
- [2] Load registry; missing app → exit 0 (idempotent)
- [3] For each entry in registry.executedHooks (REVERSE order):
-        HookExecutor.UndoAsync(evidence)            fail-soft
- [4] For each entry in registry.shellEntries:
-        Platform.RemoveMenuShortcut(evidence)        fail-soft
- [5] Delete AppDir recursively                       fail-soft
- [6] Delete DescriptorCache(name)                    fail-soft
- [7] Remove app from registry, write atomically
- [8] Release lock
-
- Critical: hook side-effects are read from the registry, NEVER from
- the live descriptor — a newer descriptor might list different hooks.
-```
+> 📊 Rendered: [Uninstall flow](Diagrams.md#uninstall-flow-uninstallservice) in [Diagrams.md](Diagrams.md).
 
 ### Run Flow (Hina.PackageManager)
 
 The launch chokepoint. A sandboxed app's shell shortcut runs `hina run` instead of
 the app binary, so the filesystem sandbox is installed before the app starts.
 
-```
- hina run <app> [entryId] [-- appArgs...]
-        |
- [1] Load registry; app missing → error
- [2] AppDir missing → error (suggest reinstall)
- [3] Read cached descriptor; missing/corrupt → error
-     (NEVER launch unsandboxed without the descriptor — that would silently drop isolation)
-        |
- [4] Resolve the entry's exec (entryId → entries[]; else entries[0]; else Exec[os])
-     Resolved exec missing on disk → error
-        |
- [5] Build the plan:
-        sandbox.Enabled → SandboxPlanner.Build(spec, app.UserGrants, appDir, SandboxEnv.FromSystem())
-        else            → SandboxPlan(Unrestricted: true)
-        |
- [6] SandboxLauncherFactory.Current(logger).Launch(execAbs, appArgs, plan, ct)
-     Linux+supported → Landlock installs the ruleset then execv's the app (app PID = hina PID)
-     else            → spawn + wait (warns once if scoping was requested but unenforceable)
-```
+> 📊 Rendered: [Run flow](Diagrams.md#run-flow-runcommand--the-launch-chokepoint) in [Diagrams.md](Diagrams.md).
 
 ### Permissions Flow (Hina.PackageManager)
 
-```
- hina perms                          → table of every app's permissions
- hina perms <app>                    → detail for one app
- hina perms <app> --grant <path>[:ro|:rw]   → add a runtime FsGrant   (takes the registry lock)
- hina perms <app> --revoke <path>           → remove a runtime FsGrant (takes the registry lock)
-```
+> 📊 Rendered: [Permissions flow](Diagrams.md#permissions-flow-hina-perms--verify) in [Diagrams.md](Diagrams.md).
 
 `AppPermissions.From(cachedDescriptor, registryRow)` folds the declared sandbox scope
 and the registry `UserGrants` into a flat view; `PermissionsFormatter` renders it.
@@ -525,110 +328,7 @@ manual sandbox probing.
 
 ## Class Diagram
 
-```
-+---------------------+        +----------------------+
-|    IPatchClient      |        |     IChunker         |
-|---------------------|        |----------------------|
-| + Config            |        | + ChunkAsync()       |
-| + CheckAsync()      |        +----------+-----------+
-| + PatchAsync()      |                   |
-| + VerifyAsync()     |          +--------+--------+
-| + RollbackAsync()   |          |                 |
-+----------+----------+   +------+------+   +------+-------+
-           |              | RsyncChunker|   | ContentDefined|
-           |              |             |   | Chunker       |
-+----------+----------+  +------+------+   +------+--------+
-|    PatchClient       |         |                 |
-|---------------------|         |                 |
-| - _hasher: IHasher  |         v                 v
-| - _http             |  +------+------+   +------+--------+
-| - _logger           |  | Rolling     |   | Gear hash     |
-| + Config            |  | Checksum    |   | boundary      |
-| + CheckAsync()      |  | (Adler32)   |   | detection     |
-| + PatchAsync()      |  +-------------+   +---------------+
-| + VerifyAsync()     |
-| + RollbackAsync()   |
-| - RsyncMatchLocal() |
-| - VerifyManifest()  |
-+---------+-----------+
-          |
-          | uses
-          v
-+---------+-----------+    +-------------------+
-|  HttpChunkClient    |--->|   RetryPolicy     |
-|---------------------|    |-------------------|
-| + GetManifestAsync()|    | - _maxRetries     |
-| + GetChunkAsync()   |    | - _baseDelayMs    |
-+---------------------+    | + ExecuteAsync()  |
-                           | + CalculateDelay()|
-                           | + IsTransient()   |
-                           +-------------------+
-
-+---------+-----------+    +-------------------+
-|     IHasher         |    |  ManifestSigner   |
-|---------------------|    |-------------------|
-| + AlgorithmId       |    | + AttachSignature |
-| + ComputeHashAsync()|    | + Verify()        |
-+----------+----------+    +-------------------+
-           |
-+----------+----------+    +-------------------+
-|   Sha256Hasher       |    |  BrotliCodec      |
-|---------------------|    |-------------------|
-| + AlgorithmId="sha256"|  | + Compress()      |
-| + ComputeHashAsync()|    | + Decompress()    |
-+---------------------+    +-------------------+
-
-+---------------------+    +-------------------+
-|  ManifestBuilder     |    | ChunkStoreWriter  |
-|---------------------|    |-------------------|
-| - _hasher           |    | - _hasher         |
-| + BuildAsync()      |    | - _chunkSize      |
-+---------------------+    | - _chunker        |
-                           | + WriteChunksAsync |
-+---------------------+    +-------------------+
-|   PatchJournal       |
-|---------------------|    +-------------------+
-| + Status            |    |  PatcherConfig    |
-| + CreatedUtc        |    |-------------------|
-| + Entries           |    | + BaseUrl         |
-| + Load()            |    | + Channel         |
-| + SaveAsync()       |    | + Concurrency     |
-+---------------------+    | + ChunkSize       |
-                           | + Verify, Backup  |
-+---------------------+    | + TrustedPublicKey|
-|   Manifest           |    | + MaxRetries      |
-|---------------------|    | + RetryBaseDelayMs|
-| + Version           |    | + ChunkingMode    |
-| + BuildId           |    | + MinChunkSize    |
-| + BaseUrl           |    | + MaxChunkSize    |
-| + Files             |    | + AvgChunkSize    |
-| + Signature         |    +-------------------+
-+---------------------+
-          |
-          | contains
-          v
-+---------------------+
-|   ManifestFile       |
-|---------------------|
-| + Path              |
-| + Size              |
-| + MTimeUtc          |
-| + FileHash          |
-| + ChunkSize         |
-| + Chunks            |
-+----------+----------+
-           |
-           | contains
-           v
-+----------+----------+
-|   ManifestChunk      |
-|---------------------|
-| + Index             |
-| + Weak (uint)       |
-| + Strong (string)   |
-| + Size              |
-+---------------------+
-```
+> 📊 Rendered: [Class diagram](Diagrams.md#class-diagram--core--patching) in [Diagrams.md](Diagrams.md).
 
 ---
 

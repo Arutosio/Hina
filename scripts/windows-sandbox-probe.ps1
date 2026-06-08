@@ -38,30 +38,38 @@ if (-not (Test-Path $HinaExe)) {
 
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("hina-sbx-" + [System.Guid]::NewGuid().ToString("N"))
 $app = Join-Path $work "app"
-$docs = Join-Path $work "docs"
+$docs = Join-Path $work "docs"        # granted by hina (specific package SID) — baseline
+$docsLow = Join-Path $work "docslow"  # granted by hina (package SID) + we set its integrity label to Low
+$docsAap = Join-Path $work "docsaap"  # we grant ALL APPLICATION PACKAGES (S-1-15-2-1) via icacls
 $secret = Join-Path $work "secret"
-New-Item -ItemType Directory -Force -Path $app, $docs, $secret | Out-Null
+New-Item -ItemType Directory -Force -Path $app, $docs, $docsLow, $docsAap, $secret | Out-Null
 Set-Content -Path (Join-Path $secret "key") -Value "topsecret" -NoNewline
-# Pre-create a file INSIDE the granted docs dir so we can measure a granted-dir READ
-# separately from a granted-dir WRITE. Integrity (MIC) only blocks write-up, never
-# read-up — so if the container can READ this but not WRITE docs\out, the blocker is
-# integrity, not traversal; if it can't even read it, the blocker is traversal.
-Set-Content -Path (Join-Path $docs "readme") -Value "hello" -NoNewline
 
-# Inline cmd command (mirrors the Landlock probe's inline `sh -c`). Three measurements:
-#   RSEC = read the ungranted secret (must be 0 — isolation)
-#   RDOC = read a granted-dir file   (traverse test: 1 = reached docs)
-#   WDOC = write a granted-dir file  (must be 1 — the grant works end to end)
-# cmd.exe is in System32, reachable via ALL APPLICATION PACKAGES. /v:on so !..! expand
-# at run time. Temp paths on the runner have no spaces, so no inner quoting is needed.
+# DACLs are provably correct yet the lowbox is denied. Test the two remaining
+# hypotheses in one run:
+#   WPKG -> write a dir granted the specific package SID (baseline; currently fails)
+#   WAAP -> write a dir granted ALL APPLICATION PACKAGES (every lowbox has that group;
+#           if this works but WPKG doesn't, the token's package SID isn't matching)
+#   WLOW -> write a dir granted the package SID but whose integrity label is lowered to
+#           Low (if this works, Mandatory Integrity write-up was the blocker)
+$aap = '*S-1-15-2-1'
+# ALL APPLICATION PACKAGES: modify on docsAap + traverse (RX, this-folder-only so secret
+# doesn't inherit) on every ancestor up the chain.
+icacls $docsAap /grant "${aap}:(OI)(CI)(M)" /Q | Out-Null
+$d = $work
+while ($d) { icacls $d /grant "${aap}:(RX)" /Q | Out-Null; $p = Split-Path $d -Parent; if (-not $p -or $p -eq $d) { break }; $d = $p }
+# Lower docsLow's integrity label to Low (inheritable) so a low-IL container can write it.
+icacls $docsLow /setintegritylevel "(OI)(CI)L" /Q | Out-Null
+
 $cmdExe = Join-Path $env:SystemRoot "System32\cmd.exe"
 $stderrFile = Join-Path $work "stderr.txt"
-$inner = "set RS=0& set RD=0& set W=0& ( type $secret\key 1>nul 2>nul && set RS=1 ) & ( type $docs\readme 1>nul 2>nul && set RD=1 ) & ( echo data 1>$docs\out 2>nul && set W=1 ) & echo RSEC=!RS! RDOC=!RD! WDOC=!W!"
+$inner = "set RS=0& set WP=0& set WA=0& set WL=0& ( type $secret\key 1>nul 2>nul && set RS=1 ) & ( echo x 1>$docs\out 2>nul && set WP=1 ) & ( echo x 1>$docsAap\out 2>nul && set WA=1 ) & ( echo x 1>$docsLow\out 2>nul && set WL=1 ) & echo RSEC=!RS! WPKG=!WP! WAAP=!WA! WLOW=!WL!"
 
 $hinaArgs = @(
     'dev', 'sandbox-run', '--verbose',
     '--app-dir', $app,
     '--allow', ($docs + ':rw'),
+    '--allow', ($docsLow + ':rw'),
     '--',
     $cmdExe, '/v:on', '/c', $inner
 )
@@ -77,18 +85,12 @@ Write-Host $out
 Write-Host "---- probe stderr ----"
 Write-Host $err
 
-# Diagnostics: did the container-SID ACE actually land on docs, and is docs writable
-# at all from a normal (unsandboxed) context? Separates "grant code broken" from
-# "container cannot traverse / leaf ACE ineffective".
-Write-Host "---- icacls docs ----"
+Write-Host "---- icacls docs (package SID) ----"
 icacls $docs 2>&1 | Out-String | Write-Host
-Write-Host "---- icacls work (ancestor) ----"
-icacls $work 2>&1 | Out-String | Write-Host
-Write-Host "---- icacls temp (ancestor) ----"
-icacls (Split-Path $work -Parent) 2>&1 | Out-String | Write-Host
-Write-Host "---- unsandboxed write sanity ----"
-try { Set-Content -Path (Join-Path $docs "sanity") -Value "ok"; Write-Host "unsandboxed docs write OK" }
-catch { Write-Host "unsandboxed docs write FAILED: $_" }
+Write-Host "---- icacls docsaap (ALL APP PACKAGES) ----"
+icacls $docsAap 2>&1 | Out-String | Write-Host
+Write-Host "---- icacls docslow (Low integrity) ----"
+icacls $docsLow 2>&1 | Out-String | Write-Host
 
 $combined = "$out`n$err"
 
@@ -99,21 +101,26 @@ if ($combined -match 'cannot enforce' -or $combined -match 'running unsandboxed'
     exit 0
 }
 
-# Parse the three measurements for the diagnosis.
+# Parse the four measurements.
 $rsec = if ($combined -match 'RSEC=(\d)') { $matches[1] } else { '?' }
-$rdoc = if ($combined -match 'RDOC=(\d)') { $matches[1] } else { '?' }
-$wdoc = if ($combined -match 'WDOC=(\d)') { $matches[1] } else { '?' }
-Write-Host "---- diagnosis ---- RSEC=$rsec RDOC=$rdoc WDOC=$wdoc"
-if ($rsec -eq '0' -and $rdoc -eq '1' -and $wdoc -eq '0') {
-    Write-Host "DIAGNOSIS: container reached+read the granted dir but write was blocked -> INTEGRITY (write-up), not traversal."
-} elseif ($rsec -eq '0' -and $rdoc -eq '0') {
-    Write-Host "DIAGNOSIS: container could not even read the granted dir -> TRAVERSAL is the blocker."
+$wpkg = if ($combined -match 'WPKG=(\d)') { $matches[1] } else { '?' }
+$waap = if ($combined -match 'WAAP=(\d)') { $matches[1] } else { '?' }
+$wlow = if ($combined -match 'WLOW=(\d)') { $matches[1] } else { '?' }
+Write-Host "---- diagnosis ---- RSEC=$rsec WPKG=$wpkg WAAP=$waap WLOW=$wlow"
+if ($waap -eq '1' -and $wpkg -eq '0') {
+    Write-Host "DIAGNOSIS: ALL APPLICATION PACKAGES works but the specific package SID does not -> token package SID is not matching the granted SID."
+}
+if ($wlow -eq '1' -and $wpkg -eq '0') {
+    Write-Host "DIAGNOSIS: lowering the integrity label let the write through -> Mandatory Integrity (write-up) was the blocker."
+}
+if ($wpkg -eq '0' -and $waap -eq '0' -and $wlow -eq '0') {
+    Write-Host "DIAGNOSIS: nothing worked -> the blocker is deeper than SID matching or integrity (capability-gated FS?)."
 }
 
-if ($rsec -eq '0' -and $wdoc -eq '1') {
-    Write-Host "PASS: secret read denied, document write allowed under AppContainer."
+if ($rsec -eq '0' -and $wpkg -eq '1') {
+    Write-Host "PASS: secret read denied, package-SID-granted write allowed under AppContainer."
     exit 0
 }
 
-Write-Error "FAIL: expected RSEC=0 WDOC=1 (secret denied, docs writable). Got: RSEC=$rsec RDOC=$rdoc WDOC=$wdoc"
+Write-Error "FAIL (diagnostic run): RSEC=$rsec WPKG=$wpkg WAAP=$waap WLOW=$wlow"
 exit 1

@@ -56,6 +56,8 @@ namespace Hina.CLI
                 case "run":
                     return RunCommand.RunAsync(ctx, args);
                 case "perms":
+                case "permissions":
+                case "permessi":
                     return PermsCommand.RunAsync(ctx, args);
                 case "verify":
                     return VerifyCommand.RunAsync(ctx, args);

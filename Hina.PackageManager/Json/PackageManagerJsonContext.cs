@@ -15,6 +15,7 @@ namespace Hina.PackageManager.Json
     [JsonSerializable(typeof(ExecMap))]
     [JsonSerializable(typeof(SandboxSpec))]
     [JsonSerializable(typeof(FsRule))]
+    [JsonSerializable(typeof(CapabilitySpec))]
     [JsonSerializable(typeof(DescriptorSignature))]
     [JsonSerializable(typeof(Registry.Registry))]
     [JsonSerializable(typeof(Registry.InstalledApp))]

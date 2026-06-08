@@ -13,6 +13,10 @@ namespace Hina.PackageManager.Descriptor
         public bool Enabled { get; set; }
 
         public List<FsRule> Filesystem { get; set; } = new List<FsRule>();
+
+        // Declared non-filesystem capabilities (network, audio, …). Not enforced
+        // in v1 — shown to the user as declared intent. Null ⇒ none declared.
+        public CapabilitySpec? Capabilities { get; set; }
     }
 
     // A requested filesystem grant. Path is an abstract token (never a raw host

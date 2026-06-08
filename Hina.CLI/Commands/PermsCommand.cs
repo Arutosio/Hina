@@ -1,50 +1,45 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
+using Hina.PackageManager.Descriptor;
 using Hina.PackageManager.Registry;
+using Hina.PackageManager.Sandbox;
 using Microsoft.Extensions.Logging;
 
 namespace Hina.CLI.Commands
 {
-    // `hina perms <app> [--list] [--grant <path>[:ro|:rw]] [--revoke <path>]`
-    // Manages the user's runtime filesystem grants for a sandboxed app — the paths
-    // allowed beyond what the descriptor declared. Mutations take the registry lock.
+    // Aliases: perms / permissions / permessi.
+    //   hina perms [list]                  → table of all installed apps' permissions
+    //   hina perms <app>                   → full permission detail for one app
+    //   hina perms <app> --grant <path>[:ro|:rw] | --revoke <path>
+    //                                      → manage the user's runtime filesystem grants
+    // Mutations take the registry lock; reads go through the shared read-lock helper.
     internal static class PermsCommand
     {
         public static async Task<int> RunAsync(CommandContext ctx, string[] args)
         {
             string? name = Args.FirstPositional(args, startIndex: 1);
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                ctx.Logger.LogError("Usage: hina perms <app> [--list] [--grant <path>[:ro|:rw]] [--revoke <path>]");
-                return 2;
-            }
-
             string? grant = Args.GetValue(args, "--grant");
             string? revoke = Args.GetValue(args, "--revoke");
 
-            // List-only path: read under lock, no write.
+            // No app (or the literal "list") and no mutation → overview table.
+            if ((string.IsNullOrWhiteSpace(name) || name == "list") && grant == null && revoke == null)
+            {
+                return await PrintTableAsync(ctx);
+            }
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                ctx.Logger.LogError("Usage: hina perms [list] | <app> [--grant <path>[:ro|:rw]] [--revoke <path>]");
+                return 2;
+            }
+
+            // App given, no mutation → detail view.
             if (grant == null && revoke == null)
             {
-                Registry registry = await ctx.LoadRegistryLockedAsync();
-                if (!registry.Apps.TryGetValue(name, out InstalledApp? app))
-                {
-                    ctx.Logger.LogError("'{Name}' is not installed.", name);
-                    return 1;
-                }
-                if (app.UserGrants.Count == 0)
-                {
-                    Console.WriteLine($"{name}: no user grants.");
-                }
-                else
-                {
-                    Console.WriteLine($"{name} user grants:");
-                    foreach (FsGrant g in app.UserGrants)
-                    {
-                        Console.WriteLine($"  {g.Access}  {g.Path}");
-                    }
-                }
-                return 0;
+                return await PrintDetailAsync(ctx, name);
             }
 
             LockManager locks = ctx.NewLockManager();
@@ -77,6 +72,52 @@ namespace Hina.CLI.Commands
 
             await store.SaveAsync(reg, ctx.Ct);
             return 0;
+        }
+
+        private static async Task<int> PrintTableAsync(CommandContext ctx)
+        {
+            Registry registry = await ctx.LoadRegistryLockedAsync();
+            if (registry.Apps.Count == 0)
+            {
+                Console.WriteLine("No apps installed.");
+                return 0;
+            }
+
+            List<AppPermissions> perms = registry.Apps.Values
+                .OrderBy(a => a.Name, StringComparer.Ordinal)
+                .Select(a => AppPermissions.From(LoadDescriptorOrEmpty(ctx, a.Name), a))
+                .ToList();
+
+            Console.Write(PermissionsFormatter.Table(perms));
+            return 0;
+        }
+
+        private static async Task<int> PrintDetailAsync(CommandContext ctx, string name)
+        {
+            Registry registry = await ctx.LoadRegistryLockedAsync();
+            if (!registry.Apps.TryGetValue(name, out InstalledApp? app))
+            {
+                ctx.Logger.LogError("'{Name}' is not installed.", name);
+                return 1;
+            }
+
+            AppPermissions perms = AppPermissions.From(LoadDescriptorOrEmpty(ctx, name), app);
+            Console.Write(PermissionsFormatter.Detail(perms));
+            return 0;
+        }
+
+        // The cached descriptor carries the declared sandbox scope + capabilities.
+        // Pre-sandbox installs (or a missing/corrupt cache) simply read as "no
+        // sandbox declared" rather than failing the whole listing.
+        private static AppDescriptor LoadDescriptorOrEmpty(CommandContext ctx, string name)
+        {
+            string path = ctx.Paths.DescriptorCache(name);
+            if (File.Exists(path))
+            {
+                try { return DescriptorParser.Parse(File.ReadAllText(path)); }
+                catch { /* fall through to empty */ }
+            }
+            return new AppDescriptor { Name = name };
         }
 
         private static (string path, string access) ParseGrant(string spec)

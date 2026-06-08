@@ -1,73 +1,75 @@
-# Windows sandbox backend — AppContainer (implemented)
+# Windows sandbox backend — AppContainer (implemented, NOT verified)
 
-Status: **implemented.** On Windows a sandboxed app runs inside a low-privilege
-AppContainer, the deny-by-default analogue of Linux/Landlock and macOS/Seatbelt.
-Backend: `Hina.PackageManager/Sandbox/WindowsSandbox.cs`; pure policy:
-`WindowsAppContainerPolicy.cs`. Proven by the `windows-sandbox` CI job
-(`scripts/windows-sandbox-probe.ps1`), since AppContainer cannot be exercised on
-the macOS/Linux dev host.
+Status: **implemented but unverified — Windows ships as NoOp.** The AppContainer
+backend (`Hina.PackageManager/Sandbox/WindowsSandbox.cs`, pure policy in
+`WindowsAppContainerPolicy.cs`) is written and its ACL plumbing is proven correct on
+CI, but the lowbox it creates honors no runtime access grant, so
+`SandboxLauncherFactory` deliberately does **not** select it. On Windows a sandboxed
+app runs unsandboxed with a one-time warning, exactly like before. This note records
+the design and the investigation so the work can be resumed on a real Windows box.
 
-## How it works: low-privilege AppContainer
+Why it can't be finished here: the dev host is macOS, so AppContainer cannot be run
+or debugged locally — the only feedback channel is the `windows-latest` CI probe
+(`scripts/windows-sandbox-probe.ps1`), which gives logs but no interactive debugging
+(no Process Explorer, no breakpoints).
+
+## Design: low-privilege AppContainer
 
 `WindowsSandbox : ISandboxLauncher`:
 
-1. **Create / derive an AppContainer profile** for the app
-   (`CreateAppContainerProfile`, or `DeriveAppContainerSidFromAppContainerName` when
-   the profile already exists). Stable per-app container name `Hina.<appName>`
-   (sanitized, ≤ 64 chars) so re-launches derive the same SID.
+1. **Create / derive an AppContainer profile** (`CreateAppContainerProfile`, or
+   `DeriveAppContainerSidFromAppContainerName` if it exists). Stable per-app container
+   name `Hina.<appName>` (sanitized, ≤ 64 chars).
 2. **Grant explicit ACEs** for the container SID on the app dir + each declared
-   `ro`/`rw` path and user grant (`GetNamedSecurityInfo` → `SetEntriesInAcl` →
-   `SetNamedSecurityInfo`). `ro` → read+execute, `rw` → +write. The ACEs are
-   inheritable (`SUB_CONTAINERS_AND_OBJECTS_INHERIT`).
+   `ro`/`rw` path (`GetNamedSecurityInfo` → `SetEntriesInAcl` → `SetNamedSecurityInfo`),
+   plus `FILE_TRAVERSE` on each ancestor directory (applied with `SetFileSecurity` so it
+   does not re-propagate inheritance and hang on big profile dirs).
 3. **Launch** with `CreateProcess` + `STARTUPINFOEX` +
-   `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` pointing at a
-   `SECURITY_CAPABILITIES` built from the container SID (plus any capability SIDs).
-   All via AOT-safe `[DllImport]` P/Invoke — no reflection. Wait, return the exit
-   code, free the SIDs / attribute list / capability array.
-4. **`IsSupported`** = `OperatingSystem.IsWindowsVersionAtLeast(6, 2)` (Windows 8 /
-   Server 2012+). Fail-soft: any setup failure logs a warning and runs the app
-   directly, never blocking the launch. The factory hands back NoOp when unsupported.
+   `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` pointing at a `SECURITY_CAPABILITIES`
+   built from the container SID. All via AOT-safe `[DllImport]` P/Invoke. `RestrictNetwork`
+   maps to omitting the `internetClient` capability SID.
+4. **`IsSupported`** = `OperatingSystem.IsWindowsVersionAtLeast(6, 2)`. Fail-soft.
 
-### Why the system DLL dirs are NOT ACL'd
+System DLL dirs are deliberately not ACL'd — they already carry an `ALL APPLICATION
+PACKAGES` ACE granting read+execute to every container.
 
-An AppContainer is denied every securable object unless its DACL grants the
-container SID, a capability SID, or `ALL APPLICATION PACKAGES` (S-1-15-2-1).
-`C:\Windows\System32`, `WinSxS`, and the .NET GAC already carry an
-`ALL APPLICATION PACKAGES` read+execute ACE — that is how Store apps load system
-DLLs — so the container can load them without any change from Hina. Adding our own
-ACEs there would need admin and would edit a **shared system DACL**, so we
-deliberately don't: only the app dir and the plan rules get container-SID ACEs.
+## What the CI probe proved
 
-### Network
+On a real `windows-latest` runner, with `icacls` + `--verbose` logging:
 
-An AppContainer denies network unless the `internetClient` capability SID
-(`S-1-15-3-1`) is attached. `WindowsAppContainerPolicy.BuildCapabilitySids` maps
-`plan.RestrictNetwork`: omit the SID to deny, add it to allow — mirroring
-Landlock/Seatbelt.
+- **The ACL plumbing is correct.** Every grant lands on disk: the container SID gets
+  `(RX,W)` on the granted dir (plus an inheritable generic ACE for its children) and
+  `(X)` (FILE_TRAVERSE) on each ancestor up to `C:\`, with the existing
+  user / Administrators / SYSTEM ACEs preserved.
+- **Isolation works.** The container is correctly DENIED an ungranted "secret" dir.
+- **But the lowbox honors no runtime grant for actual access.** A granted dir was
+  neither readable nor writable, whether granted:
+  - the specific package SID, **or** `ALL APPLICATION PACKAGES` (the group the token
+    demonstrably has — it runs `cmd.exe` from System32 through it);
+  - with the object's integrity label lowered to **Low**, or not;
+  - on a deep `%TEMP%` profile path, **or** a shallow `C:\` path.
 
-## Shortcut routing
+  Every combination was denied; only the System32 baseline (system-level
+  `ALL APPLICATION PACKAGES`) was reachable.
 
-`WindowsPlatformIntegration`'s 4-arg `CreateMenuShortcut(launchOverride)` writes a
-`.lnk` whose target is the hina executable with `run <app> "<entry>"` as its
-arguments (the opaque override string is split by `WindowsLaunchOverride.Parse` and
-control-stripped), so a sandboxed app's shortcut routes through `hina run` and the
-AppContainer is installed before the app starts — like Linux/macOS.
-`InstallService.sandboxEnforceable` includes Windows, so the install-time
-disclosure says the app runs sandboxed.
+## Leading hypothesis / next step
 
-## Verification
+The pattern — only the system baseline reachable, every runtime grant ignored — points
+to an **over-restricted token**: most likely the AppContainer process is running at an
+integrity level below the objects (so all write-up is blocked), and/or the lowbox
+restricting-SID set isn't being satisfied the way the DACL grants expect. Confirming
+this needs **Process Explorer on a real Windows machine** to read the live process's
+integrity level and token groups/restricting-SIDs, then adjust token creation
+accordingly. Reference implementations that work (e.g. Chromium's AppContainer sandbox)
+do access user-profile paths, so this is a fixable wiring issue, not a Windows limit.
 
-The `windows-sandbox` job in `.github/workflows/dotnet.yml` runs
-`scripts/windows-sandbox-probe.ps1`: a child runs under an AppContainer granted only
-a `docs:rw` dir (not a `secret` dir) and must be **denied** the secret read while
-**allowed** the docs write (`READ=0 WRITE=1`). It skip-passes where AppContainer is
-unavailable. Same contract as `landlock-probe.sh` / the macOS sandbox test.
+Until then, the honest NoOp + install-time warning stays — shipping the backend would
+launch apps that cannot read their own install directory, strictly worse than NoOp.
 
-## Known limitations
+## Verification harness (ready for when it works)
 
-- The container profile and the path ACEs are left in place after exit (the
-  container name / SID is stable per app, so re-grants are idempotent and the ACE
-  only ever benefits that one Hina-managed container). Full teardown on uninstall is
-  future work.
-- `rw` grants read+write+execute but not `DELETE`; apps that must delete files in a
-  granted dir may need a wider right (future work).
+`scripts/windows-sandbox-probe.ps1` + the `windows-sandbox` job in
+`.github/workflows/dotnet.yml`: a child runs under the sandbox granted only a `docs:rw`
+dir (not a `secret` dir) and must be denied the secret read + allowed the docs write
+(`READ=0 WRITE=1`). It SKIP-passes while Windows is NoOp; wire `WindowsSandbox` into the
+factory and it becomes the real enforcement proof with no other changes.

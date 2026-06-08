@@ -47,15 +47,37 @@ namespace Hina.PackageManager.Platform.Windows
         // ---- Menu shortcut (.lnk via IShellLink) ----
 
         public Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, CancellationToken ct)
+            => CreateMenuShortcut(entry, appDir, launchOverride: null, ct);
+
+        // Sandbox-aware overload: a sandboxed app routes through `hina run` (launchOverride)
+        // so the AppContainer is installed before the real binary starts. The .lnk then points
+        // at the hina executable with `run <app> <entry>` as its arguments — pointing straight
+        // at the binary would bypass the sandbox. Control chars are stripped (the override flows
+        // into a persisted shortcut). Mirrors Linux/macOS.
+        public Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, string? launchOverride, CancellationToken ct)
         {
             Directory.CreateDirectory(_startMenuDir);
 
             string linkPath = Path.Combine(_startMenuDir, SanitizeFileName(entry.Name) + ".lnk");
-            string targetPath = Path.Combine(appDir, entry.Exec);
-            string workingDir = Path.GetDirectoryName(targetPath) ?? appDir;
             string? iconPath = entry.Icon != null ? Path.Combine(appDir, entry.Icon) : null;
 
-            ShellLink.Create(linkPath, targetPath, workingDir, entry.Name, iconPath);
+            string targetPath;
+            string workingDir;
+            string? arguments = null;
+            if (launchOverride != null)
+            {
+                WindowsLaunchOverride parsed = WindowsLaunchOverride.Parse(StripControl(launchOverride));
+                targetPath = parsed.Exe;
+                arguments = parsed.Arguments;
+                workingDir = appDir;
+            }
+            else
+            {
+                targetPath = Path.Combine(appDir, entry.Exec);
+                workingDir = Path.GetDirectoryName(targetPath) ?? appDir;
+            }
+
+            ShellLink.Create(linkPath, targetPath, workingDir, entry.Name, iconPath, arguments);
             return Task.FromResult(linkPath);
         }
 

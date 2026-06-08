@@ -247,18 +247,18 @@ Any token outside this set is rejected at validation (fail closed — Hina never
 silently grants an unknown path).
 
 **`capabilities`** — booleans: `network`, `audio`, `microphone`, `screen`,
-`input`, `devices`. **`network` is enforced on Linux 6.7+** (Landlock ABI ≥ 4): a
-sandboxed app that does not declare `network: true` has all TCP bind/connect
-denied. On older kernels and other OSes `network` is declared-only. The remaining
-capabilities are **not enforced** — surfaced to the user (by `hina perms`) as
-*"declared — not enforced"* so the display never implies isolation Hina does not
-provide.
+`input`, `devices`. **`network` is enforced on Linux 6.7+** (Landlock ABI ≥ 4) and
+**macOS**: a sandboxed app that does not declare `network: true` has outbound
+network denied. On older Linux kernels and other OSes `network` is declared-only.
+The remaining capabilities are **not enforced** — surfaced to the user (by
+`hina perms`) as *"declared — not enforced"* so the display never implies isolation
+Hina does not provide.
 
 **What is enforced where** — the **filesystem** scope and the **`network`**
 capability are enforced on **Linux** (via Landlock; network needs kernel 6.7+) and
-on **macOS** (via `sandbox-exec`). On Windows the declared scope is shown at
-install time with a warning that it is *not* applied. See the [Sandboxing](#sandboxing)
-section for the full model.
+**macOS** (via `sandbox-exec`). On Windows the declared scope is shown at install
+time with a warning that it is *not* applied (an AppContainer backend is implemented
+but unverified). See the [Sandboxing](#sandboxing) section for the full model.
 
 ### Validation rules
 
@@ -336,24 +336,25 @@ A publisher can opt an app into a Flatpak-style filesystem sandbox via the
 [`sandbox` block](#the-optional-sandbox-block). The enforcement model in v1 is
 deliberately narrow:
 
-- **Filesystem scope is the only enforced category**, and **only on Linux** (via
-  Landlock — kernel ≥ 5.13, unprivileged, no root or bubblewrap). `hina run`
-  installs the Landlock ruleset, then `execv`s the app; the restrictions are
-  inherited across the exec, so the app's process is the restricted one.
+- **Filesystem scope** is enforced on **Linux** (via Landlock — kernel ≥ 5.13,
+  unprivileged, no root or bubblewrap). `hina run` installs the Landlock ruleset,
+  then `execv`s the app; the restrictions are inherited across the exec, so the
+  app's process is the restricted one.
 - **macOS** enforces via `sandbox-exec` (Seatbelt): `hina run` generates a profile
   from the declared scope and launches the app under `sandbox-exec -f <profile>`,
   so its shortcut routes through `hina run` just like Linux.
-- **Windows does not enforce the sandbox yet** (that backend is deferred).
-  Installing a sandboxed app there warns that it runs with full user privileges,
-  and its shortcut launches the binary directly — it does **not** route through
-  `hina run` (which would gain nothing).
-- **Old kernel / no Landlock / no sandbox-exec** → a no-op plus a one-time warning. A missing or
-  too-old sandbox backend never blocks a launch.
-- **`network` is enforced on Linux 6.7+.** A sandboxed app that doesn't declare
-  `network: true` has all TCP bind/connect denied (Landlock ABI ≥ 4); on older
-  kernels and other OSes it falls back to declared-only. `audio`, `microphone`,
-  `screen`, `input`, and `devices` remain declared-only — surfaced to the user as
-  *"declared — not enforced"*; nothing restricts them yet.
+- **Windows does not enforce the sandbox yet.** An AppContainer backend is
+  implemented but unverified (see `docs/Windows-Sandbox-Design.md`), so Windows uses
+  NoOp: installing a sandboxed app there warns that it runs with full user
+  privileges, and its shortcut launches the binary directly — it does **not** route
+  through `hina run` (which would gain nothing).
+- **Old kernel / no Landlock / no sandbox-exec / Windows** → a no-op plus a one-time
+  warning. A missing or too-old sandbox backend never blocks a launch.
+- **`network` is enforced on Linux 6.7+ and macOS.** A sandboxed app that doesn't
+  declare `network: true` has outbound network denied (Landlock ABI ≥ 4 / Seatbelt);
+  on older Linux kernels and other OSes it falls back to declared-only. `audio`,
+  `microphone`, `screen`, `input`, and `devices` remain declared-only — surfaced to
+  the user as *"declared — not enforced"*; nothing restricts them yet.
 - **No portals.** There are no dynamic file-picker grants. Scope is the static set
   of declared paths plus any paths the user grants manually.
 

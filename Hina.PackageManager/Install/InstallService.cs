@@ -179,9 +179,11 @@ namespace Hina.PackageManager.Install
 
                 // [12] Shell entries. Sandboxed apps launch via `hina run` so the
                 // filesystem sandbox is installed before the app process starts — enforced on
-                // Linux (Landlock) and macOS (sandbox-exec). On Windows the launchOverride is
-                // ignored (the app launches directly), so we must NOT route through `hina run`
-                // (it would gain nothing) and we must tell the user the sandbox is not enforced.
+                // Linux (Landlock) and macOS (sandbox-exec). On an OS without a working backend
+                // (Windows — its AppContainer backend is implemented but unverified, see
+                // WindowsSandbox) the launchOverride is ignored (the app launches directly), so
+                // we must NOT route through `hina run` (it would gain nothing) and we must tell
+                // the user the sandbox is not enforced.
                 bool sandboxRequested = descriptor.Sandbox?.Enabled == true;
                 bool sandboxEnforceable = RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
                     || RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
@@ -234,9 +236,10 @@ namespace Hina.PackageManager.Install
         }
 
         // Tell the user exactly what filesystem scope a sandboxed app declares, with extra
-        // emphasis on the unrestricted "host" escape hatch. `enforceable` is false on OSes whose
-        // sandbox backend isn't implemented yet (macOS/Windows) — there the scope is declared but
-        // NOT applied, so we must say so plainly instead of implying isolation that won't happen.
+        // emphasis on the unrestricted "host" escape hatch. `enforceable` is false where the
+        // platform can't enforce (Windows — no working backend yet; or an old Linux kernel
+        // without Landlock) — there the scope is declared but NOT applied, so we say so plainly
+        // instead of implying isolation that won't happen.
         private void DiscloseSandbox(SandboxSpec sandbox, bool enforceable)
         {
             if (!enforceable)

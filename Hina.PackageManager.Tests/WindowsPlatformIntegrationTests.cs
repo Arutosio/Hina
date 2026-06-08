@@ -90,6 +90,30 @@ namespace Hina.PackageManager.Tests
 
         [Fact]
         [SupportedOSPlatform("windows")]
+        public async Task CreateMenuShortcut_WithLaunchOverride_WritesLnkRoutedThroughHina()
+        {
+            if (!IsWindows) return;
+
+            WindowsPlatformIntegration p = NewPlatform();
+
+            string appDir = Path.Combine(_tempDir, "payload");
+            Directory.CreateDirectory(appDir);
+
+            ShellEntry entry = new ShellEntry { Id = "main", Name = "Sandboxed App", Exec = "bin\\demo.exe" };
+            string hinaExe = Path.Combine(_tempDir, "hina.exe");
+            File.WriteAllBytes(hinaExe, new byte[] { 0x4D, 0x5A });
+            string launchOverride = $"\"{hinaExe}\" run demo \"main\"";
+
+            // The sandboxed shortcut must point at hina (so the AppContainer is installed
+            // before the app starts), not the raw binary — the COM write must not throw.
+            string evidence = await p.CreateMenuShortcut(entry, appDir, launchOverride, CancellationToken.None);
+
+            Assert.True(File.Exists(evidence));
+            Assert.EndsWith(".lnk", evidence);
+        }
+
+        [Fact]
+        [SupportedOSPlatform("windows")]
         public async Task RegisterUrlScheme_WritesHkcuKeyWithUrlProtocol()
         {
             if (!IsWindows) return;
@@ -156,7 +180,8 @@ namespace Hina.PackageManager.Tests
 
             string evidence = await p.InstallFont(src, CancellationToken.None);
 
-            string[] parts = evidence.Split('|');
+            // Evidence is "<destPath><US><fontName>" (US = unit separator U+001F), not '|'.
+            string[] parts = evidence.Split('');
             Assert.Equal(2, parts.Length);
             string destPath = parts[0];
             string fontName = parts[1];

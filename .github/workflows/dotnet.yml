@@ -68,3 +68,29 @@ jobs:
     # allowed. It is a no-op assert off macOS, so this job is its real proof.
     - name: Test (incl. sandbox-exec enforcement)
       run: dotnet test --no-build -c Release --verbosity normal
+
+  windows-sandbox:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: 10.0.x
+    - name: Restore dependencies
+      run: dotnet restore
+    - name: Build
+      run: dotnet build --no-restore -c Release
+    - name: Test
+      run: dotnet test --no-build -c Release --verbosity normal
+    # The Windows AppContainer backend can only be PROVEN on a real Windows runner.
+    # windows-sandbox-probe.ps1 runs a child under an AppContainer granting only a
+    # docs:rw dir (not a secret dir) and asserts the secret read is denied + the docs
+    # write allowed. It skip-passes if AppContainer is unavailable.
+    - name: Windows AppContainer sandbox probe
+      shell: pwsh
+      run: |
+        $hina = Get-ChildItem -Path Hina.CLI/bin/Release -Recurse -Filter Hina.CLI.exe | Select-Object -First 1
+        if (-not $hina) { Write-Error "hina binary not found"; exit 1 }
+        Write-Host "Using hina: $($hina.FullName)"
+        ./scripts/windows-sandbox-probe.ps1 -HinaExe $hina.FullName

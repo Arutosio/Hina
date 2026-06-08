@@ -43,26 +43,33 @@ $secret = Join-Path $work "secret"
 New-Item -ItemType Directory -Force -Path $app, $docs, $secret | Out-Null
 Set-Content -Path (Join-Path $secret "key") -Value "topsecret" -NoNewline
 
-# Nothing under the profile worked (package SID / ALL APP PACKAGES / Low integrity all
-# denied) though system32 is reachable. Test whether the PATH LOCATION is the blocker:
-# grant a SHALLOW dir directly under C:\ (off the user profile, short traverse chain).
-#   WPKG  -> write the deep profile dir (baseline; currently fails)
-#   WROOT -> write the shallow C:\ dir
-# If WROOT=1 while WPKG=0, the user-profile path (runner ACLs) is the blocker, not the
-# AppContainer mechanism.
+# Even a shallow C:\ dir granted the package SID was denied — only system32 (system
+# ALL-APP-PACKAGES baseline) is reachable. Final decisive test, shallow under C:\ (which
+# is provably traversable since system32 works), using ALL APPLICATION PACKAGES (the
+# group the container demonstrably has):
+#   WAR    -> write a C:\ dir granted ALL APPLICATION PACKAGES
+#   WARLOW -> same, but with the integrity label lowered to Low
+# WAR=1 -> the mechanism works and the earlier failures were SID-matching/traversal.
+# WARLOW=1 only -> Mandatory Integrity was the blocker. Both 0 -> fundamental token
+# restriction; the AppContainer cannot honor any runtime grant -> ship NoOp + document.
+$aap = '*S-1-15-2-1'
 $rootDir = "C:\hina-sbx-" + [System.Guid]::NewGuid().ToString("N")
-$rootDocs = Join-Path $rootDir "docs"
-New-Item -ItemType Directory -Force -Path $rootDocs | Out-Null
+$rootA = Join-Path $rootDir "a"
+$rootB = Join-Path $rootDir "b"
+New-Item -ItemType Directory -Force -Path $rootA, $rootB | Out-Null
+icacls $rootDir /grant "${aap}:(RX)" /Q | Out-Null            # traverse the C:\ test root
+icacls $rootA /grant "${aap}:(OI)(CI)(M)" /Q | Out-Null
+icacls $rootB /grant "${aap}:(OI)(CI)(M)" /Q | Out-Null
+icacls $rootB /setintegritylevel "(OI)(CI)L" /Q | Out-Null
 
 $cmdExe = Join-Path $env:SystemRoot "System32\cmd.exe"
 $stderrFile = Join-Path $work "stderr.txt"
-$inner = "set RS=0& set WP=0& set WR=0& ( type $secret\key 1>nul 2>nul && set RS=1 ) & ( echo x 1>$docs\out 2>nul && set WP=1 ) & ( echo x 1>$rootDocs\out 2>nul && set WR=1 ) & echo RSEC=!RS! WPKG=!WP! WROOT=!WR!"
+$inner = "set RS=0& set WP=0& set WA=0& set WB=0& ( type $secret\key 1>nul 2>nul && set RS=1 ) & ( echo x 1>$docs\out 2>nul && set WP=1 ) & ( echo x 1>$rootA\out 2>nul && set WA=1 ) & ( echo x 1>$rootB\out 2>nul && set WB=1 ) & echo RSEC=!RS! WPKG=!WP! WAR=!WA! WARLOW=!WB!"
 
 $hinaArgs = @(
     'dev', 'sandbox-run', '--verbose',
     '--app-dir', $app,
     '--allow', ($docs + ':rw'),
-    '--allow', ($rootDocs + ':rw'),
     '--',
     $cmdExe, '/v:on', '/c', $inner
 )
@@ -78,10 +85,10 @@ Write-Host $out
 Write-Host "---- probe stderr ----"
 Write-Host $err
 
-Write-Host "---- icacls docs (deep profile) ----"
-icacls $docs 2>&1 | Out-String | Write-Host
-Write-Host "---- icacls rootDocs (shallow C:\) ----"
-icacls $rootDocs 2>&1 | Out-String | Write-Host
+Write-Host "---- icacls rootA (C:\ ALL APP PACKAGES) ----"
+icacls $rootA 2>&1 | Out-String | Write-Host
+Write-Host "---- icacls rootB (C:\ ALL APP PACKAGES + Low IL) ----"
+icacls $rootB 2>&1 | Out-String | Write-Host
 
 $combined = "$out`n$err"
 
@@ -96,20 +103,21 @@ if ($combined -match 'cannot enforce' -or $combined -match 'running unsandboxed'
 # Parse the measurements.
 $rsec = if ($combined -match 'RSEC=(\d)') { $matches[1] } else { '?' }
 $wpkg = if ($combined -match 'WPKG=(\d)') { $matches[1] } else { '?' }
-$wroot = if ($combined -match 'WROOT=(\d)') { $matches[1] } else { '?' }
-Write-Host "---- diagnosis ---- RSEC=$rsec WPKG=$wpkg WROOT=$wroot"
-if ($wroot -eq '1' -and $wpkg -eq '0') {
-    Write-Host "DIAGNOSIS: shallow C:\ dir works but the deep profile dir does not -> the user-profile path (runner ACLs) is the blocker, not the AppContainer mechanism."
-}
-if ($wroot -eq '0' -and $wpkg -eq '0') {
-    Write-Host "DIAGNOSIS: even a shallow C:\ dir is denied -> the blocker is fundamental, not path-specific."
+$war = if ($combined -match 'WAR=(\d)') { $matches[1] } else { '?' }
+$warlow = if ($combined -match 'WARLOW=(\d)') { $matches[1] } else { '?' }
+Write-Host "---- diagnosis ---- RSEC=$rsec WPKG=$wpkg WAR=$war WARLOW=$warlow"
+if ($war -eq '1') {
+    Write-Host "DIAGNOSIS: ALL APPLICATION PACKAGES write works on a shallow C:\ dir -> mechanism is fine; earlier failures were SID-matching/traversal under the profile."
+} elseif ($warlow -eq '1') {
+    Write-Host "DIAGNOSIS: only the Low-integrity dir was writable -> Mandatory Integrity (write-up) is the blocker."
+} else {
+    Write-Host "DIAGNOSIS: even ALL APPLICATION PACKAGES on a shallow C:\ dir is denied -> fundamental token restriction; the AppContainer honors no runtime grant. Recommend NoOp + documented gap."
 }
 
-# Real success: the deep profile dir is what production uses, so require WPKG=1.
 if ($rsec -eq '0' -and $wpkg -eq '1') {
     Write-Host "PASS: secret read denied, granted write allowed under AppContainer."
     exit 0
 }
 
-Write-Error "FAIL (diagnostic run): RSEC=$rsec WPKG=$wpkg WROOT=$wroot"
+Write-Error "FAIL (diagnostic run): RSEC=$rsec WPKG=$wpkg WAR=$war WARLOW=$warlow"
 exit 1

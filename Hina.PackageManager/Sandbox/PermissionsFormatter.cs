@@ -7,9 +7,9 @@ using Hina.PackageManager.Descriptor;
 namespace Hina.PackageManager.Sandbox
 {
     // Renders AppPermissions as the `hina perms` table (all apps) and detail
-    // (one app). Pure string output. Every non-filesystem capability is rendered
-    // with a "not enforced" caveat so the display never implies isolation Hina
-    // does not provide.
+    // (one app). Pure string output. Filesystem and network are enforced; the other
+    // capabilities are rendered with a "not enforced" caveat so the display never
+    // implies isolation Hina does not provide.
     public static class PermissionsFormatter
     {
         private const string Yes = "✓";
@@ -58,8 +58,9 @@ namespace Hina.PackageManager.Sandbox
             }
 
             sb.Append('\n');
-            sb.Append("Only filesystem (FS) is enforced — Linux/Landlock. NET/AUDIO/MIC/SCREEN/INPUT/DEV are\n");
-            sb.Append("declared by the app but NOT yet enforced. Run `hina perms <app>` for details.\n");
+            sb.Append("Filesystem (FS) and network (NET) are enforced — Linux/Landlock + macOS/sandbox-exec\n");
+            sb.Append("(NET needs Linux 6.7+). AUDIO/MIC/SCREEN/INPUT/DEV are declared but NOT enforced.\n");
+            sb.Append("Run `hina perms <app>` for details.\n");
             return sb.ToString();
         }
 
@@ -91,7 +92,13 @@ namespace Hina.PackageManager.Sandbox
                 sb.Append("    (nothing beyond the install dir)\n");
             }
 
-            Capability(sb, "Network", p.Network);
+            // Network is enforced (Linux 6.7+/macOS), so it reads differently from the
+            // declared-only capabilities: granted vs actively denied, both enforced.
+            sb.Append("  ").Append(PadRight("Network:", 12)).Append(' ');
+            sb.Append(p.Network
+                ? "allowed (enforced)\n"
+                : "denied (enforced on Linux 6.7+/macOS)\n");
+
             Capability(sb, "Audio", p.Audio);
             Capability(sb, "Microphone", p.Microphone);
             Capability(sb, "Screen", p.Screen);

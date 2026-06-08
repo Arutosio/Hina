@@ -28,8 +28,24 @@ namespace Hina.PackageManager.Tests
             Assert.Contains("APP", t);
             Assert.Contains("NET", t);
             Assert.Contains("DEV", t);
-            // Legend must state only filesystem is enforced.
-            Assert.Contains("only filesystem", t.ToLowerInvariant());
+            // Legend must say filesystem AND network are enforced now (no longer
+            // "only filesystem"), and that the remaining caps are not enforced.
+            string lower = t.ToLowerInvariant();
+            Assert.DoesNotContain("only filesystem", lower);
+            Assert.Contains("network", lower);
+            Assert.Contains("enforced", lower);
+        }
+
+        [Fact]
+        public void Detail_NetworkDenied_ShownAsEnforced()
+        {
+            // A sandboxed app that did not declare network has it DENIED — and that
+            // denial is enforced (Linux 6.7+/macOS), not merely declared.
+            AppPermissions p = new AppPermissions { Name = "boxed", SandboxEnabled = true, Network = false };
+            string d = PermissionsFormatter.Detail(p).ToLowerInvariant();
+            Assert.Contains("network", d);
+            Assert.Contains("denied", d);
+            Assert.DoesNotContain("network:      declared (not enforced)", d);
         }
 
         [Fact]

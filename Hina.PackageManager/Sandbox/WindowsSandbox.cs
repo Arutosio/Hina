@@ -106,6 +106,7 @@ namespace Hina.PackageManager.Sandbox
                 {
                     GrantContainerAce(ace.Path, containerSid, ace.Access);
                     _logger.LogDebug("AppContainer grant {Access} on {Path}", ace.Access, ace.Path);
+                    GrantAncestorTraverse(ace.Path, containerSid);
                 }
 
                 // 2. Build the capability SID array (network etc).
@@ -201,13 +202,39 @@ namespace Hina.PackageManager.Sandbox
                 _ => GENERIC_READ | GENERIC_EXECUTE,
             };
             // Inheritable so files created in / already under the dir get the right too.
-            GrantAce(path, containerSid, rights, SUB_CONTAINERS_AND_OBJECTS_INHERIT, throwOnFail: true);
+            // propagate=true (SetNamedSecurityInfo) pushes the inheritable ACE to existing
+            // children — cheap on a small app/data dir and needed so its files are reachable.
+            GrantAce(path, containerSid, rights, SUB_CONTAINERS_AND_OBJECTS_INHERIT, throwOnFail: true, propagate: true);
+        }
+
+        // Grant FILE_TRAVERSE on every ancestor directory of a granted leaf so the lowbox
+        // token (which does NOT bypass traverse — proven on CI) can walk down to it.
+        // Execute-only and NON-inheritable, so the container gains pass-through but cannot
+        // enumerate or read the ancestors' contents. propagate=false so each grant uses
+        // SetFileSecurity (no subtree re-propagation — SetNamedSecurityInfo on a profile dir
+        // walks the whole tree and hangs for minutes). Best-effort: ancestors we can't re-ACL
+        // (the drive root, C:\Users) are skipped — they already grant ALL APPLICATION PACKAGES
+        // traverse; the profile-private dirs we own are the ones that need it.
+        [SupportedOSPlatform("windows")]
+        private void GrantAncestorTraverse(string leafPath, IntPtr containerSid)
+        {
+            DirectoryInfo? dir;
+            try { dir = Directory.GetParent(Path.GetFullPath(leafPath)); }
+            catch { return; }
+
+            while (dir != null)
+            {
+                GrantAce(dir.FullName, containerSid, FILE_TRAVERSE, NO_INHERITANCE, throwOnFail: false, propagate: false);
+                dir = dir.Parent;
+            }
         }
 
         // Merge one GRANT_ACCESS ACE for the container SID into a path's DACL.
         // throwOnFail=false makes it best-effort (used for the ancestor traverse chain).
+        // propagate=false applies the DACL with SetFileSecurity, which does NOT re-propagate
+        // inheritance into the subtree (SetNamedSecurityInfo does, and hangs on big dirs).
         [SupportedOSPlatform("windows")]
-        private void GrantAce(string path, IntPtr containerSid, uint rights, uint inheritance, bool throwOnFail)
+        private void GrantAce(string path, IntPtr containerSid, uint rights, uint inheritance, bool throwOnFail, bool propagate)
         {
             uint getErr = GetNamedSecurityInfoW(path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
                 IntPtr.Zero, IntPtr.Zero, out IntPtr oldDacl, IntPtr.Zero, out IntPtr securityDescriptor);
@@ -244,12 +271,33 @@ namespace Hina.PackageManager.Sandbox
                     return;
                 }
 
-                uint applyErr = SetNamedSecurityInfoW(path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
-                    IntPtr.Zero, IntPtr.Zero, newDacl, IntPtr.Zero);
-                if (applyErr != ERROR_SUCCESS)
+                if (propagate)
                 {
-                    if (throwOnFail) throw new InvalidOperationException($"SetNamedSecurityInfo('{path}') failed ({applyErr}).");
-                    _logger.LogDebug("AppContainer: SetNamedSecurityInfo('{Path}') failed ({Err}); skipped.", path, applyErr);
+                    uint applyErr = SetNamedSecurityInfoW(path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+                        IntPtr.Zero, IntPtr.Zero, newDacl, IntPtr.Zero);
+                    if (applyErr != ERROR_SUCCESS)
+                    {
+                        if (throwOnFail) throw new InvalidOperationException($"SetNamedSecurityInfo('{path}') failed ({applyErr}).");
+                        _logger.LogDebug("AppContainer: SetNamedSecurityInfo('{Path}') failed ({Err}); skipped.", path, applyErr);
+                    }
+                }
+                else
+                {
+                    // Non-propagating: write just this object's DACL. SetFileSecurity does not
+                    // walk the subtree, so it stays fast on huge profile directories.
+                    IntPtr sd = Marshal.AllocHGlobal(SECURITY_DESCRIPTOR_MIN_LENGTH);
+                    try
+                    {
+                        if (!InitializeSecurityDescriptor(sd, SECURITY_DESCRIPTOR_REVISION)
+                            || !SetSecurityDescriptorDacl(sd, true, newDacl, false)
+                            || !SetFileSecurityW(path, DACL_SECURITY_INFORMATION, sd))
+                        {
+                            int err = Marshal.GetLastWin32Error();
+                            if (throwOnFail) throw new InvalidOperationException($"SetFileSecurity('{path}') failed ({err}).");
+                            _logger.LogDebug("AppContainer: SetFileSecurity('{Path}') failed ({Err}); skipped.", path, err);
+                        }
+                    }
+                    finally { Marshal.FreeHGlobal(sd); }
                 }
             }
             finally
@@ -398,6 +446,10 @@ namespace Hina.PackageManager.Sandbox
 
         private const int GRANT_ACCESS = 1;
         private const uint SUB_CONTAINERS_AND_OBJECTS_INHERIT = 0x3; // CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE
+        private const uint NO_INHERITANCE = 0x0;
+        private const uint FILE_TRAVERSE = 0x00000020; // execute right on a directory (pass-through, no list)
+        private const uint SECURITY_DESCRIPTOR_REVISION = 1;
+        private const int SECURITY_DESCRIPTOR_MIN_LENGTH = 40; // absolute SD header on x64
         private const int TRUSTEE_IS_SID = 0;
         private const int TRUSTEE_IS_UNKNOWN = 0;
         private const int NO_MULTIPLE_TRUSTEE = 0;
@@ -511,6 +563,21 @@ namespace Hina.PackageManager.Sandbox
         [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
         private static extern uint SetNamedSecurityInfoW(string pObjectName, int ObjectType, uint SecurityInfo,
             IntPtr psidOwner, IntPtr psidGroup, IntPtr pDacl, IntPtr pSacl);
+
+        // Legacy by-name DACL setter: unlike SetNamedSecurityInfo it does NOT re-propagate
+        // inheritance into the subtree, so it stays fast on large directories.
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetFileSecurityW(string lpFileName, uint SecurityInformation, IntPtr pSecurityDescriptor);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool InitializeSecurityDescriptor(IntPtr pSecurityDescriptor, uint dwRevision);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetSecurityDescriptorDacl(IntPtr pSecurityDescriptor,
+            [MarshalAs(UnmanagedType.Bool)] bool bDaclPresent, IntPtr pDacl, [MarshalAs(UnmanagedType.Bool)] bool bDaclDefaulted);
 
         [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
         private static extern uint SetEntriesInAclW(uint cCountOfExplicitEntries, ref EXPLICIT_ACCESS_W pListOfExplicitEntries,

@@ -92,6 +92,7 @@ namespace Hina.PackageManager.Sandbox
             string containerName = WindowsAppContainerPolicy.ContainerName(DeriveAppName(execAbs));
 
             IntPtr containerSid = CreateOrDeriveContainerSid(containerName);
+            _logger.LogDebug("AppContainer '{Name}' SID {Sid}", containerName, SidToString(containerSid));
             List<IntPtr> capabilitySids = new List<IntPtr>();
             IntPtr capabilitiesArray = IntPtr.Zero;
             IntPtr attributeList = IntPtr.Zero;
@@ -104,6 +105,7 @@ namespace Hina.PackageManager.Sandbox
                 foreach (AppContainerAce ace in WindowsAppContainerPolicy.BuildAceList(plan))
                 {
                     GrantContainerAce(ace.Path, containerSid, ace.Access);
+                    _logger.LogDebug("AppContainer grant {Access} on {Path}", ace.Access, ace.Path);
                 }
 
                 // 2. Build the capability SID array (network etc).
@@ -144,6 +146,18 @@ namespace Hina.PackageManager.Sandbox
                 foreach (IntPtr capSid in capabilitySids) LocalFree(capSid);
                 if (containerSid != IntPtr.Zero) FreeSid(containerSid);
             }
+        }
+
+        // Diagnostic only: render a PSID as its S-1-… string for the Debug log trail.
+        [SupportedOSPlatform("windows")]
+        private static string SidToString(IntPtr sid)
+        {
+            if (ConvertSidToStringSidW(sid, out IntPtr str) && str != IntPtr.Zero)
+            {
+                try { return Marshal.PtrToStringUni(str) ?? "?"; }
+                finally { LocalFree(str); }
+            }
+            return "?";
         }
 
         // App name used for the container moniker: the executable's file name without
@@ -306,6 +320,7 @@ namespace Hina.PackageManager.Sandbox
             {
                 throw new InvalidOperationException($"CreateProcess failed ({Marshal.GetLastWin32Error()}).");
             }
+            _logger.LogDebug("AppContainer launched pid {Pid} for {Exec}", pi.dwProcessId, execAbs);
 
             try
             {
@@ -471,6 +486,10 @@ namespace Hina.PackageManager.Sandbox
 
         [DllImport("advapi32.dll")]
         private static extern IntPtr FreeSid(IntPtr pSid);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool ConvertSidToStringSidW(IntPtr Sid, out IntPtr StringSid);
 
         [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
         private static extern uint GetNamedSecurityInfoW(string pObjectName, int ObjectType, uint SecurityInfo,

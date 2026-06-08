@@ -43,28 +43,22 @@ $secret = Join-Path $work "secret"
 New-Item -ItemType Directory -Force -Path $app, $docs, $secret | Out-Null
 Set-Content -Path (Join-Path $secret "key") -Value "topsecret" -NoNewline
 
-# probe.cmd lives in the app dir (granted read+execute). It tries to read the secret
-# (must fail) and write the doc (must succeed), then prints the verdict. %~1 = secret
-# dir, %~2 = docs dir.
-$probe = Join-Path $app "probe.cmd"
-@'
-@echo off
-set R=0
-set W=0
-type "%~1\key" >nul 2>&1 && set R=1
->"%~2\out" echo data 2>nul && set W=1
-echo READ=%R% WRITE=%W%
-'@ | Set-Content -Path $probe -Encoding ASCII
-
+# Inline cmd command (mirrors the Landlock probe's inline `sh -c`): try to read the
+# secret (must fail — secret dir is NOT granted) and write the doc (must succeed —
+# docs is granted rw), then print the verdict. cmd.exe itself is in System32, reachable
+# via the ALL APPLICATION PACKAGES ACE. /v:on so !R!/!W! expand at run time, not parse
+# time. Temp paths on the runner have no spaces, so no inner quoting is needed.
 $cmdExe = Join-Path $env:SystemRoot "System32\cmd.exe"
 $stderrFile = Join-Path $work "stderr.txt"
+$inner = "set R=0& set W=0& ( type $secret\key 1>nul 2>nul && set R=1 ) & ( echo data 1>$docs\out 2>nul && set W=1 ) & echo READ=!R! WRITE=!W!"
 
 $hinaArgs = @(
+    '--verbose',
     'dev', 'sandbox-run',
     '--app-dir', $app,
     '--allow', ($docs + ':rw'),
     '--',
-    $cmdExe, '/c', $probe, $secret, $docs
+    $cmdExe, '/v:on', '/c', $inner
 )
 
 Write-Host "Using hina: $HinaExe"

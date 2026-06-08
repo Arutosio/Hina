@@ -114,6 +114,72 @@ namespace Hina.CLI.Tests
             Assert.Equal(0, await Dispatch("version"));
         }
 
+        // ---- sandbox-era verbs (run / perms / repair / dev sandbox-run) ----
+
+        [Fact]
+        public async Task Run_NoApp_ReturnsUsageError()
+        {
+            Assert.Equal(2, await Dispatch("run"));
+        }
+
+        [Fact]
+        public async Task Run_UnknownApp_ReturnsNotFound()
+        {
+            Assert.Equal(1, await Dispatch("run", "ghost"));
+        }
+
+        [Fact]
+        public async Task Perms_EmptyRegistry_PrintsTableReturnsZero()
+        {
+            Assert.Equal(0, await Dispatch("perms"));
+        }
+
+        [Fact]
+        public async Task Perms_ListKeyword_ReturnsZero()
+        {
+            Assert.Equal(0, await Dispatch("perms", "list"));
+        }
+
+        [Theory]
+        [InlineData("permissions")]
+        [InlineData("permessi")]
+        public async Task Perms_Aliases_RouteToPerms(string alias)
+        {
+            Assert.Equal(0, await Dispatch(alias));
+        }
+
+        [Fact]
+        public async Task Perms_UnknownApp_ReturnsNotFound()
+        {
+            Assert.Equal(1, await Dispatch("perms", "ghost"));
+        }
+
+        [Fact]
+        public async Task Repair_Alias_RoutesToVerify_EmptyRegistryReturnsZero()
+        {
+            Assert.Equal(0, await Dispatch("repair"));
+        }
+
+        [Fact]
+        public async Task Check_UnknownSubword_ReturnsUsageError()
+        {
+            // `hina check <not-update>` is the two-word router branch's failure path —
+            // deterministic and offline (the `check update` form would hit the network).
+            Assert.Equal(2, await Dispatch("check", "frobnicate"));
+        }
+
+        [Fact]
+        public async Task DevSandboxRun_MissingAppDir_ReturnsUsageError()
+        {
+            Assert.Equal(2, await Dispatch("dev", "sandbox-run", "--", "/bin/true"));
+        }
+
+        [Fact]
+        public async Task DevSandboxRun_MissingCommandSeparator_ReturnsUsageError()
+        {
+            Assert.Equal(2, await Dispatch("dev", "sandbox-run", "--app-dir", _root));
+        }
+
         [Fact]
         public async Task ReadOnly_FutureSchemaRegistry_ReturnsErrorCodeNotCrash()
         {

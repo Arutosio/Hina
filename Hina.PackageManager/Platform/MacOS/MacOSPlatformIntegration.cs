@@ -300,18 +300,6 @@ $@"<?xml version=""1.0"" encoding=""UTF-8""?>
             catch (Exception ex) { _logger.LogDebug(ex, "Best-effort: could not set exec mode on {Path}", execPath); }
         }
 
-        // Drop control characters (newlines especially) so a launch override can't
-        // inject extra script lines into the bundle exec.
-        private static string StripControl(string s)
-        {
-            StringBuilder sb = new StringBuilder(s.Length);
-            foreach (char c in s)
-            {
-                if (!char.IsControl(c)) sb.Append(c);
-            }
-            return sb.ToString();
-        }
-
         private static string BuildInfoPlist(string bundleName, string bundleId, string execName, string? documentTypes, string? urlTypes)
         {
             StringBuilder sb = new StringBuilder();

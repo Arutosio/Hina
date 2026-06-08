@@ -288,51 +288,10 @@ namespace Hina.PackageManager.Install
             {
                 _logger.LogError(addEx, "Hook/entry add failed for {Name}; rolling back update.", name);
 
-                for (int i = addedHooks.Count - 1; i >= 0; i--)
-                {
-                    try { await hooks.UndoAsync(addedHooks[i], CancellationToken.None); }
-                    catch (Exception ex) { _logger.LogDebug(ex, "Rollback-undo of added hook {Action} failed for {Name} (fail-soft).", addedHooks[i].Action, name); }
-                }
-                for (int i = addedEntries.Count - 1; i >= 0; i--)
-                {
-                    try { await _platform.RemoveMenuShortcut(addedEntries[i].Evidence, CancellationToken.None); }
-                    catch (Exception ex) { _logger.LogDebug(ex, "Rollback-removal of added shell entry {Id} failed for {Name} (fail-soft).", addedEntries[i].Id, name); }
-                }
-                // Best-effort: re-apply the hooks/entries we removed at step [7] so the app
-                // comes back to its pre-update side-effect set. These are sourced from the
-                // PREVIOUS descriptor (the new one no longer lists them). May silently fail
-                // (e.g. target re-exists, race) — we proceed regardless.
-                if (previousDescriptor != null)
-                {
-                    foreach (ShellEntryRecord r in entriesToRemove)
-                    {
-                        foreach (ShellEntry orig in previousDescriptor.Entries)
-                        {
-                            if (orig.Id != r.Id) continue;
-                            try { await _platform.CreateMenuShortcut(orig, app.InstallPath, CancellationToken.None); }
-                            catch (Exception ex) { _logger.LogDebug(ex, "Re-create of shell entry {Id} during rollback failed for {Name} (fail-soft).", r.Id, name); }
-                            break;
-                        }
-                    }
-                    foreach (HookEvidence removed in hooksToRemove)
-                    {
-                        string removedId = UpdateDiff.ResolveIdentity(removed);
-                        foreach (HookAction origHook in previousDescriptor.PostInstall)
-                        {
-                            if (HookIdentity.For(origHook) != removedId) continue;
-                            try { await hooks.ApplyAsync(origHook, app.InstallPath, app.Name, previousDescriptor.Entries, CancellationToken.None); }
-                            catch (Exception ex) { _logger.LogDebug(ex, "Re-apply of hook {Id} during rollback failed for {Name} (fail-soft).", removedId, name); }
-                            break;
-                        }
-                    }
-                }
-                // Patch on disk also needs to roll back; PatchClient already journaled
-                // backups when Backup=true so RollbackAsync restores them.
-                try { await patcher.RollbackAsync(app.InstallPath, CancellationToken.None); }
-                catch (Exception ex) { _logger.LogDebug(ex, "Patch rollback during add-failure recovery failed for {Name} (fail-soft).", name); }
-
-                try { await SaveAppRowLockedAsync(locks, store, name, previousSnapshot, CancellationToken.None); }
-                catch (Exception ex) { _logger.LogWarning(ex, "Restoring pre-update registry snapshot for {Name} failed (fail-soft); run `hina verify`.", name); }
+                await RollbackFailedAddAsync(
+                    name, app, hooks, patcher, previousDescriptor,
+                    addedHooks, addedEntries, entriesToRemove, hooksToRemove,
+                    locks, store, previousSnapshot);
 
                 return new UpdateResult
                 {
@@ -384,17 +343,8 @@ namespace Hina.PackageManager.Install
                 };
             }
 
-            // [8] Refresh descriptor cache (atomic). Not fatal if it fails — a cache from the
-            // previous version already exists, so the worst case is `run`/`perms` showing stale
-            // scope until the next update/reinstall — but log it rather than swallow silently.
-            try
-            {
-                AtomicFile.WriteAllText(_paths.DescriptorCache(name), DescriptorParser.Serialize(descriptor));
-            }
-            catch (Exception cacheEx)
-            {
-                _logger.LogWarning(cacheEx, "Updated {Name} but could not refresh its descriptor cache; run/perms may show stale scope until the next update.", name);
-            }
+            // [8] Refresh descriptor cache (atomic, best-effort).
+            RefreshDescriptorCacheBestEffort(name, descriptor);
 
             return new UpdateResult
             {
@@ -403,6 +353,80 @@ namespace Hina.PackageManager.Install
                 ToVersion = descriptor.Version,
                 Status = UpdateStatus.Updated
             };
+        }
+
+        // Rewrite the cached descriptor so run/perms see the new version's scope. Not fatal
+        // if it fails — the previous version's cache already exists, so the worst case is
+        // run/perms showing stale scope until the next update/reinstall — but log it rather
+        // than swallow silently.
+        private void RefreshDescriptorCacheBestEffort(string name, AppDescriptor descriptor)
+        {
+            try
+            {
+                AtomicFile.WriteAllText(_paths.DescriptorCache(name), DescriptorParser.Serialize(descriptor));
+            }
+            catch (Exception cacheEx)
+            {
+                _logger.LogWarning(cacheEx, "Updated {Name} but could not refresh its descriptor cache; run/perms may show stale scope until the next update.", name);
+            }
+        }
+
+        // Recover from a mid-flight failure while applying the new version's hooks/entries:
+        // undo what we just added (reverse order), best-effort re-restore the hooks/entries we
+        // removed at step [7] from the PREVIOUS descriptor, roll back the on-disk patch, and
+        // restore the pre-update registry snapshot — so the user sees a clean rollback. Every
+        // step is fail-soft; recovery must not throw.
+        private async Task RollbackFailedAddAsync(
+            string name, InstalledApp app, HookExecutor hooks, IPatchClient patcher, AppDescriptor? previousDescriptor,
+            List<HookEvidence> addedHooks, List<ShellEntryRecord> addedEntries,
+            List<ShellEntryRecord> entriesToRemove, List<HookEvidence> hooksToRemove,
+            LockManager locks, RegistryStore store, InstalledApp previousSnapshot)
+        {
+            for (int i = addedHooks.Count - 1; i >= 0; i--)
+            {
+                try { await hooks.UndoAsync(addedHooks[i], CancellationToken.None); }
+                catch (Exception ex) { _logger.LogDebug(ex, "Rollback-undo of added hook {Action} failed for {Name} (fail-soft).", addedHooks[i].Action, name); }
+            }
+            for (int i = addedEntries.Count - 1; i >= 0; i--)
+            {
+                try { await _platform.RemoveMenuShortcut(addedEntries[i].Evidence, CancellationToken.None); }
+                catch (Exception ex) { _logger.LogDebug(ex, "Rollback-removal of added shell entry {Id} failed for {Name} (fail-soft).", addedEntries[i].Id, name); }
+            }
+            // Best-effort: re-apply the hooks/entries we removed at step [7] so the app
+            // comes back to its pre-update side-effect set. These are sourced from the
+            // PREVIOUS descriptor (the new one no longer lists them). May silently fail
+            // (e.g. target re-exists, race) — we proceed regardless.
+            if (previousDescriptor != null)
+            {
+                foreach (ShellEntryRecord r in entriesToRemove)
+                {
+                    foreach (ShellEntry orig in previousDescriptor.Entries)
+                    {
+                        if (orig.Id != r.Id) continue;
+                        try { await _platform.CreateMenuShortcut(orig, app.InstallPath, CancellationToken.None); }
+                        catch (Exception ex) { _logger.LogDebug(ex, "Re-create of shell entry {Id} during rollback failed for {Name} (fail-soft).", r.Id, name); }
+                        break;
+                    }
+                }
+                foreach (HookEvidence removed in hooksToRemove)
+                {
+                    string removedId = UpdateDiff.ResolveIdentity(removed);
+                    foreach (HookAction origHook in previousDescriptor.PostInstall)
+                    {
+                        if (HookIdentity.For(origHook) != removedId) continue;
+                        try { await hooks.ApplyAsync(origHook, app.InstallPath, app.Name, previousDescriptor.Entries, CancellationToken.None); }
+                        catch (Exception ex) { _logger.LogDebug(ex, "Re-apply of hook {Id} during rollback failed for {Name} (fail-soft).", removedId, name); }
+                        break;
+                    }
+                }
+            }
+            // Patch on disk also needs to roll back; PatchClient already journaled
+            // backups when Backup=true so RollbackAsync restores them.
+            try { await patcher.RollbackAsync(app.InstallPath, CancellationToken.None); }
+            catch (Exception ex) { _logger.LogDebug(ex, "Patch rollback during add-failure recovery failed for {Name} (fail-soft).", name); }
+
+            try { await SaveAppRowLockedAsync(locks, store, name, previousSnapshot, CancellationToken.None); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Restoring pre-update registry snapshot for {Name} failed (fail-soft); run `hina verify`.", name); }
         }
 
         // Write a single app row under the exclusive lock, re-reading the on-disk registry first so

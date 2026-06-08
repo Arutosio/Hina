@@ -44,6 +44,27 @@ namespace Hina.PackageManager.Platform
             return sb.Length == 0 ? "entry" : sb.ToString();
         }
 
+        // Drop control characters (newlines especially) so a value can't inject extra lines at a
+        // write site — a .desktop Exec=, a macOS bundle shell stub, etc. The descriptor validator
+        // already rejects these, but stripping here keeps every write site safe even if a new
+        // field is added without a validator rule. Allocates only when a control char is present.
+        public static string StripControl(string value)
+        {
+            StringBuilder? sb = null;
+            for (int i = 0; i < value.Length; i++)
+            {
+                if (char.IsControl(value[i]))
+                {
+                    sb ??= new StringBuilder(value.Length).Append(value, 0, i);
+                }
+                else
+                {
+                    sb?.Append(value[i]);
+                }
+            }
+            return sb?.ToString() ?? value;
+        }
+
         // Sanitize an arbitrary string into a filesystem-safe file name: OS-invalid chars become
         // '_'. Empty/whitespace-only input falls back to "Hina".
         public static string SanitizeFileName(string value)

@@ -305,25 +305,6 @@ namespace Hina.PackageManager.Platform.Linux
         }
 
         // Remove any control character so an interpolated value can't break out of its key line.
-        // The descriptor validator already rejects these, but stripping here keeps every write site
-        // safe even if a new field is added without a validator rule.
-        private static string StripControl(string value)
-        {
-            StringBuilder? sb = null;
-            for (int i = 0; i < value.Length; i++)
-            {
-                if (char.IsControl(value[i]))
-                {
-                    sb ??= new StringBuilder(value.Length).Append(value, 0, i);
-                }
-                else
-                {
-                    sb?.Append(value[i]);
-                }
-            }
-            return sb?.ToString() ?? value;
-        }
-
         // Quote a single Exec token per the freedesktop Desktop Entry spec. Reserved characters
         // require the token to be double-quoted; inside double quotes the characters
         // backslash, backtick, dollar and double-quote must each be escaped with a backslash.

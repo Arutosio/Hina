@@ -106,6 +106,12 @@ namespace Hina.PackageManager.Sandbox
                 {
                     GrantContainerAce(ace.Path, containerSid, ace.Access);
                     _logger.LogDebug("AppContainer grant {Access} on {Path}", ace.Access, ace.Path);
+
+                    // A lowbox token is denied traversal of any ancestor directory that does
+                    // not grant it. The leaf ACE alone is useless if the container can't walk
+                    // down to it, so grant FILE_TRAVERSE (execute only — NOT read/list, so the
+                    // ancestors' other contents stay hidden) on each parent up to the root.
+                    GrantAncestorTraverse(ace.Path, containerSid);
                 }
 
                 // 2. Build the capability SID array (network etc).
@@ -200,12 +206,42 @@ namespace Hina.PackageManager.Sandbox
                 AppContainerAccess.ReadWriteExecute => GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE,
                 _ => GENERIC_READ | GENERIC_EXECUTE,
             };
+            // Inheritable so files created in / already under the dir get the right too.
+            GrantAce(path, containerSid, rights, SUB_CONTAINERS_AND_OBJECTS_INHERIT, throwOnFail: true);
+        }
 
+        // Grant FILE_TRAVERSE on every ancestor directory of a granted leaf so the lowbox
+        // token can walk down to it. Execute-only and NOT inheritable (this folder only), so
+        // the container gains pass-through but cannot enumerate or read the ancestors'
+        // contents. Best-effort: a dir we can't re-ACL (e.g. the drive root) is skipped — the
+        // chain Hina actually owns (its install dir / the temp tree) is what matters, and a
+        // total traversal failure surfaces as the launch failing, never as silent non-isolation.
+        [SupportedOSPlatform("windows")]
+        private void GrantAncestorTraverse(string leafPath, IntPtr containerSid)
+        {
+            DirectoryInfo? dir;
+            try { dir = Directory.GetParent(Path.GetFullPath(leafPath)); }
+            catch { return; }
+
+            while (dir != null)
+            {
+                GrantAce(dir.FullName, containerSid, FILE_TRAVERSE, NO_INHERITANCE, throwOnFail: false);
+                dir = dir.Parent;
+            }
+        }
+
+        // Merge one GRANT_ACCESS ACE for the container SID into a path's DACL.
+        // throwOnFail=false makes it best-effort (used for the ancestor traverse chain).
+        [SupportedOSPlatform("windows")]
+        private void GrantAce(string path, IntPtr containerSid, uint rights, uint inheritance, bool throwOnFail)
+        {
             uint getErr = GetNamedSecurityInfoW(path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
                 IntPtr.Zero, IntPtr.Zero, out IntPtr oldDacl, IntPtr.Zero, out IntPtr securityDescriptor);
             if (getErr != ERROR_SUCCESS)
             {
-                throw new InvalidOperationException($"GetNamedSecurityInfo('{path}') failed ({getErr}).");
+                if (throwOnFail) throw new InvalidOperationException($"GetNamedSecurityInfo('{path}') failed ({getErr}).");
+                _logger.LogDebug("AppContainer: GetNamedSecurityInfo('{Path}') failed ({Err}); skipped.", path, getErr);
+                return;
             }
 
             IntPtr newDacl = IntPtr.Zero;
@@ -215,7 +251,7 @@ namespace Hina.PackageManager.Sandbox
                 {
                     grfAccessPermissions = rights,
                     grfAccessMode = GRANT_ACCESS,
-                    grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+                    grfInheritance = inheritance,
                     Trustee = new TRUSTEE_W
                     {
                         pMultipleTrustee = IntPtr.Zero,
@@ -229,14 +265,17 @@ namespace Hina.PackageManager.Sandbox
                 uint setErr = SetEntriesInAclW(1, ref ea, oldDacl, out newDacl);
                 if (setErr != ERROR_SUCCESS)
                 {
-                    throw new InvalidOperationException($"SetEntriesInAcl('{path}') failed ({setErr}).");
+                    if (throwOnFail) throw new InvalidOperationException($"SetEntriesInAcl('{path}') failed ({setErr}).");
+                    _logger.LogDebug("AppContainer: SetEntriesInAcl('{Path}') failed ({Err}); skipped.", path, setErr);
+                    return;
                 }
 
                 uint applyErr = SetNamedSecurityInfoW(path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
                     IntPtr.Zero, IntPtr.Zero, newDacl, IntPtr.Zero);
                 if (applyErr != ERROR_SUCCESS)
                 {
-                    throw new InvalidOperationException($"SetNamedSecurityInfo('{path}') failed ({applyErr}).");
+                    if (throwOnFail) throw new InvalidOperationException($"SetNamedSecurityInfo('{path}') failed ({applyErr}).");
+                    _logger.LogDebug("AppContainer: SetNamedSecurityInfo('{Path}') failed ({Err}); skipped.", path, applyErr);
                 }
             }
             finally
@@ -385,6 +424,8 @@ namespace Hina.PackageManager.Sandbox
 
         private const int GRANT_ACCESS = 1;
         private const uint SUB_CONTAINERS_AND_OBJECTS_INHERIT = 0x3; // CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE
+        private const uint NO_INHERITANCE = 0x0;
+        private const uint FILE_TRAVERSE = 0x00000020; // execute right on a directory (pass-through, no list)
         private const int TRUSTEE_IS_SID = 0;
         private const int TRUSTEE_IS_UNKNOWN = 0;
         private const int NO_MULTIPLE_TRUSTEE = 0;

@@ -42,15 +42,21 @@ $docs = Join-Path $work "docs"
 $secret = Join-Path $work "secret"
 New-Item -ItemType Directory -Force -Path $app, $docs, $secret | Out-Null
 Set-Content -Path (Join-Path $secret "key") -Value "topsecret" -NoNewline
+# Pre-create a file INSIDE the granted docs dir so we can measure a granted-dir READ
+# separately from a granted-dir WRITE. Integrity (MIC) only blocks write-up, never
+# read-up — so if the container can READ this but not WRITE docs\out, the blocker is
+# integrity, not traversal; if it can't even read it, the blocker is traversal.
+Set-Content -Path (Join-Path $docs "readme") -Value "hello" -NoNewline
 
-# Inline cmd command (mirrors the Landlock probe's inline `sh -c`): try to read the
-# secret (must fail — secret dir is NOT granted) and write the doc (must succeed —
-# docs is granted rw), then print the verdict. cmd.exe itself is in System32, reachable
-# via the ALL APPLICATION PACKAGES ACE. /v:on so !R!/!W! expand at run time, not parse
-# time. Temp paths on the runner have no spaces, so no inner quoting is needed.
+# Inline cmd command (mirrors the Landlock probe's inline `sh -c`). Three measurements:
+#   RSEC = read the ungranted secret (must be 0 — isolation)
+#   RDOC = read a granted-dir file   (traverse test: 1 = reached docs)
+#   WDOC = write a granted-dir file  (must be 1 — the grant works end to end)
+# cmd.exe is in System32, reachable via ALL APPLICATION PACKAGES. /v:on so !..! expand
+# at run time. Temp paths on the runner have no spaces, so no inner quoting is needed.
 $cmdExe = Join-Path $env:SystemRoot "System32\cmd.exe"
 $stderrFile = Join-Path $work "stderr.txt"
-$inner = "set R=0& set W=0& ( type $secret\key 1>nul 2>nul && set R=1 ) & ( echo data 1>$docs\out 2>nul && set W=1 ) & echo READ=!R! WRITE=!W!"
+$inner = "set RS=0& set RD=0& set W=0& ( type $secret\key 1>nul 2>nul && set RS=1 ) & ( type $docs\readme 1>nul 2>nul && set RD=1 ) & ( echo data 1>$docs\out 2>nul && set W=1 ) & echo RSEC=!RS! RDOC=!RD! WDOC=!W!"
 
 $hinaArgs = @(
     'dev', 'sandbox-run', '--verbose',
@@ -89,10 +95,21 @@ if ($combined -match 'cannot enforce' -or $combined -match 'running unsandboxed'
     exit 0
 }
 
-if ($combined -match 'READ=0 WRITE=1') {
+# Parse the three measurements for the diagnosis.
+$rsec = if ($combined -match 'RSEC=(\d)') { $matches[1] } else { '?' }
+$rdoc = if ($combined -match 'RDOC=(\d)') { $matches[1] } else { '?' }
+$wdoc = if ($combined -match 'WDOC=(\d)') { $matches[1] } else { '?' }
+Write-Host "---- diagnosis ---- RSEC=$rsec RDOC=$rdoc WDOC=$wdoc"
+if ($rsec -eq '0' -and $rdoc -eq '1' -and $wdoc -eq '0') {
+    Write-Host "DIAGNOSIS: container reached+read the granted dir but write was blocked -> INTEGRITY (write-up), not traversal."
+} elseif ($rsec -eq '0' -and $rdoc -eq '0') {
+    Write-Host "DIAGNOSIS: container could not even read the granted dir -> TRAVERSAL is the blocker."
+}
+
+if ($rsec -eq '0' -and $wdoc -eq '1') {
     Write-Host "PASS: secret read denied, document write allowed under AppContainer."
     exit 0
 }
 
-Write-Error "FAIL: expected 'READ=0 WRITE=1' (secret denied, docs writable). Got: $combined"
+Write-Error "FAIL: expected RSEC=0 WDOC=1 (secret denied, docs writable). Got: RSEC=$rsec RDOC=$rdoc WDOC=$wdoc"
 exit 1

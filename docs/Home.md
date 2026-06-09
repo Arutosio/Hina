@@ -6,6 +6,7 @@ Hina is an open-source cross-platform package manager and rsync-like patcher for
 
 ## Table of Contents
 
+- [**Quick Start**](Quick-Start.md) -- Task-oriented recipes: use an app, publish one or multiple platforms, host it, manage keys. Start here.
 - [Architecture](Architecture.md) -- Project structure, core library internals, package-manager layer, data flow, class diagrams, and design decisions.
 - [Diagrams](Diagrams.md) -- Rendered Mermaid diagrams: architecture graph, CLI routing, class diagrams, every pipeline, and the sandbox/container isolation flow per OS.
 - [Install Script](Install-Script.md) -- The `curl | bash` / `iwr | iex` one-liner: capabilities, env vars, atomic install + rollback, SHA-256 verification, existing-install menu (reinstall / clean / integrity / uninstall), and a flow diagram.

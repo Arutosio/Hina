@@ -7,6 +7,15 @@ namespace Hina.CLI.Commands
 {
     internal static class InstallCommand
     {
+        // Flags `hina install` accepts. An unknown flag (typically a typo like
+        // `--allow-insecue`) is rejected rather than silently ignored — silently dropping
+        // `--allow-insecure` would flip security behavior with no diagnostic.
+        private static readonly System.Collections.Generic.HashSet<string> KnownFlags =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                "--allow-insecure", "--retries", "--connect-timeout", "--request-timeout"
+            };
+
         public static async Task<int> RunAsync(CommandContext ctx, string[] args)
         {
             string? url = Args.FirstPositional(args, startIndex: 1);
@@ -19,6 +28,13 @@ namespace Hina.CLI.Commands
             if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? descriptorUrl))
             {
                 ctx.Logger.LogError("'{Url}' is not a valid absolute URL.", url);
+                return 2;
+            }
+
+            string? unknownFlag = Args.FirstUnknownFlag(args, KnownFlags, startIndex: 1);
+            if (unknownFlag != null)
+            {
+                ctx.Logger.LogError("Unknown flag '{Flag}'. Usage: hina install <url> [--allow-insecure] [--retries N] [--connect-timeout SEC] [--request-timeout SEC]", unknownFlag);
                 return 2;
             }
 

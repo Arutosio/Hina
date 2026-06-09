@@ -24,6 +24,16 @@ namespace Hina.CLI.Commands
             string? grant = Args.GetValue(args, "--grant");
             string? revoke = Args.GetValue(args, "--revoke");
 
+            // A bare `--grant` / `--revoke` (flag present but no path, or an empty path) used to
+            // fall through to the read-only detail view, silently dropping the mutation the user
+            // asked for. Treat it as a usage error so the missing path is obvious.
+            if ((Args.HasFlag(args, "--grant") && string.IsNullOrWhiteSpace(grant))
+                || (Args.HasFlag(args, "--revoke") && string.IsNullOrWhiteSpace(revoke)))
+            {
+                ctx.Logger.LogError("Usage: hina perms <app> [--grant <path>[:ro|:rw]] [--revoke <path>]");
+                return 2;
+            }
+
             // No app (or the literal "list") and no mutation → overview table.
             if ((string.IsNullOrWhiteSpace(name) || name == "list") && grant == null && revoke == null)
             {

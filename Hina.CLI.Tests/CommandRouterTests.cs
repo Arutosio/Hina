@@ -36,6 +36,25 @@ namespace Hina.CLI.Tests
 
         private Task<int> Dispatch(params string[] args) => CommandRouter.DispatchAsync(Ctx(), args);
 
+        private async Task SeedApp(string name)
+        {
+            InstallPaths paths = InstallPaths.ForRoot(_root);
+            Registry registry = new Registry();
+            registry.Apps[name] = new InstalledApp
+            {
+                Name = name,
+                InstalledVersion = "1.0.0",
+                InstallPath = Path.Combine(paths.AppsRoot, name),
+                DescriptorUrl = "https://example.com/hina.app.json",
+                BaseUrl = "https://example.com",
+                Channel = "stable",
+                PublicKey = "AAAA",
+                InstalledAt = DateTimeOffset.UnixEpoch,
+                LastUpdatedAt = DateTimeOffset.UnixEpoch
+            };
+            await new RegistryStore(paths.RegistryFile).SaveAsync(registry);
+        }
+
         [Fact]
         public async Task UnknownCommand_ReturnsUsageError()
         {
@@ -152,6 +171,23 @@ namespace Hina.CLI.Tests
         public async Task Perms_UnknownApp_ReturnsNotFound()
         {
             Assert.Equal(1, await Dispatch("perms", "ghost"));
+        }
+
+        [Fact]
+        public async Task Perms_GrantFlagWithoutValue_ReturnsUsageError()
+        {
+            // `hina perms <app> --grant` (no path) previously fell through to the read-only
+            // detail view and silently dropped the mutation. It must be a usage error.
+            await SeedApp("demo");
+            Assert.Equal(2, await Dispatch("perms", "demo", "--grant"));
+        }
+
+        [Fact]
+        public async Task Uninstall_UnknownFlag_ReturnsUsageError()
+        {
+            // `uninstall` takes no flags; a typo must be rejected, not silently ignored
+            // (which would otherwise exit 0 as "was not installed").
+            Assert.Equal(2, await Dispatch("uninstall", "ghost", "--bogus"));
         }
 
         [Fact]

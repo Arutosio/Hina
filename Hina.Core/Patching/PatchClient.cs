@@ -143,12 +143,15 @@ namespace Hina.Core.Patching
                         _logger.LogDebug("Rsync matched {MatchCount}/{TotalChunks} chunks for {FilePath}", matches.Count, file.Chunks.Count, file.Path);
                     }
 
-                    // Open the local file once for the whole rebuild instead of per matched chunk.
-                    using FileStream? srcFs = matches.Count > 0 ? File.OpenRead(localPath) : null;
                     // Downloads run against a derived token so that on any failure we can cancel
                     // every in-flight chunk fetch and drain it — otherwise the tasks we started
                     // ahead of the write cursor would leak (open sockets, unobserved exceptions).
                     using CancellationTokenSource dl = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    // Open the local file once for the whole rebuild instead of per matched chunk.
+                    // The handle MUST be released before the File.Copy swap below: keeping it open
+                    // (even read-only, FileShare.Read) makes the overwrite of localPath fail with a
+                    // sharing violation — so srcFs's scope is this block, not the whole try.
+                    using (FileStream? srcFs = matches.Count > 0 ? File.OpenRead(localPath) : null)
                     using (FileStream outFs = File.Create(tempPath))
                     {
                         // Rebuild the file in manifest order, reusing local data when possible.

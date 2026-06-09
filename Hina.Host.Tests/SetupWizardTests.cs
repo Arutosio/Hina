@@ -17,6 +17,24 @@ namespace Hina.Host.Tests
 
         private string PathFor(string name) => Path.Combine(_tempDir, name);
 
+        // A port typo accepted by the wizard gets persisted into hina.host.json and then
+        // crashes the host on every start — and the wizard won't re-run because the config
+        // is non-empty. The wizard must reject invalid ports up front.
+        [Theory]
+        [InlineData("49876", true)]
+        [InlineData("1", true)]
+        [InlineData("65535", true)]
+        [InlineData("0", false)]
+        [InlineData("65536", false)]
+        [InlineData("-1", false)]
+        [InlineData("8o80", false)]
+        [InlineData("", false)]
+        [InlineData("8080 ", true)]
+        public void IsValidPort_Cases(string value, bool expected)
+        {
+            Assert.Equal(expected, SetupWizard.IsValidPort(value));
+        }
+
         [Fact]
         public void IsConfigMissingOrEmpty_MissingFile_True()
         {

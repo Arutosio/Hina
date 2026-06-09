@@ -41,7 +41,7 @@ namespace Hina.Host
                 Console.WriteLine($"Config '{outPath}' looks empty. Let's populate it.");
             }
 
-            string port = Ask("Listen port (default 49876 is in the dynamic/private range)", "49876");
+            string port = AskPort("Listen port (default 49876 is in the dynamic/private range)", "49876");
             string bindAll = Ask("Bind on all interfaces (0.0.0.0)? [Y/n]", "y").Trim().ToLowerInvariant();
             string host = bindAll is "" or "y" or "yes" ? "0.0.0.0" : "127.0.0.1";
             string urls = $"http://{host}:{port}";
@@ -92,6 +92,21 @@ namespace Hina.Host
             Console.WriteLine("=== Setup complete. Starting host... ===");
             Console.WriteLine();
             return true;
+        }
+
+        // A typo'd port would be persisted into hina.host.json and crash the host on every
+        // start — and the wizard won't re-run over a non-empty config. Reject it up front.
+        internal static bool IsValidPort(string value)
+            => int.TryParse(value.Trim(), out int p) && p >= 1 && p <= 65535;
+
+        static string AskPort(string prompt, string def)
+        {
+            while (true)
+            {
+                string value = Ask(prompt, def).Trim();
+                if (IsValidPort(value)) return value;
+                Console.WriteLine($"  '{value}' is not a valid port (1-65535). Try again, or press Enter for {def}.");
+            }
         }
 
         static string Ask(string prompt, string def)

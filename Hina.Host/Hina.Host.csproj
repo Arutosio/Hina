@@ -4,6 +4,10 @@
     <ProjectReference Include="..\Hina.Core\Hina.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Hina.Host.Tests" />
+  </ItemGroup>
+
   <PropertyGroup>
     <ApplicationIcon>..\img\HinaHPack_Logo.ico</ApplicationIcon>
     <PackageIcon>HinaPack_Logo.png</PackageIcon>

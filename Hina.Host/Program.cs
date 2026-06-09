@@ -1,8 +1,9 @@
-using System.Collections.Concurrent;
 using System.Net;
-using System.Text.Json;
 using System.Threading.RateLimiting;
+using Hina.Host;
 using Microsoft.AspNetCore.HttpOverrides;
+// ASP.NET Core ships its own Microsoft.Extensions.Hosting.HostOptions; alias ours explicitly.
+using HostOptions = Hina.Host.HostOptions;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.FileProviders;
 
@@ -16,7 +17,9 @@ bool forceSetup = args.Contains("--setup", StringComparer.OrdinalIgnoreCase);
 string? explicitConfig = GetArgTop(args, "--config");
 string defaultConfigPath = explicitConfig ?? "hina.host.json";
 
-if (forceSetup || ShouldRunWizard(defaultConfigPath))
+// The wizard only makes sense on an interactive terminal; piped/redirected stdin
+// (services, containers, tests) skips it and runs with defaults.
+if (forceSetup || (!Console.IsInputRedirected && SetupWizard.IsConfigMissingOrEmpty(defaultConfigPath)))
 {
     if (!SetupWizard.Run(defaultConfigPath, forceSetup))
     {
@@ -28,21 +31,6 @@ if (forceSetup || ShouldRunWizard(defaultConfigPath))
 var builder = WebApplication.CreateBuilder(args);
 
 HostOptions options = HostOptions.Load(args, builder.Configuration);
-
-static bool ShouldRunWizard(string path)
-{
-    if (Console.IsInputRedirected) return false;
-    if (!File.Exists(path)) return true;
-    try
-    {
-        using var doc = JsonDocument.Parse(File.ReadAllText(path));
-        if (doc.RootElement.ValueKind != JsonValueKind.Object) return true;
-        int props = 0;
-        foreach (var _ in doc.RootElement.EnumerateObject()) { props++; break; }
-        return props == 0;
-    }
-    catch { return true; }
-}
 
 static string? GetArgTop(string[] args, string name)
 {
@@ -203,6 +191,11 @@ foreach (var m in mounts)
     var staticOpts = new StaticFileOptions
     {
         FileProvider = fp,
+        // ".chunk.br" (and any other unmapped extension in a patch root) must be served:
+        // the default content-type provider has no ".br" mapping, so without this every
+        // chunk request 404s.
+        ServeUnknownFileTypes = true,
+        DefaultContentType = "application/octet-stream",
         OnPrepareResponse = ctx =>
         {
             string? p = ctx.Context.Request.Path.Value;
@@ -292,244 +285,6 @@ static void PrintHelp()
         """);
 }
 
-static class SetupWizard
-{
-    public static bool Run(string outPath, bool force)
-    {
-        Console.WriteLine();
-        Console.WriteLine("=== Hina.Host first-run setup ===");
-        if (File.Exists(outPath) && force)
-        {
-            Console.Write($"'{outPath}' already exists. Overwrite? [y/N]: ");
-            var confirm = Console.ReadLine();
-            if (!string.Equals(confirm?.Trim(), "y", StringComparison.OrdinalIgnoreCase)) return false;
-        }
-        else if (!File.Exists(outPath))
-        {
-            Console.WriteLine($"No config found at '{outPath}'. Let's create one.");
-        }
-        else
-        {
-            Console.WriteLine($"Config '{outPath}' looks empty. Let's populate it.");
-        }
-
-        string port = Ask("Listen port (default 49876 is in the dynamic/private range)", "49876");
-        string bindAll = Ask("Bind on all interfaces (0.0.0.0)? [Y/n]", "y").Trim().ToLowerInvariant();
-        string host = bindAll is "" or "y" or "yes" ? "0.0.0.0" : "127.0.0.1";
-        string urls = $"http://{host}:{port}";
-
-        string mode = Ask("Mode: [s]ingle-app or [m]ulti-app?", "s").Trim().ToLowerInvariant();
-        var json = new Dictionary<string, object> { ["urls"] = urls };
-
-        if (mode.StartsWith("m"))
-        {
-            var apps = new Dictionary<string, string>();
-            Console.WriteLine("Add apps. Leave app name blank to finish.");
-            while (true)
-            {
-                string name = Ask("  App name (blank to stop)", "").Trim();
-                if (string.IsNullOrEmpty(name)) break;
-                string path = Ask($"  Path for '{name}'", $"./patches/{name}").Trim();
-                apps[name] = path;
-            }
-            if (apps.Count == 0)
-            {
-                Console.WriteLine("No apps defined; falling back to single-app mode.");
-                json["root"] = Ask("Patch root directory", "patch").Trim();
-            }
-            else
-            {
-                json["apps"] = apps;
-            }
-        }
-        else
-        {
-            json["root"] = Ask("Patch root directory", "patch").Trim();
-        }
-
-        if (int.TryParse(Ask("Max requests/min per (IP,App)", "600"), out int rl) && rl > 0)
-            json["requestsPerMinutePerIp"] = rl;
-        if (int.TryParse(Ask("Abuse warning threshold/min", "300"), out int at) && at > 0)
-            json["abuseThresholdPerMinute"] = at;
-
-        string cors = Ask("CORS origins (comma-separated, blank for none)", "").Trim();
-        if (!string.IsNullOrEmpty(cors))
-            json["cors"] = cors.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
-
-        string serialized = JsonSerializer.Serialize(json, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(outPath, serialized);
-        Console.WriteLine();
-        Console.WriteLine($"Wrote {Path.GetFullPath(outPath)}:");
-        Console.WriteLine(serialized);
-        Console.WriteLine("=== Setup complete. Starting host... ===");
-        Console.WriteLine();
-        return true;
-    }
-
-    static string Ask(string prompt, string def)
-    {
-        Console.Write(string.IsNullOrEmpty(def) ? $"{prompt}: " : $"{prompt} [{def}]: ");
-        string? line = Console.ReadLine();
-        return string.IsNullOrWhiteSpace(line) ? def : line;
-    }
-}
-
-static class Routing
-{
-    public static string ExtractApp(string path, HostOptions opt)
-    {
-        if (opt.Apps.Count == 0) return "default";
-        var segs = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segs.Length == 0) return "unknown";
-        return opt.Apps.ContainsKey(segs[0]) ? segs[0] : "unknown";
-    }
-}
-
-sealed class HostOptions
-{
-    public string Root { get; set; } = "patch";
-    public string? Urls { get; set; }
-    public int RequestsPerMinutePerIp { get; set; } = 600;
-    public int AbuseThresholdPerMinute { get; set; } = 300;
-    public int SummaryIntervalSeconds { get; set; } = 60;
-    public bool StatsEnabled { get; set; } = true;
-    public List<string> Cors { get; set; } = new();
-    public Dictionary<string, string> Apps { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-
-    public static HostOptions Load(string[] args, IConfiguration config)
-    {
-        var opt = new HostOptions();
-
-        string? configPath = GetArg(args, "--config");
-        string? jsonPath = configPath is not null && File.Exists(configPath)
-            ? configPath
-            : (File.Exists("hina.host.json") ? "hina.host.json" : null);
-
-        if (jsonPath is not null)
-        {
-            using var doc = JsonDocument.Parse(File.ReadAllText(jsonPath));
-            var r = doc.RootElement;
-            if (r.TryGetProperty("root", out var v) && v.ValueKind == JsonValueKind.String) opt.Root = v.GetString()!;
-            if (r.TryGetProperty("urls", out v) && v.ValueKind == JsonValueKind.String) opt.Urls = v.GetString();
-            if (r.TryGetProperty("requestsPerMinutePerIp", out v) && v.TryGetInt32(out int n)) opt.RequestsPerMinutePerIp = n;
-            if (r.TryGetProperty("abuseThresholdPerMinute", out v) && v.TryGetInt32(out n)) opt.AbuseThresholdPerMinute = n;
-            if (r.TryGetProperty("summaryIntervalSeconds", out v) && v.TryGetInt32(out n)) opt.SummaryIntervalSeconds = n;
-            if (r.TryGetProperty("statsEnabled", out v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False) opt.StatsEnabled = v.GetBoolean();
-            if (r.TryGetProperty("cors", out v) && v.ValueKind == JsonValueKind.Array)
-                opt.Cors = v.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => e.GetString()!).ToList();
-            if (r.TryGetProperty("apps", out v) && v.ValueKind == JsonValueKind.Object)
-                foreach (var prop in v.EnumerateObject())
-                    if (prop.Value.ValueKind == JsonValueKind.String)
-                        opt.Apps[prop.Name] = prop.Value.GetString()!;
-        }
-
-        string? legacy = config["Patcher:Root"];
-        if (!string.IsNullOrWhiteSpace(legacy)) opt.Root = legacy;
-
-        if (GetArg(args, "--root") is { } root) opt.Root = root;
-        if (GetArg(args, "--urls") is { } urls) opt.Urls = urls;
-        if (GetArg(args, "--port") is { } port && int.TryParse(port, out int p)) opt.Urls = $"http://0.0.0.0:{p}";
-        if (GetArg(args, "--rate-limit") is { } rl && int.TryParse(rl, out int rln)) opt.RequestsPerMinutePerIp = rln == 0 ? int.MaxValue : rln;
-        if (GetArg(args, "--abuse-threshold") is { } ab && int.TryParse(ab, out int abn)) opt.AbuseThresholdPerMinute = abn;
-        if (GetArg(args, "--cors") is { } cors) opt.Cors = cors.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
-        if (args.Contains("--no-stats", StringComparer.OrdinalIgnoreCase)) opt.StatsEnabled = false;
-
-        return opt;
-    }
-
-    static string? GetArg(string[] args, string name)
-    {
-        for (int i = 0; i < args.Length - 1; i++)
-            if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase))
-                return args[i + 1];
-        return null;
-    }
-}
-
-sealed class AccessStats
-{
-    readonly ConcurrentDictionary<string, IpBucket> _keys = new(); // key = ip|app
-    readonly ConcurrentDictionary<string, long> _paths = new();
-    readonly ConcurrentDictionary<string, long> _apps = new();
-    readonly ConcurrentDictionary<string, long> _appRejections = new();
-    long _total;
-    long _rejections;
-
-    public void RecordRequest(string ip, string appName, string path)
-    {
-        Interlocked.Increment(ref _total);
-        _paths.AddOrUpdate(path, 1, (_, v) => v + 1);
-        _apps.AddOrUpdate(appName, 1, (_, v) => v + 1);
-        var bucket = _keys.GetOrAdd($"{ip}|{appName}", _ => new IpBucket());
-        bucket.Hit();
-    }
-
-    public void RecordRejection(string ip, string appName)
-    {
-        Interlocked.Increment(ref _rejections);
-        _appRejections.AddOrUpdate(appName, 1, (_, v) => v + 1);
-        var bucket = _keys.GetOrAdd($"{ip}|{appName}", _ => new IpBucket());
-        Interlocked.Increment(ref bucket.Rejections);
-    }
-
-    public bool ShouldLogAbuse(string ip, string appName, int threshold, out long count)
-    {
-        count = 0;
-        if (!_keys.TryGetValue($"{ip}|{appName}", out var b)) return false;
-        count = b.CountLastMinute();
-        if (count < threshold) return false;
-        long now = Environment.TickCount64;
-        long last = Interlocked.Read(ref b.LastAbuseLogTick);
-        if (now - last < 60_000) return false;
-        return Interlocked.CompareExchange(ref b.LastAbuseLogTick, now, last) == last;
-    }
-
-    public StatsSnapshot Snapshot()
-    {
-        var topKey = _keys.Select(kv => (kv.Key, kv.Value.CountLastMinute())).OrderByDescending(t => t.Item2).FirstOrDefault();
-        var topPath = _paths.OrderByDescending(kv => kv.Value).FirstOrDefault();
-        var topApp = _apps.OrderByDescending(kv => kv.Value).FirstOrDefault();
-        string topIp = topKey.Key is null ? "-" : topKey.Key.Split('|')[0];
-        return new StatsSnapshot(
-            Interlocked.Read(ref _total),
-            Interlocked.Read(ref _rejections),
-            topIp,
-            topApp.Key ?? "-",
-            topPath.Key ?? "-",
-            _keys.OrderByDescending(kv => kv.Value.CountLastMinute()).Take(10)
-                .ToDictionary(kv => kv.Key, kv => kv.Value.CountLastMinute()),
-            _apps.OrderByDescending(kv => kv.Value).Take(20).ToDictionary(kv => kv.Key, kv => kv.Value),
-            _paths.OrderByDescending(kv => kv.Value).Take(10).ToDictionary(kv => kv.Key, kv => kv.Value),
-            _appRejections.ToDictionary(kv => kv.Key, kv => kv.Value));
-    }
-
-    sealed class IpBucket
-    {
-        readonly ConcurrentQueue<long> _hits = new();
-        public long Rejections;
-        public long LastAbuseLogTick;
-
-        public void Hit()
-        {
-            long now = Environment.TickCount64;
-            _hits.Enqueue(now);
-            Prune(now);
-        }
-
-        public long CountLastMinute()
-        {
-            Prune(Environment.TickCount64);
-            return _hits.Count;
-        }
-
-        void Prune(long now)
-        {
-            long cutoff = now - 60_000;
-            while (_hits.TryPeek(out long t) && t < cutoff) _hits.TryDequeue(out _);
-        }
-    }
-}
-
-record StatsSnapshot(long TotalRequests, long Rejections, string TopIp, string TopApp, string TopPath,
-    Dictionary<string, long> TopIpApps, Dictionary<string, long> Apps, Dictionary<string, long> TopPaths,
-    Dictionary<string, long> AppRejections);
+// Exposes the implicit Program class so Hina.Host.Tests can boot the app in-process
+// via WebApplicationFactory<Program>.
+public partial class Program { }

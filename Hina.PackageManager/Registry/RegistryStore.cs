@@ -17,6 +17,15 @@ namespace Hina.PackageManager.Registry
         public RegistrySchemaException(string message) : base(message) { }
     }
 
+    // Thrown when registry.json exists and is non-empty but isn't valid JSON (a partial
+    // write past the empty-file case, a hand-edit, or disk corruption). Carries an actionable
+    // message instead of a raw JSON parser error so the user knows the file — not Hina — is
+    // the problem and how to recover.
+    public sealed class RegistryCorruptException : Exception
+    {
+        public RegistryCorruptException(string message, Exception inner) : base(message, inner) { }
+    }
+
     // Reads and writes registry.json. Writes are atomic (tmp + fsync + rename) so a crash
     // mid-write leaves the previous good registry in place. Caller must hold a LockManager lock.
     public sealed class RegistryStore
@@ -75,7 +84,20 @@ namespace Hina.PackageManager.Registry
         // synthetic target+migrations while the production schema is still version 1.
         internal static Registry LoadFromJson(string json, int targetVersion, IReadOnlyList<RegistryMigration> migrations, ILogger logger, string path)
         {
-            JsonNode? node = JsonNode.Parse(json);
+            JsonNode? node;
+            try
+            {
+                node = JsonNode.Parse(json);
+            }
+            catch (JsonException ex)
+            {
+                // Non-empty but unparseable: a partial write past the empty case, a bad
+                // hand-edit, or disk corruption. Surface an actionable message rather than a
+                // raw parser error — Hina won't auto-delete the file (it records what's
+                // installed), so recovery is the user's call.
+                throw Corrupt(path, ex);
+            }
+
             if (node is JsonObject root)
             {
                 int version = ReadSchemaVersion(root);
@@ -87,18 +109,39 @@ namespace Hina.PackageManager.Registry
                 {
                     RegistryMigrator.Migrate(root, targetVersion, migrations);
                 }
-                return root.Deserialize(PackageManagerJsonContext.Default.Registry) ?? new Registry();
+                try
+                {
+                    return root.Deserialize(PackageManagerJsonContext.Default.Registry) ?? new Registry();
+                }
+                catch (JsonException ex)
+                {
+                    throw Corrupt(path, ex);
+                }
             }
 
             // Non-object / "null" JSON: defer to the source-gen deserializer (preserves the
             // prior behavior, including the higher-schema gate).
-            Registry r = JsonSerializer.Deserialize(json, PackageManagerJsonContext.Default.Registry) ?? new Registry();
+            Registry r;
+            try
+            {
+                r = JsonSerializer.Deserialize(json, PackageManagerJsonContext.Default.Registry) ?? new Registry();
+            }
+            catch (JsonException ex)
+            {
+                throw Corrupt(path, ex);
+            }
             if (r.SchemaVersion > targetVersion)
             {
                 throw NewerSchema(path, r.SchemaVersion, targetVersion);
             }
             return r;
         }
+
+        private static RegistryCorruptException Corrupt(string path, JsonException inner) =>
+            new RegistryCorruptException(
+                $"Registry at '{path}' is not valid JSON (corrupt or partially written). " +
+                "Back it up and remove it to start with an empty registry, or restore a known-good copy.",
+                inner);
 
         private static int ReadSchemaVersion(JsonObject root)
         {

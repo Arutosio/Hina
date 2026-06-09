@@ -83,6 +83,24 @@ namespace Hina.PackageManager.Tests
             Assert.False(File.Exists(path + ".tmp"));
         }
 
+        [Theory]
+        [InlineData("{\"schemaVersion\":1,\"apps\":{\"demo\":")] // truncated mid-object
+        [InlineData("not json at all")]
+        [InlineData("{ this is broken }")]
+        public async Task Load_CorruptJson_ThrowsActionableError(string corrupt)
+        {
+            // A non-empty but unparseable registry must surface a clear, actionable error
+            // (not a raw JSON parser message and not a silent "nothing installed"), so the
+            // user knows the file is corrupt and how to recover.
+            string path = Path.Combine(_tempDir, "registry.json");
+            await File.WriteAllTextAsync(path, corrupt);
+
+            RegistryStore store = new RegistryStore(path);
+            RegistryCorruptException ex = Assert.Throws<RegistryCorruptException>(() => store.Load());
+            Assert.Contains("corrupt", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(path, ex.Message);
+        }
+
         [Fact]
         public async Task Load_FutureSchemaVersion_Throws()
         {

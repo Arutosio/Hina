@@ -301,6 +301,40 @@ namespace Hina.PackageManager.Tests
             Assert.Equal("1.0.0", final.Apps["demo"].InstalledVersion); // demo rolled back to v1
         }
 
+        [Fact]
+        public async Task UpdateAll_OneInvalidDescriptor_DoesNotAbortTheRun()
+        {
+            await InstallV1("alpha");
+            await InstallV1("beta");
+
+            // alpha's publisher now serves a descriptor that FAILS validation (rooted exec).
+            // EnsureValid throwing out of UpdateAsync used to fault its task and abort the
+            // whole UpdateAllAsync run, discarding beta's (successful) result.
+            AppDescriptor bad = BuildDescriptor(_pubKey, name: "alpha", version: "1.1.0");
+            bad.Exec = new ExecMap { Windows = "C:\\abs\\demo.exe", Linux = "/abs/demo", Macos = "/abs/demo" };
+            DescriptorSigner.AttachSignature(bad, Convert.FromBase64String(_privKey));
+
+            AppDescriptor good = BuildDescriptor(_pubKey, name: "beta", version: "1.1.0");
+            DescriptorSigner.AttachSignature(good, Convert.FromBase64String(_privKey));
+
+            UpdateService svc = new UpdateService(
+                _paths,
+                _platform,
+                fetcher: new RoutingFetcher(url => url.AbsoluteUri.Contains("alpha") ? bad : good),
+                patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
+
+            List<UpdateResult> results = await svc.UpdateAllAsync(null, CancellationToken.None);
+
+            Assert.Equal(2, results.Count);
+            UpdateResult? alpha = results.Find(r => r?.Name == "alpha");
+            UpdateResult? beta = results.Find(r => r?.Name == "beta");
+            Assert.NotNull(alpha);
+            Assert.NotNull(beta);
+            Assert.Equal(UpdateStatus.Failed, alpha!.Status);
+            Assert.False(string.IsNullOrWhiteSpace(alpha.Message));
+            Assert.Equal(UpdateStatus.Updated, beta!.Status);
+        }
+
         // Performs a clean v1 install via the real InstallService so the registry has a
         // realistic starting state with hooks + shell entries the update can diff against.
         private async Task InstallV1(string name = "demo")
@@ -413,6 +447,14 @@ namespace Hina.PackageManager.Tests
         {
             [ExecRelative()] = new byte[] { 1, 2, 3 }
         };
+    }
+
+    // Routes each descriptor URL to its own stub descriptor (multi-app update tests).
+    internal sealed class RoutingFetcher : DescriptorFetcher
+    {
+        private readonly Func<Uri, AppDescriptor> _route;
+        public RoutingFetcher(Func<Uri, AppDescriptor> route) { _route = route; }
+        public override Task<AppDescriptor> FetchAsync(Uri url, CancellationToken ct) => Task.FromResult(_route(url));
     }
 
     // Runs a side-effect (simulating a concurrent registry writer) then reports patch failure.

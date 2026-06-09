@@ -113,8 +113,9 @@ namespace Hina.Core.Net
             using CappedReadStream limited = new CappedReadStream(stream, compressedCap);
             // Pre-size from Content-Length when the server provides one (EnsureWithinCap already
             // rejected anything above the cap), and read the backing buffer directly instead of
-            // ToArray() — skips one full copy of every chunk.
-            int capacity = response.Content.Headers.ContentLength is long cl && cl > 0 ? (int)cl : 0;
+            // ToArray() — skips one full copy of every chunk. The int.MaxValue guard keeps a
+            // hostile header that passed the cap from overflowing the cast.
+            int capacity = response.Content.Headers.ContentLength is long cl && cl > 0 && cl <= int.MaxValue ? (int)cl : 0;
             using MemoryStream buffer = new MemoryStream(capacity);
             await limited.CopyToAsync(buffer, ct);
             return DecompressAndVerify(buffer.GetBuffer(), (int)buffer.Length, hashOnly, maxBytes);

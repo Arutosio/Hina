@@ -184,6 +184,12 @@ if (options.Apps.Count > 0)
     });
 }
 
+// ".chunk.br" must be served: the default content-type provider has no ".br" mapping, so
+// without this every chunk request 404s. Map just ".br" instead of ServeUnknownFileTypes —
+// a stray secret (.key/.pem) accidentally left in a patch root stays unserved.
+var chunkContentTypes = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+chunkContentTypes.Mappings[".br"] = "application/octet-stream";
+
 foreach (var m in mounts)
 {
     var fp = new PhysicalFileProvider(m.Path);
@@ -191,11 +197,7 @@ foreach (var m in mounts)
     var staticOpts = new StaticFileOptions
     {
         FileProvider = fp,
-        // ".chunk.br" (and any other unmapped extension in a patch root) must be served:
-        // the default content-type provider has no ".br" mapping, so without this every
-        // chunk request 404s.
-        ServeUnknownFileTypes = true,
-        DefaultContentType = "application/octet-stream",
+        ContentTypeProvider = chunkContentTypes,
         OnPrepareResponse = ctx =>
         {
             string? p = ctx.Context.Request.Path.Value;

@@ -14,7 +14,8 @@ All notable changes to Hina are documented in this file.
   "file is being used by another process". The handle is now released before the swap.
 - **Hina.Host actually serves chunks.** ASP.NET's static-file middleware rejects unknown
   extensions, and `.br` has no registered content type, so every `*.chunk.br` request
-  returned 404. The host now serves unknown extensions as `application/octet-stream`.
+  returned 404. The host now maps `.br` to `application/octet-stream`; other unknown
+  extensions (e.g. a stray `.key` left in a patch root) remain unserved.
 
 ### Performance
 

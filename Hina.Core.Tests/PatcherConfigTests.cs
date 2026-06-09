@@ -106,6 +106,29 @@ namespace Hina.Core.Tests
             Assert.ThrowsAny<Exception>(() => PatcherConfigLoader.Load("/nonexistent/path/config.json"));
         }
 
+        // A hand-edited config with a typo must name the offending file — `hina dev` can be
+        // reading either an explicit --config or an implicit ./hina.config.json, and a raw
+        // JsonException doesn't say which one is broken.
+        [Theory]
+        [InlineData("{ truncated")]
+        [InlineData("not json")]
+        public void PatcherConfigLoader_Load_CorruptJson_ThrowsActionableError(string content)
+        {
+            string tempDir = CreateTempDir();
+            try
+            {
+                string configPath = Path.Combine(tempDir, "hina.config.json");
+                File.WriteAllText(configPath, content);
+
+                var ex = Assert.Throws<InvalidDataException>(() => PatcherConfigLoader.Load(configPath));
+                Assert.Contains(configPath, ex.Message);
+            }
+            finally
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+
         private static string CreateTempDir()
         {
             string path = Path.Combine(Path.GetTempPath(), "hina-tests-" + Guid.NewGuid().ToString("N"));

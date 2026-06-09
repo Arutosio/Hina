@@ -58,6 +58,23 @@ namespace Hina.Builder
                 return 2;
             }
 
+            // Chunk parameters are publisher input (--chunk / --min-chunk / --max-chunk /
+            // --avg-chunk); a typo'd value must be a usage error, not an unhandled
+            // ArgumentOutOfRangeException from the chunker constructors.
+            if (options.ChunkSize <= 0)
+            {
+                logger.LogError("--chunk must be a positive number of bytes (got {Chunk}).", options.ChunkSize);
+                return 2;
+            }
+            if (string.Equals(options.ChunkingMode, "cdc", StringComparison.OrdinalIgnoreCase) &&
+                (options.MinChunk <= 0 || options.AvgChunk <= 0 || options.MaxChunk <= 0 ||
+                 options.MinChunk > options.AvgChunk || options.AvgChunk > options.MaxChunk))
+            {
+                logger.LogError("CDC chunk sizes must be positive and ordered min <= avg <= max (got min={Min}, avg={Avg}, max={Max}).",
+                    options.MinChunk, options.AvgChunk, options.MaxChunk);
+                return 2;
+            }
+
             string manifestName = "manifest.json";
             if (!string.IsNullOrEmpty(options.Platform))
             {

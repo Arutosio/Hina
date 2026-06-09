@@ -27,24 +27,40 @@ namespace Hina.Builder
 
             ILogger logger = loggerFactory.CreateLogger("Hina.Builder");
 
-            string command = args[0].ToLowerInvariant();
-            switch (command)
+            // Top-level safety net, mirroring Hina.CLI's CommandRouter: anything a command
+            // throws (bad input reaching a constructor guard, unexpected IO) exits with a
+            // clean message instead of an unhandled stack trace.
+            try
             {
-                case "build":
-                    return await BuildCommand.RunAsync(BuildOptions.FromArgs(args), logger, CancellationToken.None);
-                case "keygen":
-                    return KeygenCommand.Run(args, logger);
-                case "init":
-                    if (Console.IsInputRedirected)
-                    {
-                        logger.LogError("`init` is interactive and needs a terminal. In CI, use `build` + `hina dev sign-descriptor` instead.");
+                string command = args[0].ToLowerInvariant();
+                switch (command)
+                {
+                    case "build":
+                        return await BuildCommand.RunAsync(BuildOptions.FromArgs(args), logger, CancellationToken.None);
+                    case "keygen":
+                        return KeygenCommand.Run(args, logger);
+                    case "init":
+                        if (Console.IsInputRedirected)
+                        {
+                            logger.LogError("`init` is interactive and needs a terminal. In CI, use `build` + `hina dev sign-descriptor` instead.");
+                            return 2;
+                        }
+                        return await InitCommand.RunAsync(args, new ConsolePrompt(), logger, CancellationToken.None);
+                    default:
+                        logger.LogError("Unknown command: {Command}", command);
+                        PrintHelp();
                         return 2;
-                    }
-                    return await InitCommand.RunAsync(args, new ConsolePrompt(), logger, CancellationToken.None);
-                default:
-                    logger.LogError("Unknown command: {Command}", command);
-                    PrintHelp();
-                    return 2;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                logger.LogError("Cancelled.");
+                return 1;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError("{Message}", ex.Message);
+                return 2;
             }
         }
 

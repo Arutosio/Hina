@@ -223,6 +223,37 @@ Minimal example:
 }
 ```
 
+### `exec` map vs `platforms` (multi-platform packages)
+
+The `exec` map above is the **legacy single-manifest** form: every platform's files live in one
+manifest, the client downloads them all, and `exec` picks the binary for the current OS.
+
+For a cross-platform app whose builds differ a lot (so a Windows user shouldn't download the
+macOS/Linux builds), declare a `platforms` array instead. Each variant ships its own
+`manifest.<os>[-<arch>].json` over a **shared** chunk store, and the client downloads **only**
+the variant matching its machine:
+
+```json
+"platforms": [
+  { "os": "windows", "arch": "x64",   "exec": "Game.exe" },
+  { "os": "macos",   "arch": "arm64", "exec": "MyGame.app/Contents/MacOS/MyGame" },
+  { "os": "macos",   "arch": "x64",   "exec": "MyGame.app/Contents/MacOS/MyGame" },
+  { "os": "linux",                    "exec": "game" }
+]
+```
+
+- `os` ∈ `windows | macos | linux` (required); `arch` ∈ `x64 | arm64 | x86 | arm` (optional — a
+  variant with no `arch` is the universal build for that OS). `exec` is relative to **that
+  variant's** install root.
+- The client picks the most specific match for its `(os, arch)`. With no native build for an
+  arm64 host it falls back to the `x64` variant (Rosetta on macOS, emulation on Windows) with a
+  warning; it errors cleanly when no variant serves the OS.
+- `platforms` (when non-empty) is authoritative and the `exec` map is ignored. Apps with no
+  `platforms` keep the legacy single-manifest behavior unchanged.
+
+See the [Builder Guide](Builder-Guide.md) for the per-variant build commands and host layout;
+`hina-builder init` detects per-variant subfolders and builds them automatically.
+
 ### The optional `sandbox` block
 
 `sandbox` is an optional top-level object and is part of the signed payload. Absent
@@ -269,14 +300,17 @@ but unverified). See the [Sandboxing](#sandboxing) section for the full model.
 - Hook paths (`target`, `exec`, `icon`, `files`) are relative — no `..`, no absolute paths
 - Every hook `entryId` must match an `entries[].id`
 - `entries[].id` matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` (it flows into the `.desktop` Exec via the `hina run` launch command)
-- `exec` must define at least one platform
+- `exec` must define at least one platform, **or** `platforms[]` must be non-empty
+- `platforms[].os` ∈ `windows|macos|linux`; `platforms[].arch` ∈ `x64|arm64|x86|arm` or omitted; `platforms[].exec` is required and relative; no duplicate `(os, arch)` pair
 - `sandbox.filesystem[].path` must be a known token (`app`, `home`, `xdg-documents`, `xdg-download`, `xdg-config`, `tmp`, `host`); unknown tokens are rejected
 - `sandbox.filesystem[].access` is `ro` or `rw`
 
 ### `baseUrl` content
 
-`baseUrl` points at the directory containing `manifest.json` and the `chunks/` tree
-that `Hina.Builder` produced. The patcher delta-downloads from there.
+`baseUrl` points at the directory containing the manifest(s) and the `chunks/` tree that
+`Hina.Builder` produced. A legacy app hosts `manifest.json`; a multi-platform app hosts one
+`manifest.<os>[-<arch>].json` per variant over the **same** `chunks/` store. The patcher
+delta-downloads from there.
 
 ### Hook actions
 
@@ -436,6 +470,11 @@ End-to-end:
    `descriptorSignature`, and writes the result in place (or to `--out <path>`).
 5. Host the descriptor at any URL you control. Tell users to run
    `hina install <descriptor-url>`.
+
+For a **multi-platform** app, build each variant subfolder with `--platform <token>` into the
+**same** `--out` (shared chunk store) and declare a `platforms` array instead of `exec` — see
+the [Builder Guide](Builder-Guide.md). Or just run `hina-builder init`, which detects the
+per-variant subfolders, writes the signed descriptor, and builds every variant for you.
 
 ---
 

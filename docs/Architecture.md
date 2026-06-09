@@ -6,17 +6,25 @@ This document describes the internal architecture of Hina, including the project
 
 ## Project Structure
 
-Hina is organized into five projects plus two test projects:
+Hina is organized into five shipped projects plus five test projects:
 
 | Project | Type | Description |
 |---------|------|-------------|
-| **Hina.Core** | Class Library | Core engine: patching, rsync matching, manifest handling, chunking, hashing, signing, compression, networking, configuration |
+| **Hina.Core** | Class Library | Core engine: patching, rsync matching, manifest handling, chunking, hashing, signing, compression, networking, configuration, shared CLI arg parsing (`Cli/Args.cs`) |
 | **Hina.PackageManager** | Class Library | Package-manager layer: descriptor schema, validator, signer/fetcher, install/uninstall/update/reinstall services, hook executor, per-OS shell integration, local registry |
 | **Hina.CLI** | Console App (NativeAOT) | End-user CLI (`hina install/update/uninstall/list/info/which/reinstall/run/perms/verify`) plus developer subcommands under `hina dev <cmd>` |
-| **Hina.Builder** | Console App | Manifest generator and chunk store builder |
-| **Hina.Host** | ASP.NET Core App | Lightweight static file server for serving patches |
+| **Hina.Builder** | Console App | Manifest/chunk-store builder and interactive publish wizard (`init`) |
+| **Hina.Host** | ASP.NET Core App | Lightweight static file server for serving patches (`HostOptions`, `Routing`, `AccessStats`, `SetupWizard` each in their own file; `Program.cs` is pipeline wiring only) |
 | **Hina.Core.Tests** | xUnit Test Project | Unit and integration tests for the core engine |
 | **Hina.PackageManager.Tests** | xUnit Test Project | Unit + cross-platform integration tests for the package-manager layer |
+| **Hina.CLI.Tests** | xUnit Test Project | Command routing and arg parsing tests |
+| **Hina.Builder.Tests** | xUnit Test Project | Build/keygen and init-wizard tests |
+| **Hina.Host.Tests** | xUnit Test Project | Options/routing/stats unit tests plus in-process endpoint tests via `WebApplicationFactory` |
+
+Build settings shared by every project (`TargetFramework`, `Nullable`, `ImplicitUsings`)
+live in the root `Directory.Build.props`; NuGet package versions are centralized in
+`Directory.Packages.props` (Central Package Management) — bump versions there, not in
+the individual `.csproj` files.
 
 ### Dependency Graph
 

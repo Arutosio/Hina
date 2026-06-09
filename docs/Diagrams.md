@@ -23,9 +23,10 @@ AppContainer backend exists — see [Windows-Sandbox-Resume.md](Windows-Sandbox-
 
 ## System architecture
 
-The five shipped projects plus two test projects and their references. `Hina.CLI`
+The five shipped projects plus five test projects and their references. `Hina.CLI`
 references both `Hina.PackageManager` (top-level commands) and `Hina.Core` directly
-(the `hina dev` patcher subcommands). `Hina.PackageManager` reuses
+(the `hina dev` patcher subcommands). `Hina.Builder` references `Hina.PackageManager`
+too (descriptor validation in the `init` wizard). `Hina.PackageManager` reuses
 `Hina.Core.PatchClient` for delta downloads — there is no parallel engine.
 
 ```mermaid
@@ -37,20 +38,29 @@ graph LR
     Host["Hina.Host<br/>(ASP.NET static server)"]
     CoreT["Hina.Core.Tests"]
     PMT["Hina.PackageManager.Tests"]
+    CLIT["Hina.CLI.Tests"]
+    BuilderT["Hina.Builder.Tests"]
+    HostT["Hina.Host.Tests"]
 
     CLI --> PM
     CLI --> Core
     PM --> Core
     Builder --> Core
+    Builder --> PM
+    Host --> Core
     PMT --> PM
     PMT --> Core
     CoreT --> Core
-    Host -.->|"serves chunks/manifests"| Core
+    CLIT --> CLI
+    CLIT --> PM
+    BuilderT --> Builder
+    BuilderT --> PM
+    HostT --> Host
 
     classDef ship fill:#dbeafe,stroke:#1e40af,color:#1e3a8a;
     classDef test fill:#f3f4f6,stroke:#9ca3af,color:#374151;
     class CLI,PM,Core,Builder,Host ship;
-    class CoreT,PMT test;
+    class CoreT,PMT,CLIT,BuilderT,HostT test;
 ```
 
 ---

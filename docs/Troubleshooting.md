@@ -128,12 +128,20 @@ Request failed after 4 attempts: ...
 - The chunks directory was not uploaded to the server, or only partially uploaded.
 - The `baseUrl` does not match the URL structure expected by the chunk path (`chunks/<prefix>/<hash>.chunk.br`).
 - The build output was regenerated but the old chunks were not cleaned up or the new ones were not deployed.
+- The server refuses unknown file extensions. Generic static-file servers (and **Hina.Host
+  versions up to v1.4.0**, fixed since) return 404 for `.chunk.br` because `.br` has no
+  registered content type.
 
 **Solutions:**
 
 - Verify the complete `chunks/` directory was uploaded to the server under the base URL.
 - Check that the two-character hash prefix directories exist (e.g., `chunks/a3/`, `chunks/b1/`).
 - Re-run the build and redeploy all output files.
+- If the manifest downloads fine but **every** chunk 404s while the files exist on disk,
+  configure the server to serve unknown extensions as `application/octet-stream`
+  (nginx: `default_type application/octet-stream;` for the chunks location; IIS: add a
+  `.br` MIME mapping). If you serve with Hina.Host, update it to a version newer than
+  v1.4.0 — older builds had exactly this bug.
 
 ---
 
@@ -345,6 +353,32 @@ hina patch --dir ./game --base https://patch.example.com/
 ```
 
 Or create a `hina.config.json` with `baseUrl` and use `--dir` on the command line.
+
+---
+
+### 14. Patch Fails with "File Is Being Used by Another Process"
+
+**Error:**
+
+```
+System.IO.IOException: The process cannot access the file '<app>/<file>' because it is being used by another process.
+```
+
+**Causes:**
+
+- The app being patched is still running (its executable/data files are locked) — close it and retry.
+- An antivirus or indexer is holding a handle on the file — usually transient, retry.
+- **Hina versions up to v1.4.0** had a bug where patching an existing file that shared
+  chunks with the new version (rsync reuse) kept a read handle open across the final
+  file swap, failing with this error even when nothing else touched the file. Fixed
+  since; update the CLI if you hit this reliably on every delta update.
+
+**Solutions:**
+
+- Make sure the target app is not running while `hina update` runs.
+- Retry — the journal-based rollback leaves the install consistent, so a retry is safe.
+- Update to a Hina build newer than v1.4.0 if the failure reproduces on every update
+  that reuses local chunks.
 
 ---
 

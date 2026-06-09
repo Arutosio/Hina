@@ -4,6 +4,39 @@ All notable changes to Hina are documented in this file.
 
 ---
 
+## Unreleased
+
+### Fixed
+
+- **Delta updates of existing files no longer fail with a sharing violation.** Patching
+  a file that reused local chunks (rsync match) kept a read handle open across the final
+  file swap, so every in-place delta update of a real-sized file failed with
+  "file is being used by another process". The handle is now released before the swap.
+- **Hina.Host actually serves chunks.** ASP.NET's static-file middleware rejects unknown
+  extensions, and `.br` has no registered content type, so every `*.chunk.br` request
+  returned 404. The host now serves unknown extensions as `application/octet-stream`.
+
+### Performance
+
+- Whole-file verification (`verify: true`) hashes the rebuilt file incrementally while
+  it is written instead of re-reading it from disk afterwards — one full I/O pass saved
+  per patched file.
+- Matched-chunk copies reuse pooled buffers; chunk downloads skip a full in-memory copy
+  before decompression.
+
+### Internal
+
+- Build settings centralized in `Directory.Build.props`; NuGet versions managed via
+  Central Package Management (`Directory.Packages.props`).
+- Shared CLI arg parsing moved to `Hina.Core/Cli/Args.cs` (the builder's duplicate
+  parser was removed).
+- `Hina.Host` split into testable units (`HostOptions`, `Routing`, `AccessStats`,
+  `SetupWizard`) with a new `Hina.Host.Tests` suite (25 tests, in-process endpoint
+  tests). Total suite: 539 tests.
+- CI: GitHub Actions bumped to v4 with NuGet package caching.
+
+---
+
 ## v1.4.0 — multi-platform variants, publish wizard, edge-case hardening
 
 ### Per-platform variants (selective download)

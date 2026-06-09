@@ -5,6 +5,12 @@
 > **valutativo + prescrittivo** (cosa migliorare, perché, in che ordine).
 >
 > Data: 2026-05-28 · Scope: intero solution (`Hina.sln`, ~14k LOC, 7 progetti, .NET 10 NativeAOT)
+>
+> **Aggiornamento 2026-06-09:** la solution è cresciuta a 10 progetti (5 shipped + 5 test,
+> 539 test verdi: si sono aggiunti `Hina.CLI.Tests`, `Hina.Builder.Tests`, `Hina.Host.Tests`)
+> e la build è centralizzata in `Directory.Build.props` + `Directory.Packages.props`.
+> Vedi [Architecture.md](Architecture.md) per lo stato corrente; i numeri sotto riflettono
+> lo snapshot del 2026-05-28.
 
 ---
 

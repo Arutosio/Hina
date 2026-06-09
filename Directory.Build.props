@@ -1,0 +1,11 @@
+<Project>
+
+  <!-- Shared build settings for every project in the solution. Project-specific
+       properties (PublishAot, RuntimeIdentifiers, OutputType, …) stay in each .csproj. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Hina.Core.Cli;
 using Hina.Builder.Init;
 using Microsoft.Extensions.Logging;
 
@@ -10,13 +11,13 @@ namespace Hina.Builder
     {
         private static async Task<int> Main(string[] args)
         {
-            if (args.Length == 0 || Args.HasArg(args, "--help") || Args.HasArg(args, "help"))
+            if (args.Length == 0 || Args.HasFlag(args, "--help") || Args.HasFlag(args, "help"))
             {
                 PrintHelp();
                 return 0;
             }
 
-            bool verbose = Args.HasArg(args, "--verbose") || Args.HasArg(args, "-v");
+            bool verbose = Args.HasFlag(args, "--verbose") || Args.HasFlag(args, "-v");
 
             using ILoggerFactory loggerFactory = LoggerFactory.Create(builder =>
             {

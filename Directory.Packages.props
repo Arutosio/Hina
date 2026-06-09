@@ -1,0 +1,20 @@
+<Project>
+
+  <!-- Central Package Management: every PackageReference in the solution resolves
+       its version from here. Bump versions in this one file only. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="coverlet.collector" Version="6.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="9.0.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageVersion Include="Microsoft.Win32.Registry" Version="5.0.0" />
+    <PackageVersion Include="NSec.Cryptography" Version="24.4.0" />
+    <PackageVersion Include="xunit" Version="2.5.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+</Project>

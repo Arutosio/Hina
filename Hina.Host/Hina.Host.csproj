@@ -5,9 +5,6 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationIcon>..\img\HinaHPack_Logo.ico</ApplicationIcon>
     <PackageIcon>HinaPack_Logo.png</PackageIcon>
   </PropertyGroup>

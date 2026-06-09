@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Hina.Core.Cli;
 using Hina.Core.Chunking;
 using Hina.Core.Hashing;
 using Hina.Core.Manifest;
@@ -33,17 +34,17 @@ namespace Hina.Builder
 
         public static BuildOptions FromArgs(string[] args) => new BuildOptions
         {
-            Platform = Args.GetArgValue(args, "--platform"),
-            Input = Args.GetArgValue(args, "--input") ?? string.Empty,
-            Output = Args.GetArgValue(args, "--out") ?? string.Empty,
-            BaseUrl = Args.GetArgValue(args, "--base") ?? string.Empty,
-            SignKeyPath = Args.GetArgValue(args, "--sign-key"),
-            Version = Args.GetArgValue(args, "--version") ?? "0.0.0",
-            ChunkSize = Args.ParseInt(Args.GetArgValue(args, "--chunk"), 64 * 1024),
-            ChunkingMode = Args.GetArgValue(args, "--chunking") ?? "fixed",
-            MinChunk = Args.ParseInt(Args.GetArgValue(args, "--min-chunk"), 2048),
-            MaxChunk = Args.ParseInt(Args.GetArgValue(args, "--max-chunk"), 64 * 1024),
-            AvgChunk = Args.ParseInt(Args.GetArgValue(args, "--avg-chunk"), 8192),
+            Platform = Args.GetValue(args, "--platform"),
+            Input = Args.GetValue(args, "--input") ?? string.Empty,
+            Output = Args.GetValue(args, "--out") ?? string.Empty,
+            BaseUrl = Args.GetValue(args, "--base") ?? string.Empty,
+            SignKeyPath = Args.GetValue(args, "--sign-key"),
+            Version = Args.GetValue(args, "--version") ?? "0.0.0",
+            ChunkSize = Args.ParseInt(Args.GetValue(args, "--chunk"), 64 * 1024),
+            ChunkingMode = Args.GetValue(args, "--chunking") ?? "fixed",
+            MinChunk = Args.ParseInt(Args.GetValue(args, "--min-chunk"), 2048),
+            MaxChunk = Args.ParseInt(Args.GetValue(args, "--max-chunk"), 64 * 1024),
+            AvgChunk = Args.ParseInt(Args.GetValue(args, "--avg-chunk"), 8192),
         };
     }
 

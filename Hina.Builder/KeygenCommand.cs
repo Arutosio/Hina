@@ -1,4 +1,5 @@
 using System.IO;
+using Hina.Core.Cli;
 using Hina.Core.Crypto;
 using Microsoft.Extensions.Logging;
 
@@ -28,8 +29,8 @@ namespace Hina.Builder
 
         public static int Run(string[] args, ILogger logger)
         {
-            string outDir = Args.GetArgValue(args, "--out") ?? ".";
-            string name = Args.GetArgValue(args, "--name") ?? "hina";
+            string outDir = Args.GetValue(args, "--out") ?? ".";
+            string name = Args.GetValue(args, "--name") ?? "hina";
             Generate(outDir, name, logger);
             return 0;
         }

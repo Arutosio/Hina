@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Hina.Core.Cli;
 using Hina.PackageManager.Descriptor;
 using Microsoft.Extensions.Logging;
 
@@ -22,7 +23,7 @@ namespace Hina.Builder.Init
         // drive this directly with a ScriptedPrompt, so it must not check the console here.
         public static async Task<int> RunAsync(string[] args, IPrompt prompt, ILogger logger, CancellationToken ct)
         {
-            string inputArg = Args.GetArgValue(args, "--input") ?? ".";
+            string inputArg = Args.GetValue(args, "--input") ?? ".";
             DirectoryInfo input = new DirectoryInfo(Path.GetFullPath(inputArg));
             if (!input.Exists)
             {

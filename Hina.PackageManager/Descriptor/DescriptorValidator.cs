@@ -80,13 +80,16 @@ namespace Hina.PackageManager.Descriptor
 
             ValidateEd25519Key(descriptor.PublicKey, "publicKey", errors);
 
-            if (descriptor.Exec.Windows == null && descriptor.Exec.Linux == null && descriptor.Exec.Macos == null)
+            bool hasExecMap = descriptor.Exec.Windows != null || descriptor.Exec.Linux != null || descriptor.Exec.Macos != null;
+            bool hasPlatforms = descriptor.Platforms.Count > 0;
+            if (!hasExecMap && !hasPlatforms)
             {
-                errors.Add("exec must define at least one platform.");
+                errors.Add("exec must define at least one platform, or declare platforms[].");
             }
             ValidateRelativePath(descriptor.Exec.Windows, "exec.windows", errors);
             ValidateRelativePath(descriptor.Exec.Linux, "exec.linux", errors);
             ValidateRelativePath(descriptor.Exec.Macos, "exec.macos", errors);
+            ValidatePlatforms(descriptor.Platforms, errors);
 
             HashSet<string> entryIds = new HashSet<string>(StringComparer.Ordinal);
             for (int i = 0; i < descriptor.Entries.Count; i++)
@@ -143,6 +146,44 @@ namespace Hina.PackageManager.Descriptor
             ValidateSandbox(descriptor.Sandbox, errors);
 
             return new ValidationResult(errors);
+        }
+
+        // The closed sets a platforms[] entry may name. Kept here so the validator and the
+        // runtime selector agree on what's legal — unknown tokens are rejected (fail closed).
+        public static readonly IReadOnlySet<string> KnownOs = new HashSet<string>(StringComparer.Ordinal) { "windows", "macos", "linux" };
+        public static readonly IReadOnlySet<string> KnownArch = new HashSet<string>(StringComparer.Ordinal) { "x64", "arm64", "x86", "arm" };
+
+        private static void ValidatePlatforms(List<PlatformVariant> platforms, List<string> errors)
+        {
+            HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+            for (int i = 0; i < platforms.Count; i++)
+            {
+                PlatformVariant v = platforms[i];
+                string prefix = $"platforms[{i}]";
+
+                if (!KnownOs.Contains(v.Os))
+                {
+                    errors.Add($"{prefix}.os '{v.Os}' must be one of: {string.Join(", ", KnownOs)}.");
+                }
+                if (v.Arch != null && !KnownArch.Contains(v.Arch))
+                {
+                    errors.Add($"{prefix}.arch '{v.Arch}' must be one of: {string.Join(", ", KnownArch)} (or omitted).");
+                }
+                if (string.IsNullOrWhiteSpace(v.Exec))
+                {
+                    errors.Add($"{prefix}.exec is required.");
+                }
+                else
+                {
+                    ValidateRelativePath(v.Exec, $"{prefix}.exec", errors);
+                }
+
+                string key = v.Os + "/" + (v.Arch ?? "*");
+                if (!seen.Add(key))
+                {
+                    errors.Add($"{prefix} duplicates the (os, arch) pair '{key}'.");
+                }
+            }
         }
 
         private static void ValidateSandbox(SandboxSpec? sandbox, List<string> errors)

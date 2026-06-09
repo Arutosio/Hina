@@ -16,6 +16,9 @@ namespace Hina.Builder.Init
         public string Channel { get; init; } = "stable";
         public string PublicKey { get; init; } = string.Empty;
         public ExecMap Exec { get; init; } = new ExecMap();
+        // Multi-platform variants. When non-empty the descriptor ships per-variant manifests and
+        // the legacy Exec map is left empty.
+        public List<PlatformVariant> Platforms { get; init; } = new List<PlatformVariant>();
         public List<ShellEntry> Entries { get; init; } = new List<ShellEntry>();
         public SandboxSpec? Sandbox { get; init; }
         public bool AllowInsecure { get; init; }
@@ -41,6 +44,7 @@ namespace Hina.Builder.Init
                 Channel = a.Channel,
                 PublicKey = a.PublicKey,
                 Exec = a.Exec,
+                Platforms = a.Platforms,
                 Entries = a.Entries,
                 Sandbox = a.Sandbox
             };

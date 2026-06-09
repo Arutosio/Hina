@@ -155,9 +155,26 @@ namespace Hina.PackageManager.Install
                 Directory.CreateDirectory(appDir);
                 tx.RecordAppDirCreated(appDir);
 
-                // [10] Delta-fetch chunks into appDir.
+                // [9b] Resolve which platform variant this machine gets. For a multi-variant app
+                // this selects the manifest to fetch and the exec to run; for a legacy app it's
+                // the OS exec map and the single manifest.json.
+                PlatformResolution resolution = PlatformResolver.ForCurrentMachine(descriptor);
+                if (resolution.NoBuildForPlatform)
+                {
+                    throw new InvalidOperationException(
+                        $"'{descriptor.Name}' has no build for this platform ({PlatformToken.CurrentOs()}-{PlatformToken.CurrentArch()}).");
+                }
+                if (resolution.UsedFallback)
+                {
+                    _logger.LogWarning(
+                        "No native build for {Os}-{Arch}; installing the x64 build (it will run via Rosetta/emulation).",
+                        PlatformToken.CurrentOs(), PlatformToken.CurrentArch());
+                }
+                newApp.Platform = resolution.ManifestToken ?? string.Empty;
+
+                // [10] Delta-fetch chunks into appDir (only this variant's manifest).
                 PatcherConfig patchCfg = options.Network.ToPatchConfig(
-                    descriptor.BaseUrl, descriptor.Channel, descriptor.PublicKey, backup: false);
+                    descriptor.BaseUrl, descriptor.Channel, descriptor.PublicKey, backup: false, platform: resolution.ManifestToken);
                 IPatchClient patcher = _patchClientFactory(patchCfg);
                 PatchResult patchResult = await patcher.PatchAsync(appDir, ct);
                 if (!patchResult.Success)
@@ -165,8 +182,8 @@ namespace Hina.PackageManager.Install
                     throw new InvalidOperationException("PatchClient.PatchAsync reported failure.");
                 }
 
-                // [11] Sanity check: the per-OS exec exists on disk after patching.
-                string? execRelative = ExecForCurrentOs(descriptor);
+                // [11] Sanity check: the resolved exec exists on disk after patching.
+                string? execRelative = resolution.ExecRelative;
                 if (execRelative == null)
                 {
                     throw new InvalidOperationException("Descriptor has no exec entry for the current OS.");

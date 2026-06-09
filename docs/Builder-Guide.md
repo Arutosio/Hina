@@ -99,6 +99,63 @@ the file in place (or to `--out <path>`). See the
 
 ---
 
+## Multi-platform packages (per-variant download)
+
+By default an app ships a single manifest listing every file, so a cross-platform build forces
+every user to download every OS's files. To let a client download **only** its own platform,
+ship one **variant** per `(os[, arch])` and the client fetches just that variant's manifest.
+
+**Publisher layout** — one subfolder per variant, named by its token `<os>[-<arch>]`
+(os ∈ `windows|macos|linux`, arch ∈ `x64|arm64|x86|arm`; omit arch for a build that works on
+any arch of that OS):
+
+```
+mygame-build/
+  windows-x64/   Game.exe + dll
+  macos-arm64/   MyGame.app/Contents/MacOS/MyGame
+  macos-x64/     MyGame.app/Contents/MacOS/MyGame
+  linux/         game + libs          # no arch ⇒ universal linux build
+```
+
+Build each variant into the **same** `--out` with `--platform <token>` — chunks are
+content-addressed, so the shared store dedupes assets common to multiple variants:
+
+```shell
+hina-builder build --input mygame-build/windows-x64 --platform windows-x64 --out patch --base https://patch.example.com/ --version 1.0.0 --sign-key keys/mygame.key.b64
+hina-builder build --input mygame-build/macos-arm64 --platform macos-arm64 --out patch --base https://patch.example.com/ --version 1.0.0 --sign-key keys/mygame.key.b64
+hina-builder build --input mygame-build/linux       --platform linux       --out patch --base https://patch.example.com/ --version 1.0.0 --sign-key keys/mygame.key.b64
+```
+
+**Host layout** (shared chunk store):
+
+```
+<baseUrl>/
+  manifest.windows-x64.json
+  manifest.macos-arm64.json
+  manifest.macos-x64.json
+  manifest.linux.json
+  chunks/<bucket>/<hash>.chunk.br
+```
+
+**Descriptor** — declare a `platforms` array; each `exec` is relative to that variant's root:
+
+```json
+"platforms": [
+  { "os": "windows", "arch": "x64",   "exec": "Game.exe" },
+  { "os": "macos",   "arch": "arm64", "exec": "MyGame.app/Contents/MacOS/MyGame" },
+  { "os": "macos",   "arch": "x64",   "exec": "MyGame.app/Contents/MacOS/MyGame" },
+  { "os": "linux",                    "exec": "game" }
+]
+```
+
+The client picks the most specific variant for its machine; if there's no native build for an
+arm64 host it falls back to the `x64` build (Rosetta on macOS, emulation on Windows) with a
+warning, and errors cleanly when no variant serves the OS. `hina-builder init` detects these
+subfolders automatically and builds every variant for you. Apps with no `platforms` keep the
+legacy single-manifest behavior.
+
+---
+
 ## build Command
 
 Scans a directory, chunks every file, and produces a manifest plus a chunk store.

@@ -4,6 +4,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Hina.PackageManager.Descriptor;
+using Hina.PackageManager.Install;
 using Hina.PackageManager.Registry;
 using Hina.PackageManager.Sandbox;
 using Microsoft.Extensions.Logging;
@@ -71,7 +72,7 @@ namespace Hina.CLI.Commands
                 return 1;
             }
 
-            string? execRel = ResolveExecRel(desc, entryId, out string? err);
+            string? execRel = ResolveExecRel(desc, entryId, app.Platform, out string? err);
             if (execRel == null)
             {
                 ctx.Logger.LogError("{Error}", err);
@@ -92,7 +93,7 @@ namespace Hina.CLI.Commands
             return launcher.Launch(execAbs, appArgs, plan, ctx.Ct);
         }
 
-        private static string? ResolveExecRel(AppDescriptor desc, string? entryId, out string? err)
+        private static string? ResolveExecRel(AppDescriptor desc, string? entryId, string? installedPlatform, out string? err)
         {
             err = null;
             if (entryId != null)
@@ -108,17 +109,11 @@ namespace Hina.CLI.Commands
             {
                 return desc.Entries[0].Exec;
             }
-            string? fromMap = OsExec(desc.Exec);
-            if (fromMap == null) err = "app defines no entry or executable for this OS.";
-            return fromMap;
-        }
-
-        private static string? OsExec(ExecMap exec)
-        {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) return exec.Linux;
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return exec.Macos;
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return exec.Windows;
-            return null;
+            // No shell entry: resolve via the installed platform variant (or the legacy OS exec
+            // map for single-manifest apps).
+            string? fromVariant = PlatformResolver.ForInstalledToken(desc, installedPlatform).ExecRelative;
+            if (fromVariant == null) err = "app defines no entry or executable for this platform.";
+            return fromVariant;
         }
     }
 }

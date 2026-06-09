@@ -64,6 +64,7 @@ namespace Hina.PackageManager.Descriptor
                 Channel = descriptor.Channel,
                 PublicKey = descriptor.PublicKey,
                 Exec = descriptor.Exec,
+                Platforms = descriptor.Platforms,
                 Entries = descriptor.Entries,
                 PostInstall = descriptor.PostInstall,
                 DescriptorSignature = null

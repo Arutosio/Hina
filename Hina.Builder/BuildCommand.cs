@@ -26,8 +26,14 @@ namespace Hina.Builder
         public int MaxChunk { get; init; } = 64 * 1024;
         public int AvgChunk { get; init; } = 8192;
 
+        // Variant token (e.g. "windows-x64", "linux") for a multi-platform app. When set, the
+        // manifest is written as manifest.<token>.json into the same --out (shared chunk store),
+        // so each variant's build dedupes common chunks against the others.
+        public string? Platform { get; init; }
+
         public static BuildOptions FromArgs(string[] args) => new BuildOptions
         {
+            Platform = Args.GetArgValue(args, "--platform"),
             Input = Args.GetArgValue(args, "--input") ?? string.Empty,
             Output = Args.GetArgValue(args, "--out") ?? string.Empty,
             BaseUrl = Args.GetArgValue(args, "--base") ?? string.Empty,
@@ -49,6 +55,17 @@ namespace Hina.Builder
             {
                 logger.LogError("Missing required args: --input, --out, --base");
                 return 2;
+            }
+
+            string manifestName = "manifest.json";
+            if (!string.IsNullOrEmpty(options.Platform))
+            {
+                if (!IsValidPlatformToken(options.Platform))
+                {
+                    logger.LogError("Invalid --platform '{Token}'. Expected <os>[-<arch>], os ∈ windows|macos|linux, arch ∈ x64|arm64|x86|arm.", options.Platform);
+                    return 2;
+                }
+                manifestName = $"manifest.{options.Platform}.json";
             }
 
             DirectoryInfo inputDir = new DirectoryInfo(options.Input);
@@ -84,11 +101,11 @@ namespace Hina.Builder
             }
 
             outputDir.Create();
-            await ManifestSerializer.WriteAsync(manifest, Path.Combine(outputDir.FullName, "manifest.json"), ct);
+            await ManifestSerializer.WriteAsync(manifest, Path.Combine(outputDir.FullName, manifestName), ct);
             await chunkWriter.WriteChunksAsync(inputDir, chunkDir, ct);
 
             logger.LogInformation("Build complete");
-            logger.LogInformation("Manifest: {ManifestPath}", Path.Combine(outputDir.FullName, "manifest.json"));
+            logger.LogInformation("Manifest: {ManifestPath}", Path.Combine(outputDir.FullName, manifestName));
             logger.LogInformation("Chunks: {ChunkDir}", chunkDir.FullName);
             return 0;
         }
@@ -97,6 +114,20 @@ namespace Hina.Builder
         {
             // Ensure base URL is safe for Uri combination.
             return url.EndsWith("/") ? url : url + "/";
+        }
+
+        // <os>[-<arch>]; os ∈ {windows,macos,linux}, arch ∈ {x64,arm64,x86,arm}. Shares the closed
+        // sets with DescriptorValidator so the build token and the descriptor's platforms[] agree.
+        private static bool IsValidPlatformToken(string token)
+        {
+            int dash = token.IndexOf('-');
+            string os = dash < 0 ? token : token.Substring(0, dash);
+            string? arch = dash < 0 ? null : token.Substring(dash + 1);
+            if (!Hina.PackageManager.Descriptor.DescriptorValidator.KnownOs.Contains(os))
+            {
+                return false;
+            }
+            return arch == null || Hina.PackageManager.Descriptor.DescriptorValidator.KnownArch.Contains(arch);
         }
     }
 }

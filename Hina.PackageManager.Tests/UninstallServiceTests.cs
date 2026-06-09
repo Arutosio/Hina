@@ -53,6 +53,44 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public async Task Uninstall_InstallDirRemovalFails_KeepsRegistryEntry()
+        {
+            // POSIX-only: we revoke write on the install dir so deleting its contents fails.
+            // On Windows there's no equivalent simple, reliable way to force the delete to
+            // throw without holding a file handle, so skip there.
+            if (OperatingSystem.IsWindows()) return;
+
+            InstallPaths paths = InstallPaths.ForRoot(_root);
+            string appDir = Path.Combine(_root, "locked-appdir");
+            Directory.CreateDirectory(appDir);
+            await File.WriteAllTextAsync(Path.Combine(appDir, "f.txt"), "x");
+            await Seed(paths, "demo", appDir);
+
+            // r-x only: the child file can't be unlinked, so Directory.Delete throws.
+            File.SetUnixFileMode(appDir,
+                UnixFileMode.UserRead | UnixFileMode.UserExecute);
+
+            try
+            {
+                UninstallResult result = await new UninstallService(paths, new FakePlatformIntegration())
+                    .UninstallAsync("demo", CancellationToken.None);
+
+                // The delete failed, so the dir is still on disk...
+                Assert.True(Directory.Exists(appDir));
+                // ...and the app must remain registered (not silently stranded as orphaned
+                // files with no registry pointer). Removal reported as not done.
+                Assert.False(result.Removed);
+                Assert.True(new RegistryStore(paths.RegistryFile).Load().Apps.ContainsKey("demo"));
+            }
+            finally
+            {
+                // Restore perms so the test root can be cleaned up.
+                File.SetUnixFileMode(appDir,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+        }
+
+        [Fact]
         public async Task Uninstall_InstallPathIsDirectorySymlink_RemovesLinkNotTarget()
         {
             InstallPaths paths = InstallPaths.ForRoot(_root);

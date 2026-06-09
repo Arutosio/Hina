@@ -81,6 +81,19 @@ namespace Hina.PackageManager.Install
             }
             catch (System.Exception ex) { _logger.LogDebug(ex, "Removal of install dir {Path} failed for {Name} (fail-soft).", app.InstallPath, name); }
 
+            // If the install dir is still there (delete failed: locked file on Windows, a
+            // read-only parent, missing permission), keep the registry row. Dropping it would
+            // strand the files on disk with nothing pointing at them — `verify`/`repair` only
+            // detect registered apps, so the leftovers would be invisible and unrecoverable by
+            // Hina. Keeping the row leaves the app listed and the uninstall retryable.
+            if (Directory.Exists(app.InstallPath))
+            {
+                _logger.LogWarning(
+                    "Uninstall: could not remove install directory {Path} for '{Name}'. The app is left registered so you can retry `hina uninstall {Name}` once the directory is free.",
+                    app.InstallPath, name, name);
+                return new UninstallResult { Name = name, Removed = false };
+            }
+
             try
             {
                 string descCache = _paths.DescriptorCache(name);

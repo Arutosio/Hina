@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
@@ -151,8 +152,15 @@ namespace Hina.Core.Patching
                     // The handle MUST be released before the File.Copy swap below: keeping it open
                     // (even read-only, FileShare.Read) makes the overwrite of localPath fail with a
                     // sharing violation — so srcFs's scope is this block, not the whole try.
+                    // Whole-file verification hashes the bytes as they are written (both the
+                    // disk-copied and downloaded paths feed it), replacing a full re-read of
+                    // the temp file after the rebuild.
+                    string? rebuiltHash = null;
                     using (FileStream? srcFs = matches.Count > 0 ? File.OpenRead(localPath) : null)
                     using (FileStream outFs = File.Create(tempPath))
+                    using (IncrementalHash? verifyHash = Config.Verify
+                        ? IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
+                        : null)
                     {
                         // Rebuild the file in manifest order, reusing local data when possible.
                         // Missing chunks are downloaded in parallel: we keep up to Config.Concurrency
@@ -190,7 +198,7 @@ namespace Hina.Core.Patching
                                 if (matches.TryGetValue(chunk.Index, out long offset))
                                 {
                                     // Reuse local data when a chunk matches.
-                                    CopyChunk(srcFs!, offset, chunk.Size, outFs);
+                                    CopyChunk(srcFs!, offset, chunk.Size, outFs, verifyHash);
                                 }
                                 else
                                 {
@@ -202,6 +210,7 @@ namespace Hina.Core.Patching
                                             $"Manifest chunk size {chunk.Size} is inconsistent with the {data.Length}-byte chunk content.");
                                     }
                                     await outFs.WriteAsync(data.AsMemory(0, chunk.Size), ct);
+                                    verifyHash?.AppendData(data, 0, chunk.Size);
                                 }
                             }
                         }
@@ -214,17 +223,18 @@ namespace Hina.Core.Patching
                             catch { /* faults/cancellations observed; the original error is what propagates */ }
                             throw;
                         }
+
+                        if (verifyHash != null)
+                        {
+                            rebuiltHash = "sha256:" + Hex.ToHexLower(verifyHash.GetHashAndReset());
+                        }
                     }
 
                     if (Config.Verify)
                     {
-                        using (FileStream fs = File.OpenRead(tempPath))
+                        if (!string.Equals(rebuiltHash, file.FileHash, StringComparison.OrdinalIgnoreCase))
                         {
-                            string hash = await _hasher.ComputeHashAsync(fs, ct);
-                            if (!string.Equals(hash, file.FileHash, StringComparison.OrdinalIgnoreCase))
-                            {
-                                throw new InvalidDataException("Hash mismatch after patch.");
-                            }
+                            throw new InvalidDataException("Hash mismatch after patch.");
                         }
                         _logger.LogDebug("Verification passed for {FilePath}", file.Path);
                     }
@@ -365,16 +375,24 @@ namespace Hina.Core.Patching
             return Task.CompletedTask;
         }
 
-        private static void CopyChunk(FileStream src, long offset, int size, FileStream output)
+        private static void CopyChunk(FileStream src, long offset, int size, FileStream output, IncrementalHash? verifyHash)
         {
-            byte[] buffer = new byte[size];
-            src.Seek(offset, SeekOrigin.Begin);
-            // ReadExactly: a single Read may return fewer bytes than requested. A matched
-            // rsync chunk always has `size` bytes available at `offset`, so a short read
-            // means a truncated/changed source — fail (caught upstream → rollback) rather
-            // than silently writing a short, corrupt chunk.
-            src.ReadExactly(buffer, 0, size);
-            output.Write(buffer, 0, size);
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(size);
+            try
+            {
+                src.Seek(offset, SeekOrigin.Begin);
+                // ReadExactly: a single Read may return fewer bytes than requested. A matched
+                // rsync chunk always has `size` bytes available at `offset`, so a short read
+                // means a truncated/changed source — fail (caught upstream → rollback) rather
+                // than silently writing a short, corrupt chunk.
+                src.ReadExactly(buffer, 0, size);
+                output.Write(buffer, 0, size);
+                verifyHash?.AppendData(buffer, 0, size);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
         }
 
         private async Task<Dictionary<int, long>> RsyncMatchLocalAsync(string localPath, ManifestFile file, CancellationToken ct)

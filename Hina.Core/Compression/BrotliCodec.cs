@@ -27,8 +27,13 @@ namespace Hina.Core.Compression
         // by orders of magnitude; without a cap a tiny ".chunk.br" could OOM the client before
         // any hash check runs. Throws InvalidDataException once the limit is exceeded.
         public static byte[] Decompress(byte[] data, long maxBytes = DefaultMaxDecompressedBytes)
+            => Decompress(data, 0, data.Length, maxBytes);
+
+        // Overload for callers holding the payload in a larger buffer (e.g. a MemoryStream's
+        // backing array) — avoids forcing them into a defensive ToArray() copy first.
+        public static byte[] Decompress(byte[] data, int index, int count, long maxBytes = DefaultMaxDecompressedBytes)
         {
-            using (var input = new MemoryStream(data))
+            using (var input = new MemoryStream(data, index, count))
             using (var bs = new BrotliStream(input, CompressionMode.Decompress))
             using (var output = new MemoryStream())
             {

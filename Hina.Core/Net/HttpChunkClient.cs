@@ -111,9 +111,13 @@ namespace Hina.Core.Net
 
             using Stream stream = await response.Content.ReadAsStreamAsync(ct);
             using CappedReadStream limited = new CappedReadStream(stream, compressedCap);
-            using MemoryStream buffer = new MemoryStream();
+            // Pre-size from Content-Length when the server provides one (EnsureWithinCap already
+            // rejected anything above the cap), and read the backing buffer directly instead of
+            // ToArray() — skips one full copy of every chunk.
+            int capacity = response.Content.Headers.ContentLength is long cl && cl > 0 ? (int)cl : 0;
+            using MemoryStream buffer = new MemoryStream(capacity);
             await limited.CopyToAsync(buffer, ct);
-            return DecompressAndVerify(buffer.ToArray(), hashOnly, maxBytes);
+            return DecompressAndVerify(buffer.GetBuffer(), (int)buffer.Length, hashOnly, maxBytes);
         }
 
         // A redirect that lands on http:// after we requested https:// pulls the payload over a
@@ -142,9 +146,9 @@ namespace Hina.Core.Net
         // decompressed bytes actually hash to that name, independent of the optional whole-file
         // verify pass (PatcherConfig.Verify) — so a corrupt/tampered chunk is rejected even when
         // whole-file verification is disabled, and the failure is localized for retry.
-        private static byte[] DecompressAndVerify(byte[] compressed, string expectedHashOnly, long maxBytes)
+        private static byte[] DecompressAndVerify(byte[] compressed, int compressedLength, string expectedHashOnly, long maxBytes)
         {
-            byte[] data = BrotliCodec.Decompress(compressed, maxBytes);
+            byte[] data = BrotliCodec.Decompress(compressed, 0, compressedLength, maxBytes);
 
             string actual = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(data));
             if (!string.Equals(actual, expectedHashOnly, StringComparison.OrdinalIgnoreCase))

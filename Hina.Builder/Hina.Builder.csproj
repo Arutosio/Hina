@@ -6,6 +6,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Hina.Core\Hina.Core.csproj" />
+    <ProjectReference Include="..\Hina.PackageManager\Hina.PackageManager.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Hina.Builder.Tests" />
   </ItemGroup>
 
   <PropertyGroup>

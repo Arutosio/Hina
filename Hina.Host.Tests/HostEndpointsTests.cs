@@ -17,6 +17,7 @@ namespace Hina.Host.Tests
             Directory.CreateDirectory(Path.Combine(_root, "chunks", "ab"));
             File.WriteAllText(Path.Combine(_root, "manifest.json"), """{ "version": "1.0.0" }""");
             File.WriteAllBytes(Path.Combine(_root, "chunks", "ab", "abcd.chunk.br"), new byte[] { 1, 2, 3 });
+            File.WriteAllText(Path.Combine(_root, "signing.key"), "not-a-real-key");
 
             _factory = new WebApplicationFactory<Program>()
                 .WithWebHostBuilder(b => b.UseSetting("Patcher:Root", _root));
@@ -66,6 +67,16 @@ namespace Hina.Host.Tests
             Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
             string cache = resp.Headers.TryGetValues("Cache-Control", out var v) ? string.Join(",", v) : "";
             Assert.Contains("immutable", cache);
+        }
+
+        [Fact]
+        public async Task UnknownExtension_IsNotServed()
+        {
+            // Only the content types a patch root legitimately contains (.json, .br) are
+            // served. A stray secret (.key/.pem) in the root must keep returning 404.
+            using var client = _factory.CreateClient();
+            var resp = await client.GetAsync("/signing.key");
+            Assert.Equal(HttpStatusCode.NotFound, resp.StatusCode);
         }
 
         [Fact]

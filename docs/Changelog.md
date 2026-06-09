@@ -4,7 +4,7 @@ All notable changes to Hina are documented in this file.
 
 ---
 
-## Unreleased
+## v1.4.1 — delta-update and chunk-serving fixes, patch-path performance
 
 ### Fixed
 
@@ -33,7 +33,7 @@ All notable changes to Hina are documented in this file.
   parser was removed).
 - `Hina.Host` split into testable units (`HostOptions`, `Routing`, `AccessStats`,
   `SetupWizard`) with a new `Hina.Host.Tests` suite (25 tests, in-process endpoint
-  tests). Total suite: 539 tests.
+  tests). Total suite: 540 tests.
 - CI: GitHub Actions bumped to v4 with NuGet package caching.
 
 ---

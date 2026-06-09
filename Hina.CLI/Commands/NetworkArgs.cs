@@ -31,11 +31,18 @@ namespace Hina.CLI.Commands
         private static int ParseInt(string[] args, string flag, int fallback)
         {
             string? raw = Args.GetValue(args, flag);
-            if (raw != null && int.TryParse(raw, out int parsed) && parsed > 0)
+            // Flag absent → use the engine default. Flag PRESENT but not a positive integer →
+            // fail loudly: silently falling back to the default would make `--retries 0`,
+            // `--retries -5` or `--retries abc` look honored while the engine ignored them.
+            if (raw == null)
+            {
+                return fallback;
+            }
+            if (int.TryParse(raw, out int parsed) && parsed > 0)
             {
                 return parsed;
             }
-            return fallback;
+            throw new System.FormatException($"Invalid value for {flag}: '{raw}'. Expected a positive integer.");
         }
     }
 }

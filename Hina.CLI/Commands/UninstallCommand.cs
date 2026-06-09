@@ -7,12 +7,23 @@ namespace Hina.CLI.Commands
 {
     internal static class UninstallCommand
     {
+        private static readonly System.Collections.Generic.HashSet<string> NoFlags =
+            new(StringComparer.OrdinalIgnoreCase);
+
         public static async Task<int> RunAsync(CommandContext ctx, string[] args)
         {
             string? name = Args.FirstPositional(args, startIndex: 1);
             if (string.IsNullOrWhiteSpace(name))
             {
                 ctx.Logger.LogError("Usage: hina uninstall <name>");
+                return 2;
+            }
+
+            // uninstall takes no flags; reject typos instead of silently ignoring them.
+            string? unknownFlag = Args.FirstUnknownFlag(args, NoFlags, startIndex: 1);
+            if (unknownFlag != null)
+            {
+                ctx.Logger.LogError("Unknown flag '{Flag}'. Usage: hina uninstall <name>", unknownFlag);
                 return 2;
             }
 

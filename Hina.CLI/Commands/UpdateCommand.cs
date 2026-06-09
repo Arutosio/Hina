@@ -15,25 +15,32 @@ namespace Hina.CLI.Commands
             bool allowDowngrade = Args.HasFlag(args, "--allow-downgrade");
             bool acceptNewPerms = Args.HasFlag(args, "--accept-new-permissions");
 
-            int jobs = 4;
-            string? jobsArg = Args.GetValue(args, "--jobs");
-            if (jobsArg != null && int.TryParse(jobsArg, out int parsed) && parsed > 0)
-            {
-                jobs = parsed;
-            }
-
-            UpdateService service = ctx.NewUpdateService();
-            UpdateOptions options = new UpdateOptions
-            {
-                Force = force,
-                AllowDowngrade = allowDowngrade,
-                AcceptNewPermissions = acceptNewPerms,
-                MaxParallelism = jobs,
-                Network = NetworkArgs.FromArgs(args)
-            };
-
             try
             {
+                // --jobs absent → default 4. Present but not a positive integer → fail loudly
+                // rather than silently using 4 (see NetworkArgs for the same rule).
+                int jobs = 4;
+                string? jobsArg = Args.GetValue(args, "--jobs");
+                if (jobsArg != null)
+                {
+                    if (!int.TryParse(jobsArg, out int parsed) || parsed <= 0)
+                    {
+                        throw new FormatException($"Invalid value for --jobs: '{jobsArg}'. Expected a positive integer.");
+                    }
+                    jobs = parsed;
+                }
+
+                UpdateService service = ctx.NewUpdateService();
+                UpdateOptions options = new UpdateOptions
+                {
+                    Force = force,
+                    AllowDowngrade = allowDowngrade,
+                    AcceptNewPermissions = acceptNewPerms,
+                    MaxParallelism = jobs,
+                    Network = NetworkArgs.FromArgs(args)
+                };
+
+
                 if (string.IsNullOrWhiteSpace(name))
                 {
                     List<UpdateResult> results = await service.UpdateAllAsync(options, ctx.Ct);

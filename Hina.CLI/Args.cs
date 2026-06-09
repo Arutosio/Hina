@@ -11,7 +11,8 @@ namespace Hina.CLI
             new(StringComparer.OrdinalIgnoreCase)
             {
                 "--in", "--key", "--out", "--dir", "--base", "--config", "--pubkey",
-                "--channel", "--jobs", "--retries", "--connect-timeout", "--request-timeout"
+                "--channel", "--jobs", "--retries", "--connect-timeout", "--request-timeout",
+                "--grant", "--revoke"
             };
 
         public static bool HasFlag(string[] args, string name)
@@ -28,6 +29,21 @@ namespace Hina.CLI
             for (int i = 0; i < args.Length - 1; i++)
             {
                 if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) return args[i + 1];
+            }
+            return null;
+        }
+
+        // First token that looks like a flag (starts with '-') but isn't in the known set.
+        // Lets a command reject typos (e.g. `--allow-insecue`) instead of silently ignoring
+        // them — a silently-dropped `--allow-insecure` would change security behavior with no
+        // diagnostic. Value tokens of valued flags don't start with '-', so they're skipped here.
+        public static string? FirstUnknownFlag(string[] args, System.Collections.Generic.HashSet<string> known, int startIndex = 0)
+        {
+            for (int i = startIndex; i < args.Length; i++)
+            {
+                string a = args[i];
+                if (!a.StartsWith("-", StringComparison.Ordinal)) continue;
+                if (!known.Contains(a)) return a;
             }
             return null;
         }

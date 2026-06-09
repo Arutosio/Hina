@@ -43,5 +43,29 @@ namespace Hina.CLI.Tests
             string[] args = { "update", "--jobs", "4" };
             Assert.Null(Args.FirstPositional(args, startIndex: 1));
         }
+
+        [Fact]
+        public void FirstUnknownFlag_DetectsTypo()
+        {
+            // `--allow-insecue` is a typo of `--allow-insecure`; it must be surfaced, not
+            // silently ignored (a dropped `--allow-insecure` would change security behavior).
+            var known = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+            {
+                "--allow-insecure"
+            };
+            string[] args = { "install", "https://example.com/a.json", "--allow-insecue" };
+            Assert.Equal("--allow-insecue", Args.FirstUnknownFlag(args, known, startIndex: 1));
+        }
+
+        [Fact]
+        public void FirstUnknownFlag_AllKnown_ReturnsNull()
+        {
+            var known = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+            {
+                "--allow-insecure", "--retries"
+            };
+            string[] args = { "install", "https://example.com/a.json", "--allow-insecure", "--retries", "3" };
+            Assert.Null(Args.FirstUnknownFlag(args, known, startIndex: 1));
+        }
     }
 }

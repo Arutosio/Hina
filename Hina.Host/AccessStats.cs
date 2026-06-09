@@ -6,6 +6,15 @@ namespace Hina.Host
     // log, and abuse warnings.
     internal sealed class AccessStats
     {
+        // Caps on the tracking tables: a scanned/abused public host would otherwise grow an
+        // entry per unique probe path and per (ip,app) for the process lifetime — a slow
+        // memory exhaustion. Past the cap, NEW keys are no longer tracked individually
+        // (totals still count and rate limiting is unaffected); existing keys keep updating.
+        // The check-then-add is not atomic, so the cap can overshoot by a few entries under
+        // concurrency — it bounds growth, it is not an exact limit.
+        internal const int MaxTrackedPaths = 10_000;
+        internal const int MaxTrackedKeys = 50_000;
+
         readonly ConcurrentDictionary<string, IpBucket> _keys = new(); // key = ip|app
         readonly ConcurrentDictionary<string, long> _paths = new();
         readonly ConcurrentDictionary<string, long> _apps = new();
@@ -13,21 +22,44 @@ namespace Hina.Host
         long _total;
         long _rejections;
 
+        internal int TrackedPathCount => _paths.Count;
+        internal int TrackedKeyCount => _keys.Count;
+
         public void RecordRequest(string ip, string appName, string path)
         {
             Interlocked.Increment(ref _total);
-            _paths.AddOrUpdate(path, 1, (_, v) => v + 1);
+            if (_paths.ContainsKey(path) || _paths.Count < MaxTrackedPaths)
+            {
+                _paths.AddOrUpdate(path, 1, (_, v) => v + 1);
+            }
+            // App names come from Routing.ExtractApp (configured apps, "default", "unknown"),
+            // so _apps and _appRejections are naturally bounded.
             _apps.AddOrUpdate(appName, 1, (_, v) => v + 1);
-            var bucket = _keys.GetOrAdd($"{ip}|{appName}", _ => new IpBucket());
-            bucket.Hit();
+            string key = $"{ip}|{appName}";
+            if (_keys.TryGetValue(key, out var bucket))
+            {
+                bucket.Hit();
+            }
+            else if (_keys.Count < MaxTrackedKeys)
+            {
+                _keys.GetOrAdd(key, _ => new IpBucket()).Hit();
+            }
         }
 
         public void RecordRejection(string ip, string appName)
         {
             Interlocked.Increment(ref _rejections);
             _appRejections.AddOrUpdate(appName, 1, (_, v) => v + 1);
-            var bucket = _keys.GetOrAdd($"{ip}|{appName}", _ => new IpBucket());
-            Interlocked.Increment(ref bucket.Rejections);
+            string key = $"{ip}|{appName}";
+            if (_keys.TryGetValue(key, out var bucket))
+            {
+                Interlocked.Increment(ref bucket.Rejections);
+            }
+            else if (_keys.Count < MaxTrackedKeys)
+            {
+                bucket = _keys.GetOrAdd(key, _ => new IpBucket());
+                Interlocked.Increment(ref bucket.Rejections);
+            }
         }
 
         public bool ShouldLogAbuse(string ip, string appName, int threshold, out long count)

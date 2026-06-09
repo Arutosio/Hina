@@ -34,11 +34,23 @@ namespace Hina.Core.Net
         }
 
         public async Task<Manifest.Manifest> GetManifestAsync(Uri baseUrl, string channel, CancellationToken ct)
+            => await GetManifestAsync(baseUrl, channel, platform: null, ct);
+
+        public async Task<Manifest.Manifest> GetManifestAsync(Uri baseUrl, string channel, string? platform, CancellationToken ct)
         {
-            // Allow per-channel manifest naming.
-            string fileName = channel.Equals("stable", StringComparison.OrdinalIgnoreCase)
-                ? "manifest.json"
-                : $"manifest.{channel}.json";
+            // Manifest naming: manifest[.<channel>][.<platform>].json. The channel segment is
+            // dropped for "stable"; the platform segment is present only for multi-variant apps,
+            // so a legacy single-manifest app on the stable channel stays "manifest.json".
+            string fileName = "manifest";
+            if (!channel.Equals("stable", StringComparison.OrdinalIgnoreCase))
+            {
+                fileName += $".{channel}";
+            }
+            if (!string.IsNullOrEmpty(platform))
+            {
+                fileName += $".{platform}";
+            }
+            fileName += ".json";
 
             Uri manifestUrl = new Uri(baseUrl, fileName);
 

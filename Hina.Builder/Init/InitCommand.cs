@@ -48,12 +48,31 @@ namespace Hina.Builder.Init
             string baseUrl = prompt.Ask("Patch server base URL (where you'll host the files)", defaults.BaseUrl);
             bool allowInsecure = baseUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase);
 
-            // --- executables → exec map (+ entries when single-OS) ---
-            (ExecMap exec, List<ShellEntry> entries) = CollectExecutables(prompt, detected, input, name, displayName, logger);
-            if (exec.Windows == null && exec.Linux == null && exec.Macos == null)
+            // --- executables: per-variant subdirs (multi-platform) OR a single payload ---
+            ExecMap exec = new ExecMap();
+            List<ShellEntry> entries = new List<ShellEntry>();
+            List<PlatformVariant> platforms = new List<PlatformVariant>();
+            List<VariantDir> variantDirs = DetectVariantDirs(input);
+
+            if (variantDirs.Count > 0)
             {
-                logger.LogError("No executable was selected; cannot build a descriptor. Aborting.");
-                return 1;
+                Console.WriteLine();
+                Console.WriteLine($"Detected {variantDirs.Count} platform variant folder(s); building one manifest per variant.");
+                platforms = CollectVariants(prompt, variantDirs, logger);
+                if (platforms.Count == 0)
+                {
+                    logger.LogError("No executable was found in any variant folder; aborting.");
+                    return 1;
+                }
+            }
+            else
+            {
+                (exec, entries) = CollectExecutables(prompt, detected, input, name, displayName, logger);
+                if (exec.Windows == null && exec.Linux == null && exec.Macos == null)
+                {
+                    logger.LogError("No executable was selected; cannot build a descriptor. Aborting.");
+                    return 1;
+                }
             }
 
             // --- sandbox (plain-language questions) ---
@@ -95,6 +114,7 @@ namespace Hina.Builder.Init
                     Channel = defaults.Channel,
                     PublicKey = publicKeyB64,
                     Exec = exec,
+                    Platforms = platforms,
                     Entries = entries,
                     Sandbox = sandbox,
                     AllowInsecure = allowInsecure
@@ -122,21 +142,47 @@ namespace Hina.Builder.Init
             File.WriteAllText(descriptorPath, DescriptorParser.Serialize(descriptor, indented: true));
             logger.LogInformation("Wrote signed descriptor: {Path}", descriptorPath);
 
-            // --- build manifest + chunks ---
+            // --- build manifest(s) + chunks ---
+            // Multi-variant: one manifest per variant into a SHARED chunk store (dedup across
+            // variants). Single payload: one manifest.json from the whole folder.
             string patchDir = Path.Combine(outDir, "patch");
-            int buildCode = await BuildCommand.RunAsync(new BuildOptions
+            if (variantDirs.Count > 0)
             {
-                Input = input.FullName,
-                Output = patchDir,
-                BaseUrl = baseUrl,
-                Version = version,
-                SignKeyPath = keyPath,
-                ChunkingMode = "cdc"
-            }, logger, ct);
-            if (buildCode != 0)
+                foreach (VariantDir vd in variantDirs)
+                {
+                    int code = await BuildCommand.RunAsync(new BuildOptions
+                    {
+                        Input = vd.Dir.FullName,
+                        Output = patchDir,
+                        BaseUrl = baseUrl,
+                        Version = version,
+                        SignKeyPath = keyPath,
+                        ChunkingMode = "cdc",
+                        Platform = vd.Token
+                    }, logger, ct);
+                    if (code != 0)
+                    {
+                        logger.LogError("Build step failed for variant {Token} (descriptor written; fix and re-run `build`).", vd.Token);
+                        return code;
+                    }
+                }
+            }
+            else
             {
-                logger.LogError("Build step failed (the descriptor was written; fix the issue and re-run `build`).");
-                return buildCode;
+                int buildCode = await BuildCommand.RunAsync(new BuildOptions
+                {
+                    Input = input.FullName,
+                    Output = patchDir,
+                    BaseUrl = baseUrl,
+                    Version = version,
+                    SignKeyPath = keyPath,
+                    ChunkingMode = "cdc"
+                }, logger, ct);
+                if (buildCode != 0)
+                {
+                    logger.LogError("Build step failed (the descriptor was written; fix the issue and re-run `build`).");
+                    return buildCode;
+                }
             }
 
             PrintNextSteps(descriptor, descriptorPath, patchDir, baseUrl);
@@ -256,6 +302,82 @@ namespace Hina.Builder.Init
                 case TargetOs.Macos: exec.Macos = rel; break;
             }
         }
+
+        // ---- per-variant subdir layout ----
+
+        private sealed class VariantDir
+        {
+            public string Token { get; init; } = string.Empty;   // "windows-x64", "linux", ...
+            public string Os { get; init; } = string.Empty;
+            public string? Arch { get; init; }
+            public DirectoryInfo Dir { get; init; } = null!;
+        }
+
+        // Immediate subdirs whose NAME is a valid platform token (os[-arch]) are treated as
+        // per-platform variant folders. None ⇒ single-payload mode.
+        private static List<VariantDir> DetectVariantDirs(DirectoryInfo input)
+        {
+            List<VariantDir> result = new List<VariantDir>();
+            foreach (DirectoryInfo sub in input.EnumerateDirectories())
+            {
+                string token = sub.Name;
+                int dash = token.IndexOf('-');
+                string os = dash < 0 ? token : token.Substring(0, dash);
+                string? arch = dash < 0 ? null : token.Substring(dash + 1);
+                if (!DescriptorValidator.KnownOs.Contains(os))
+                {
+                    continue;
+                }
+                if (arch != null && !DescriptorValidator.KnownArch.Contains(arch))
+                {
+                    continue;
+                }
+                result.Add(new VariantDir { Token = token, Os = os, Arch = arch, Dir = sub });
+            }
+            return result;
+        }
+
+        private static List<PlatformVariant> CollectVariants(IPrompt prompt, List<VariantDir> variantDirs, ILogger logger)
+        {
+            List<PlatformVariant> platforms = new List<PlatformVariant>();
+            foreach (VariantDir vd in variantDirs)
+            {
+                IReadOnlyList<DetectedExecutable> detected = ExecutableDetector.Detect(vd.Dir);
+                DetectedExecutable? best = null;
+                foreach (DetectedExecutable d in detected)
+                {
+                    if (OsString(d.Os) == vd.Os) { best = d; break; }
+                }
+                best ??= detected.Count > 0 ? detected[0] : null;
+
+                string exec;
+                if (best != null && prompt.Confirm($"[{vd.Token}] use '{best.RelPath}' as the executable?", true))
+                {
+                    exec = best.RelPath;
+                }
+                else
+                {
+                    exec = prompt.Ask($"[{vd.Token}] path to the executable (relative to {vd.Token}/, blank = skip)", "");
+                    if (string.IsNullOrWhiteSpace(exec))
+                    {
+                        logger.LogWarning("No executable for variant {Token}; skipping it.", vd.Token);
+                        continue;
+                    }
+                    exec = exec.Replace('\\', '/').Trim();
+                }
+
+                platforms.Add(new PlatformVariant { Os = vd.Os, Arch = vd.Arch, Exec = exec });
+            }
+            return platforms;
+        }
+
+        private static string OsString(TargetOs os) => os switch
+        {
+            TargetOs.Windows => "windows",
+            TargetOs.Linux => "linux",
+            TargetOs.Macos => "macos",
+            _ => "unknown"
+        };
 
         // ---- sandbox ----
 

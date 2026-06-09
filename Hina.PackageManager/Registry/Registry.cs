@@ -24,6 +24,12 @@ namespace Hina.PackageManager.Registry
         public string BaseUrl { get; set; } = string.Empty;
         public string Channel { get; set; } = "stable";
         public string PublicKey { get; set; } = string.Empty;
+
+        // Variant token installed (e.g. "macos-arm64") for a multi-platform app, so update/verify
+        // refetch the same manifest.<token>.json. Empty for legacy single-manifest apps. Additive
+        // and default-empty so older registries round-trip unchanged.
+        public string Platform { get; set; } = string.Empty;
+
         public DateTimeOffset InstalledAt { get; set; }
         public DateTimeOffset LastUpdatedAt { get; set; }
 

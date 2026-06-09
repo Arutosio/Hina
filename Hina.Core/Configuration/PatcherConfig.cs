@@ -7,6 +7,10 @@ namespace Hina.Core.Configuration
     {
         public Uri BaseUrl { get; set; } = new Uri("http://localhost/");
         public string Channel { get; set; } = "stable";
+
+        // Variant token (e.g. "macos-arm64") for a multi-platform app, selecting which
+        // manifest.<platform>.json to fetch. Null ⇒ legacy single-manifest app.
+        public string? Platform { get; set; }
         public int Concurrency { get; set; } = 4;
         public int ChunkSize { get; set; } = 64 * 1024;
         public bool Verify { get; set; } = true;

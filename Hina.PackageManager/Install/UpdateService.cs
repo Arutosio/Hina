@@ -202,9 +202,21 @@ namespace Hina.PackageManager.Install
                 foreach (string r in permDiff.Removed) _logger.LogInformation("  - {Removed}", r);
             }
 
-            // [6] PatchClient delta.
+            // [6] PatchClient delta — fetch the SAME variant the app was installed as.
+            PlatformResolution resolution = PlatformResolver.ForInstalledToken(descriptor, app.Platform);
+            if (resolution.NoBuildForPlatform)
+            {
+                return new UpdateResult
+                {
+                    Name = name,
+                    FromVersion = app.InstalledVersion,
+                    ToVersion = descriptor.Version,
+                    Status = UpdateStatus.Failed,
+                    Message = "The updated descriptor has no build for this platform."
+                };
+            }
             PatcherConfig patchCfg = options.Network.ToPatchConfig(
-                descriptor.BaseUrl, descriptor.Channel, descriptor.PublicKey, backup: true);
+                descriptor.BaseUrl, descriptor.Channel, descriptor.PublicKey, backup: true, platform: resolution.ManifestToken);
             IPatchClient patcher = _patchClientFactory(patchCfg);
 
             try
@@ -255,6 +267,7 @@ namespace Hina.PackageManager.Install
                 BaseUrl = descriptor.BaseUrl,
                 Channel = descriptor.Channel,
                 PublicKey = descriptor.PublicKey,
+                Platform = resolution.ManifestToken ?? string.Empty,
                 InstalledAt = app.InstalledAt,
                 LastUpdatedAt = DateTimeOffset.UtcNow,
                 ExecutedHooks = UpdateDiff.SurvivingHooks(app.ExecutedHooks, hooksToRemove),
@@ -508,6 +521,7 @@ namespace Hina.PackageManager.Install
             BaseUrl = src.BaseUrl,
             Channel = src.Channel,
             PublicKey = src.PublicKey,
+            Platform = src.Platform,
             InstalledAt = src.InstalledAt,
             LastUpdatedAt = src.LastUpdatedAt,
             ExecutedHooks = new List<HookEvidence>(src.ExecutedHooks),

@@ -13,6 +13,7 @@ namespace Hina.PackageManager.Json
     [JsonSerializable(typeof(AutostartHook))]
     [JsonSerializable(typeof(ShellEntry))]
     [JsonSerializable(typeof(ExecMap))]
+    [JsonSerializable(typeof(PlatformVariant))]
     [JsonSerializable(typeof(SandboxSpec))]
     [JsonSerializable(typeof(FsRule))]
     [JsonSerializable(typeof(CapabilitySpec))]

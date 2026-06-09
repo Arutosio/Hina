@@ -108,7 +108,7 @@ namespace Hina.PackageManager.Diagnostics
                 }
             }
 
-            Require(InstallService.ExecForCurrentOs(descriptor));
+            Require(PlatformResolver.ForInstalledToken(descriptor, app.Platform).ExecRelative);
             foreach (ShellEntry e in descriptor.Entries) Require(e.Exec);
         }
 

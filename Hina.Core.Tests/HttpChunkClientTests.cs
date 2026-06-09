@@ -68,6 +68,48 @@ namespace Hina.Core.Tests
             Assert.Equal("http://cdn.test.com/manifest.beta.json", capturedUri!.ToString());
         }
 
+        [Fact]
+        public async Task GetManifestAsync_StablePlatform_UsesPlatformInFilename()
+        {
+            string json = JsonSerializer.Serialize(new Manifest.Manifest { Version = "1.0.0" });
+            Uri? capturedUri = null;
+            var handler = new FakeHandler((req, ct) =>
+            {
+                capturedUri = req.RequestUri;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, Encoding.UTF8, "application/json")
+                });
+            });
+            using var http = new HttpClient(handler);
+            var client = new HttpChunkClient(http);
+
+            await client.GetManifestAsync(new Uri("http://cdn.test.com/"), "stable", "macos-arm64", CancellationToken.None);
+
+            Assert.Equal("http://cdn.test.com/manifest.macos-arm64.json", capturedUri!.ToString());
+        }
+
+        [Fact]
+        public async Task GetManifestAsync_ChannelAndPlatform_UsesBothInFilename()
+        {
+            string json = JsonSerializer.Serialize(new Manifest.Manifest { Version = "2.0.0" });
+            Uri? capturedUri = null;
+            var handler = new FakeHandler((req, ct) =>
+            {
+                capturedUri = req.RequestUri;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, Encoding.UTF8, "application/json")
+                });
+            });
+            using var http = new HttpClient(handler);
+            var client = new HttpChunkClient(http);
+
+            await client.GetManifestAsync(new Uri("http://cdn.test.com/"), "beta", "windows-x64", CancellationToken.None);
+
+            Assert.Equal("http://cdn.test.com/manifest.beta.windows-x64.json", capturedUri!.ToString());
+        }
+
         private static string Sha256Hex(byte[] data) =>
             Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(data));
 

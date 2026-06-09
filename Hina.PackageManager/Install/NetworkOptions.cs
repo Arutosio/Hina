@@ -22,12 +22,13 @@ namespace Hina.PackageManager.Install
         // Single source of truth for descriptor + network → PatcherConfig. InstallService and
         // UpdateService share this so the mapping (and every field in it) can't drift; the only
         // per-call difference is whether backups are kept.
-        public PatcherConfig ToPatchConfig(string baseUrl, string channel, string trustedPublicKey, bool backup)
+        public PatcherConfig ToPatchConfig(string baseUrl, string channel, string trustedPublicKey, bool backup, string? platform = null)
         {
             return new PatcherConfig
             {
                 BaseUrl = new Uri(baseUrl),
                 Channel = channel,
+                Platform = platform,
                 TrustedPublicKey = trustedPublicKey,
                 Verify = true,
                 Backup = backup,

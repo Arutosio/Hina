@@ -23,6 +23,11 @@ namespace Hina.PackageManager.Descriptor
 
         public ExecMap Exec { get; set; } = new ExecMap();
 
+        // Per-platform variants. When non-empty, the app ships one manifest per (os[, arch]) over
+        // a shared chunk store and the client downloads only its matching variant; `Exec` (the
+        // legacy single-manifest map) is ignored. Empty ⇒ legacy single-manifest behavior.
+        public List<PlatformVariant> Platforms { get; set; } = new List<PlatformVariant>();
+
         public List<ShellEntry> Entries { get; set; } = new List<ShellEntry>();
         public List<HookAction> PostInstall { get; set; } = new List<HookAction>();
 

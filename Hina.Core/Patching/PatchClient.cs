@@ -58,7 +58,7 @@ namespace Hina.Core.Patching
         public async Task<CheckResult> CheckAsync(string rootDir, CancellationToken ct)
         {
             _logger.LogInformation("Checking for updates in {RootDir}", rootDir);
-            Manifest.Manifest manifest = await _http.GetManifestAsync(Config.BaseUrl, Config.Channel, ct);
+            Manifest.Manifest manifest = await _http.GetManifestAsync(Config.BaseUrl, Config.Channel, Config.Platform, ct);
             VerifyManifestOrThrow(manifest);
             // Patch every file listed in the manifest.
             foreach (ManifestFile file in manifest.Files)
@@ -88,7 +88,7 @@ namespace Hina.Core.Patching
         public async Task<PatchResult> PatchAsync(string rootDir, CancellationToken ct)
         {
             _logger.LogInformation("Starting patch in {RootDir}", rootDir);
-            Manifest.Manifest manifest = await _http.GetManifestAsync(Config.BaseUrl, Config.Channel, ct);
+            Manifest.Manifest manifest = await _http.GetManifestAsync(Config.BaseUrl, Config.Channel, Config.Platform, ct);
             VerifyManifestOrThrow(manifest);
             PatchResult result = new PatchResult { Success = true };
 
@@ -293,7 +293,7 @@ namespace Hina.Core.Patching
         public async Task<VerifyResult> VerifyAsync(string rootDir, CancellationToken ct)
         {
             _logger.LogInformation("Verifying files in {RootDir}", rootDir);
-            Manifest.Manifest manifest = await _http.GetManifestAsync(Config.BaseUrl, Config.Channel, ct);
+            Manifest.Manifest manifest = await _http.GetManifestAsync(Config.BaseUrl, Config.Channel, Config.Platform, ct);
             VerifyManifestOrThrow(manifest);
             VerifyResult result = new VerifyResult { Success = true };
 

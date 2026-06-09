@@ -100,6 +100,63 @@ namespace Hina.Builder.Tests
             Assert.Empty(Directory.GetFiles(_payload, "*.key.b64", SearchOption.AllDirectories));
         }
 
+        private void WriteBin(string relDir, string name, byte[] magic)
+        {
+            string dir = Path.Combine(_payload, relDir);
+            Directory.CreateDirectory(dir);
+            byte[] body = new byte[64];
+            Array.Copy(magic, body, magic.Length);
+            File.WriteAllBytes(Path.Combine(dir, name), body);
+        }
+
+        [Fact]
+        public async Task Init_MultiVariantSubdirs_WritesPlatformsAndPerVariantManifests()
+        {
+            // Per-platform subdirs named by token; each holds one OS's executable.
+            WriteBin("windows-x64", "Game.exe", new byte[] { 0x4D, 0x5A, 0x90, 0x00 });   // PE
+            WriteBin("macos-arm64", "Game", new byte[] { 0xCF, 0xFA, 0xED, 0xFE });        // Mach-O
+            WriteBin("linux", "game", new byte[] { 0x7F, 0x45, 0x4C, 0x46 });              // ELF
+
+            ScriptedPrompt script = new ScriptedPrompt(
+                asks: new[]
+                {
+                    "mygame", "My Game", "1.2.3", "Acme", "A fun game", "",
+                    "https://patch.example.com/",
+                    _out                              // output folder
+                },
+                confirms: new[]
+                {
+                    true, true, true,   // use detected exec for each of the 3 variants
+                    true,               // sandbox
+                    true,               // internet
+                    true                // generate key
+                },
+                chooses: new[] { 1 });
+
+            int code = await InitCommand.RunAsync(
+                new[] { "init", "--input", _payload }, script, NullLogger.Instance, CancellationToken.None);
+
+            Assert.Equal(0, code);
+
+            AppDescriptor d = DescriptorParser.Parse(
+                await File.ReadAllTextAsync(Path.Combine(_payload, "hina.app.json")));
+
+            Assert.Equal(3, d.Platforms.Count);
+            Assert.Empty(d.Exec.Windows ?? "");   // legacy exec map left empty
+            Assert.Contains(d.Platforms, p => p.Os == "windows" && p.Arch == "x64" && p.Exec == "Game.exe");
+            Assert.Contains(d.Platforms, p => p.Os == "macos" && p.Arch == "arm64" && p.Exec == "Game");
+            Assert.Contains(d.Platforms, p => p.Os == "linux" && p.Arch == null && p.Exec == "game");
+            Assert.NotNull(d.DescriptorSignature);
+            Assert.True(DescriptorValidator.Validate(d).IsValid);
+
+            // One manifest per variant, shared chunk store, all outside the payload.
+            string patch = Path.Combine(_out, "patch");
+            Assert.True(File.Exists(Path.Combine(patch, "manifest.windows-x64.json")));
+            Assert.True(File.Exists(Path.Combine(patch, "manifest.macos-arm64.json")));
+            Assert.True(File.Exists(Path.Combine(patch, "manifest.linux.json")));
+            Assert.True(Directory.Exists(Path.Combine(patch, "chunks")));
+        }
+
         [Fact]
         public async Task Init_ReRun_UsesExistingDescriptorAsDefaults()
         {

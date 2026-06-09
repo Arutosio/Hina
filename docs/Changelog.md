@@ -4,6 +4,47 @@ All notable changes to Hina are documented in this file.
 
 ---
 
+## v1.4.0 — multi-platform variants, publish wizard, edge-case hardening
+
+### Per-platform variants (selective download)
+
+- A descriptor can declare a `platforms` array (`{os, arch?, exec}`) so a
+  cross-platform app ships one `manifest.<os>[-<arch>].json` per variant over a
+  **shared** content-addressed chunk store. A client downloads **only** the
+  variant matching its machine instead of every platform's files.
+- The client picks the most specific `(os, arch)` match, falls back to the `x64`
+  build on an arm64 host (Rosetta on macOS, emulation on Windows) with a warning,
+  and errors cleanly when no variant serves the OS. The installed variant token is
+  recorded so `update`/`verify`/`run` refetch the same manifest.
+- `hina-builder build --platform <token>` writes `manifest.<token>.json` into a
+  shared `--out` chunk store (dedup across variants).
+- Backward-compatible: apps with no `platforms` keep the legacy single-manifest
+  (`manifest.json`, OS `exec` map) behavior unchanged.
+
+### Publish wizard
+
+- New `hina-builder init`: an interactive wizard that scans the app folder, detects
+  executables by magic bytes (PE/ELF/Mach-O, `.app` bundles), pre-fills every prompt
+  with smart defaults (from an existing `hina.app.json` — re-run = edit — or from
+  `.csproj`/`package.json`/Unity/Godot project files), asks a few plain-language
+  sandbox questions, generates an Ed25519 key pair if needed, and writes a signed
+  `hina.app.json` plus the manifest/chunk store. Detects per-variant subfolders and
+  builds every variant automatically. The signing key and patch store are written
+  **outside** the scanned payload so they're never shipped to users.
+
+### Edge-case hardening (user-triggerable)
+
+- `uninstall` no longer drops the registry row when the install-dir delete fails
+  (locked/read-only files) — the app stays listed and the uninstall is retryable
+  instead of leaving invisible orphaned files.
+- The CLI rejects unknown/typo flags (e.g. `install … --allow-insecue`) and invalid
+  numeric flag values (`--retries 0/-5/abc`, `--jobs abc`) instead of silently
+  ignoring them; `perms <app> --grant` with no path is now a usage error.
+- A corrupt (non-empty, unparseable) `registry.json` surfaces an actionable error
+  instead of a raw JSON parser exception.
+
+---
+
 ## v1.3.1 — help fix
 
 - `hina` with no args now lists the sandbox-era verbs **run**, **perms**, and

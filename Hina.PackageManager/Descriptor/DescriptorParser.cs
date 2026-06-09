@@ -12,12 +12,22 @@ namespace Hina.PackageManager.Descriptor
     {
         public static AppDescriptor Parse(string json)
         {
-            AppDescriptor? descriptor = JsonSerializer.Deserialize(json, PackageManagerJsonContext.Default.AppDescriptor);
-            if (descriptor == null)
+            try
             {
-                throw new InvalidDataException("Descriptor JSON parsed to null.");
+                AppDescriptor? descriptor = JsonSerializer.Deserialize(json, PackageManagerJsonContext.Default.AppDescriptor);
+                if (descriptor == null)
+                {
+                    throw new InvalidDataException("Descriptor JSON parsed to null; this is not a valid Hina app descriptor.");
+                }
+                return descriptor;
             }
-            return descriptor;
+            catch (JsonException ex)
+            {
+                // The most common way here is a URL that serves a web page / captive portal /
+                // bucket listing instead of hina.app.json. Surface that, not parser internals.
+                throw new InvalidDataException(
+                    $"Content is not a valid Hina app descriptor (hina.app.json): {ex.Message}", ex);
+            }
         }
 
         public static AppDescriptor Parse(byte[] utf8Json)
@@ -27,12 +37,20 @@ namespace Hina.PackageManager.Descriptor
 
         public static async Task<AppDescriptor> ReadAsync(Stream stream, CancellationToken ct)
         {
-            AppDescriptor? descriptor = await JsonSerializer.DeserializeAsync(stream, PackageManagerJsonContext.Default.AppDescriptor, ct);
-            if (descriptor == null)
+            try
             {
-                throw new InvalidDataException("Descriptor JSON parsed to null.");
+                AppDescriptor? descriptor = await JsonSerializer.DeserializeAsync(stream, PackageManagerJsonContext.Default.AppDescriptor, ct);
+                if (descriptor == null)
+                {
+                    throw new InvalidDataException("Descriptor JSON parsed to null; this is not a valid Hina app descriptor.");
+                }
+                return descriptor;
             }
-            return descriptor;
+            catch (JsonException ex)
+            {
+                throw new InvalidDataException(
+                    $"Content is not a valid Hina app descriptor (hina.app.json): {ex.Message}", ex);
+            }
         }
 
         public static string Serialize(AppDescriptor descriptor, bool indented = true)

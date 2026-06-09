@@ -6,13 +6,48 @@ The Hina Builder (`Hina.Builder`) generates a manifest and chunk store from a di
 
 ## Commands
 
-The builder supports two commands: `build` and `keygen`.
+The builder supports three commands: `init`, `build`, and `keygen`.
 
 ```
+hina-builder init    [--input <dir>]
 hina-builder build   --input <dir> --out <dir> --base <url> [options]
 hina-builder keygen  [--out <dir>] [--name <prefix>]
 hina-builder --help
 ```
+
+---
+
+## init Command (recommended starting point)
+
+`init` is an interactive wizard: run it in (or point it at) your application folder and it
+does the whole publisher setup for you — no need to hand-write `hina.app.json` or remember the
+`build`/`keygen`/`sign-descriptor` sequence.
+
+```shell
+dotnet run --project Hina.Builder -- init --input ./build
+```
+
+What it does:
+
+1. **Scans** the folder and detects executable candidates by magic bytes (PE → Windows,
+   ELF → Linux, Mach-O / `.app` bundle → macOS), then asks you to confirm each one.
+2. **Pre-fills every answer** with a smart `[default]` — just press Enter to accept. Defaults
+   come from an existing `hina.app.json` (re-running `init` edits it) or, failing that, from
+   your project files (`.csproj`, `package.json`, Unity `ProjectSettings.asset`, Godot
+   `project.godot`).
+3. Asks a few plain-language **sandbox** questions ("does it need internet?", "where does it
+   save data?") and translates them into the descriptor's sandbox block.
+4. Generates an **Ed25519 key pair** if you don't have one, then writes a **signed
+   `hina.app.json`** into the app folder and runs **`build`** to produce the manifest + chunk
+   store.
+
+Output layout: the signed `hina.app.json` is written into the app folder (it's public and safe
+to ship), while the **signing keys and the patch store are written to a separate folder OUTSIDE
+the app folder** — the build manifest covers every file under `--input`, so keeping the private
+key out of it is mandatory.
+
+`init` is interactive and refuses to run with redirected stdin (CI). In a pipeline, use the
+scriptable `build` + `hina dev sign-descriptor` commands instead.
 
 ---
 

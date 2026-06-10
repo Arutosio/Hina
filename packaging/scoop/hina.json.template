@@ -6,13 +6,11 @@
   "architecture": {
     "64bit": {
       "url": "https://github.com/Arutosio/Hina/releases/download/__TAG__/Hina-windows-x64.zip",
-      "hash": "__HASH_X64__",
-      "extract_dir": "Hina-windows-x64"
+      "hash": "__HASH_X64__"
     },
     "arm64": {
       "url": "https://github.com/Arutosio/Hina/releases/download/__TAG__/Hina-windows-arm64.zip",
-      "hash": "__HASH_ARM64__",
-      "extract_dir": "Hina-windows-arm64"
+      "hash": "__HASH_ARM64__"
     }
   },
   "bin": "hina.exe",

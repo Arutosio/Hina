@@ -63,6 +63,23 @@ function Invoke-Main {
         }
     }
 
+    # Extract a bare X.Y.Z from arbitrary text (e.g. "hina 1.0.0" or "v1.0.0").
+    function Get-VerNum([string]$s) {
+        if ($s -and $s -match '(\d+\.\d+\.\d+)') { return $Matches[1] }
+        return $null
+    }
+
+    # Compare two X.Y.Z versions numerically: -1 if $a<$b, 0 if equal, 1 if $a>$b.
+    function Compare-SemVer([string]$a, [string]$b) {
+        $pa = $a -split '\.'
+        $pb = $b -split '\.'
+        for ($i = 0; $i -lt 3; $i++) {
+            if ([int]$pa[$i] -lt [int]$pb[$i]) { return -1 }
+            if ([int]$pa[$i] -gt [int]$pb[$i]) { return 1 }
+        }
+        return 0
+    }
+
     function Resolve-LatestTag {
         try {
             $rel = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$Repo/releases/latest"
@@ -118,8 +135,17 @@ function Invoke-Main {
         try {
             Invoke-WebRequest -UseBasicParsing -Uri $ShaUrl -OutFile $shaFile -TimeoutSec 60
         } catch {
-            Write-Info "no SHA-256 published for $Tag (older release?). Falling back to structural zip check only."
-            return
+            # Only a real 404 (checksum genuinely not published, i.e. an old
+            # release) may skip verification. A transient network error - or a
+            # MITM blocking just the .sha256 - must NOT silently downgrade the
+            # install to unverified.
+            $status = 0
+            try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+            if ($status -eq 404) {
+                Write-Info "no SHA-256 published for $Tag (older release). Falling back to structural zip check only."
+                return
+            }
+            Stop-Err "could not download the SHA-256 checksum for $Tag (network or server error, not a missing file). Refusing to install an unverified archive; re-run the installer, or set HINA_NO_CHECKSUM=1 to bypass (not recommended)."
         }
         $expected = ((Get-Content -LiteralPath $shaFile -TotalCount 1) -split '\s+')[0].ToLowerInvariant()
         if (-not $expected) { Stop-Err 'downloaded .sha256 is empty or malformed' }
@@ -260,11 +286,30 @@ function Invoke-Main {
                 default             { Stop-Err "invalid choice: $choice" }
             }
         } else {
-            if ($existingVer -eq $Tag -or $existingVer -like "*$Tag*") {
-                Write-Info 'non-interactive: same version already installed, nothing to do (set HINA_ACTION to override)'
-                $action = 'exit'
+            # The old comparison ($existingVer -like "*$Tag*") could never match:
+            # `hina --version` prints "hina 1.4.2" while the tag is "v1.4.2", so
+            # every non-interactive re-run re-downloaded and reinstalled the same
+            # version - and silently downgraded an installed build newer than the
+            # target. Mirror install.sh: numeric compare, upgrade only when behind.
+            $existingNum = Get-VerNum $existingVer
+            $targetNum   = Get-VerNum $Tag
+            if ($existingNum -and $targetNum) {
+                switch (Compare-SemVer $existingNum $targetNum) {
+                    -1 {
+                        Write-Info "non-interactive: $existingNum is behind $targetNum, upgrading (set HINA_ACTION to override)"
+                        $action = 'reinstall'
+                    }
+                    0 {
+                        Write-Info "non-interactive: already at $targetNum, nothing to do (set HINA_ACTION to override)"
+                        $action = 'exit'
+                    }
+                    1 {
+                        Write-Info "non-interactive: installed $existingNum is newer than target $targetNum, leaving as-is (set HINA_ACTION=reinstall to force)"
+                        $action = 'exit'
+                    }
+                }
             } else {
-                Write-Info 'non-interactive: different version detected, upgrading (set HINA_ACTION to override)'
+                Write-Info 'non-interactive: could not determine installed version, upgrading (set HINA_ACTION to override)'
                 $action = 'reinstall'
             }
         }

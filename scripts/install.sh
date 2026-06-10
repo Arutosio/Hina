@@ -206,13 +206,23 @@ EOF
         err "download failed after 5 attempts: $url"
     }
 
-    fetch_optional() {
-        # 0 = fetched, 1 = 404 / network fail (caller decides)
+    # Fetch the .sha256 companion file. Distinguishes "genuinely not published"
+    # from "network/server failure": only a real 404 may skip verification, so a
+    # transient outage (or a MITM that blocks just the checksum) cannot silently
+    # downgrade the install to unverified.
+    # Returns: 0 = fetched, 1 = 404 (not published), 2 = network/server failure.
+    fetch_sha() {
         url="$1"
         out="$2"
-        curl --fail --location --proto '=https' --tlsv1.2 \
+        http_code="$(curl --location --proto '=https' --tlsv1.2 \
              --connect-timeout 15 --max-time 60 \
-             -o "$out" "$url" 2>/dev/null
+             --retry 3 --retry-delay 1 \
+             -w '%{http_code}' -o "$out" "$url" 2>/dev/null)" || http_code="000"
+        case "$http_code" in
+            200) return 0 ;;
+            404) return 1 ;;
+            *)   return 2 ;;
+        esac
     }
 
     verify_archive_checksum() {
@@ -225,17 +235,25 @@ EOF
         fi
 
         sha_file="${archive}.sha256"
-        if fetch_optional "$sha_url" "$sha_file"; then
-            expected="$(awk '{print $1}' "$sha_file" | head -n1)"
-            [ -n "$expected" ] || err "downloaded .sha256 is empty or malformed"
-            actual="$(sha256_of "$archive")"
-            if [ "$expected" != "$actual" ]; then
-                err "SHA-256 mismatch for $(basename "$archive") — expected $expected, got $actual. Archive may be corrupt or tampered."
-            fi
-            info "checksum verified (SHA-256)"
-        else
-            info "no SHA-256 published for ${TAG} (older release?). Falling back to structural tarball check only."
-        fi
+        sha_rc=0
+        fetch_sha "$sha_url" "$sha_file" || sha_rc=$?
+        case "$sha_rc" in
+            0)
+                expected="$(awk '{print $1}' "$sha_file" | head -n1)"
+                [ -n "$expected" ] || err "downloaded .sha256 is empty or malformed"
+                actual="$(sha256_of "$archive")"
+                if [ "$expected" != "$actual" ]; then
+                    err "SHA-256 mismatch for $(basename "$archive") — expected $expected, got $actual. Archive may be corrupt or tampered."
+                fi
+                info "checksum verified (SHA-256)"
+                ;;
+            1)
+                info "no SHA-256 published for ${TAG} (older release). Falling back to structural tarball check only."
+                ;;
+            *)
+                err "could not download the SHA-256 checksum for ${TAG} (network or server error, not a missing file). Refusing to install an unverified archive; re-run the installer, or set HINA_NO_CHECKSUM=1 to bypass (not recommended)."
+                ;;
+        esac
     }
 
     acquire_lock() {
@@ -726,7 +744,19 @@ WARN
 
         mkdir -p "$(dirname "$rc_file")"
         tmp_rc="${rc_file}.hina-tmp.$$"
-        [ -f "$rc_file" ] && cp -p "$rc_file" "$tmp_rc" || : > "$tmp_rc"
+        # The copy MUST succeed before we mv the tmp over the user's rc file: with
+        # the old `[ -f ] && cp || : >` form a failing cp (unreadable file, disk
+        # full) truncated the tmp and the rename replaced the user's entire rc
+        # with just the hina block.
+        if [ -f "$rc_file" ]; then
+            if ! cp -p "$rc_file" "$tmp_rc"; then
+                rm -f "$tmp_rc"
+                info "could not read ${rc_file}; skipping PATH setup for it. Add manually: ${line_export}"
+                return 0
+            fi
+        else
+            : > "$tmp_rc"
+        fi
         {
             printf '\n%s\n' "$marker_begin"
             printf '%s\n' "$line_export"
@@ -753,7 +783,9 @@ WARN
                     fi
                     ;;
                 fish)
-                    modify_rc "${HOME}/.config/fish/config.fish" "set -gx PATH ${DEST} \$PATH"
+                    # Quote the dir in fish syntax: an install dir with a space
+                    # would otherwise split into two PATH entries.
+                    modify_rc "${HOME}/.config/fish/config.fish" "set -gx PATH \"${DEST}\" \$PATH"
                     ;;
                 *)
                     modify_rc "${HOME}/.profile" "export PATH=\"${DEST}:\$PATH\""

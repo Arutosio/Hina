@@ -81,6 +81,18 @@ namespace Hina.PackageManager.Install
                     "Descriptor signature is invalid; refusing to reinstall. The installed app is left untouched.");
             }
 
+            // [2b] Validate the descriptor and enforce minHinaVersion BEFORE uninstalling, for
+            //      the same reason as the signature check above: InstallService re-runs both,
+            //      but by then the app is already gone — a publisher who shipped a broken
+            //      descriptor or bumped minHinaVersion would strand the user app-less.
+            DescriptorValidator.Validate(descriptor).EnsureValid();
+            if (!string.IsNullOrWhiteSpace(descriptor.MinHinaVersion) && !HinaVersion.IsSatisfiedBy(descriptor.MinHinaVersion))
+            {
+                throw new InvalidOperationException(
+                    $"App '{descriptor.Name}' requires Hina {descriptor.MinHinaVersion} or newer; running {HinaVersion.Current}. " +
+                    "Upgrade Hina first, then re-run the reinstall. The installed app is left untouched.");
+            }
+
             // [3] Uninstall.
             UninstallService uninstall = new UninstallService(_paths, _platform, _logger);
             await uninstall.UninstallAsync(name, ct);

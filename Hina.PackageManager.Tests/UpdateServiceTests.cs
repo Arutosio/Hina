@@ -491,6 +491,31 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public async Task Update_DescriptorRenamesApp_IsRefused()
+        {
+            // The pinned key and the version direction are both guarded, but the app's
+            // primary identity wasn't: a re-fetched descriptor declaring a different name
+            // updated fine and refreshed the descriptor cache with the new name, leaving
+            // the registry row keyed "demo" with a cached descriptor claiming "demo2".
+            await InstallV1();
+
+            AppDescriptor renamed = BuildDescriptor(_pubKey, name: "demo2", version: "1.1.0");
+            DescriptorSigner.AttachSignature(renamed, Convert.FromBase64String(_privKey));
+
+            UpdateService svc = new UpdateService(
+                _paths, _platform,
+                fetcher: new StubFetcher(renamed),
+                patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
+
+            UpdateResult result = await svc.UpdateAsync("demo", null, CancellationToken.None);
+
+            Assert.Equal(UpdateStatus.Failed, result.Status);
+            Assert.Contains("demo2", result.Message);
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        [Fact]
         public async Task Update_CancelledAfterHookAdd_StillCommitsRegistry()
         {
             // Ctrl+C landing between the end of the add-phase and the final registry write:

@@ -93,6 +93,23 @@ namespace Hina.PackageManager.Install
             // [2] Validate + signature pinning.
             DescriptorValidator.Validate(descriptor).EnsureValid();
 
+            // The app's primary identity must not drift on update: the registry row and the
+            // descriptor cache are both keyed by the installed name, so accepting a renamed
+            // descriptor leaves a row "demo" whose cached descriptor claims "demo2". Refuse,
+            // like the pinned-key and downgrade gates above/below.
+            if (!string.Equals(descriptor.Name, app.Name, StringComparison.Ordinal))
+            {
+                return new UpdateResult
+                {
+                    Name = name,
+                    FromVersion = app.InstalledVersion,
+                    ToVersion = descriptor.Version,
+                    Status = UpdateStatus.Failed,
+                    Message = $"Descriptor at {app.DescriptorUrl} now declares name '{descriptor.Name}' but '{app.Name}' is installed. " +
+                              $"If the publisher renamed the app, install it fresh with `hina install <url>` and then `hina uninstall {app.Name}`."
+                };
+            }
+
             // [2a] Same minHinaVersion gate as InstallService — block an update that would
             //      drag the install into a state this Hina can't drive.
             if (!string.IsNullOrWhiteSpace(descriptor.MinHinaVersion) && !HinaVersion.IsSatisfiedBy(descriptor.MinHinaVersion))

@@ -73,8 +73,20 @@ namespace Hina.Core.Net
 
             using Stream stream = await response.Content.ReadAsStreamAsync(ct);
             using CappedReadStream limited = new CappedReadStream(stream, MaxManifestBytes);
-            Manifest.Manifest? manifest = await JsonSerializer.DeserializeAsync(limited, HinaCoreJsonContext.Default.Manifest, ct);
-            return manifest ?? new Manifest.Manifest();
+            try
+            {
+                Manifest.Manifest? manifest = await JsonSerializer.DeserializeAsync(limited, HinaCoreJsonContext.Default.Manifest, ct);
+                return manifest ?? new Manifest.Manifest();
+            }
+            catch (JsonException ex)
+            {
+                // A proxy login page, captive portal, or an HTML 404 served as 200 lands here.
+                // Mirror the descriptor fetcher: name the URL instead of leaking the raw
+                // parser error ("'<' is an invalid start of a value").
+                throw new InvalidDataException(
+                    $"The server at {manifestUrl} did not return a valid manifest (JSON parse failed: {ex.Message}) " +
+                    "Check that the base URL points at a Hina patch root and that no proxy/captive portal is intercepting the request.");
+            }
         }
 
         public async Task<byte[]> GetChunkAsync(Uri baseUrl, string strongHash, CancellationToken ct, int expectedSize = 0)

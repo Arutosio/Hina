@@ -13,6 +13,10 @@ namespace Hina.Host
         public int SummaryIntervalSeconds { get; set; } = 60;
         public bool StatsEnabled { get; set; } = true;
         public List<string> Cors { get; set; } = new();
+        // Literal IPs of reverse proxies whose X-Forwarded-For is trusted. Without this,
+        // every client behind a remote proxy/LB shares the proxy's IP — i.e. one
+        // rate-limit bucket for everyone (local loopback proxies are trusted by default).
+        public List<string> TrustedProxies { get; set; } = new();
         public Dictionary<string, string> Apps { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
         public static HostOptions Load(string[] args, IConfiguration config)
@@ -65,6 +69,14 @@ namespace Hina.Host
                     if (r.TryGetProperty("statsEnabled", out v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False) opt.StatsEnabled = v.GetBoolean();
                     if (r.TryGetProperty("cors", out v) && v.ValueKind == JsonValueKind.Array)
                         opt.Cors = v.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => e.GetString()!).ToList();
+                    if (r.TryGetProperty("trustedProxies", out v) && v.ValueKind == JsonValueKind.Array)
+                    {
+                        opt.TrustedProxies = v.EnumerateArray()
+                            .Where(e => e.ValueKind == JsonValueKind.String)
+                            .Select(e => e.GetString()!)
+                            .ToList();
+                        ValidateTrustedProxies(opt.TrustedProxies, $"Host config '{jsonPath}': \"trustedProxies\"");
+                    }
                     if (r.TryGetProperty("apps", out v) && v.ValueKind == JsonValueKind.Object)
                     {
                         foreach (var prop in v.EnumerateObject())
@@ -87,6 +99,15 @@ namespace Hina.Host
 
             string? legacy = config["Patcher:Root"];
             if (!string.IsNullOrWhiteSpace(legacy)) opt.Root = legacy;
+
+            // Also honored from IConfiguration (env var / host settings) so in-process
+            // deployments and tests can set it without a json file, like Patcher:Root.
+            string? trustedFromConfig = config["TrustedProxies"];
+            if (!string.IsNullOrWhiteSpace(trustedFromConfig))
+            {
+                opt.TrustedProxies = SplitList(trustedFromConfig);
+                ValidateTrustedProxies(opt.TrustedProxies, "TrustedProxies setting");
+            }
 
             if (GetArg(args, "--root") is { } root) opt.Root = root;
             if (GetArg(args, "--urls") is { } urls) opt.Urls = urls;
@@ -111,10 +132,30 @@ namespace Hina.Host
                     throw new InvalidDataException($"--abuse-threshold '{ab}' must be a number >= 0.");
                 opt.AbuseThresholdPerMinute = abn;
             }
-            if (GetArg(args, "--cors") is { } cors) opt.Cors = cors.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            if (GetArg(args, "--cors") is { } cors) opt.Cors = SplitList(cors);
+            if (GetArg(args, "--trusted-proxies") is { } proxies)
+            {
+                opt.TrustedProxies = SplitList(proxies);
+                ValidateTrustedProxies(opt.TrustedProxies, "--trusted-proxies");
+            }
             if (args.Contains("--no-stats", StringComparer.OrdinalIgnoreCase)) opt.StatsEnabled = false;
 
             return opt;
+        }
+
+        static List<string> SplitList(string value) =>
+            value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+        static void ValidateTrustedProxies(List<string> proxies, string source)
+        {
+            foreach (string p in proxies)
+            {
+                if (!System.Net.IPAddress.TryParse(p, out _))
+                {
+                    throw new InvalidDataException(
+                        $"{source}: '{p}' is not a valid IP address. Use literal proxy IPs (no hostnames or CIDR ranges), e.g. \"10.0.0.5\".");
+                }
+            }
         }
 
         static string? GetArg(string[] args, string name)

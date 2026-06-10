@@ -56,6 +56,7 @@ The primary configuration file. Place it in the working directory alongside the 
 | `summaryIntervalSeconds` | `int` | `60` | How often the aggregated traffic summary is logged. |
 | `statsEnabled` | `bool` | `true` | Expose `/stats` (loopback-only) with top IPs / paths / rejections. |
 | `cors` | `string[]` | `[]` | Origins allowed for CORS. Empty means CORS middleware is not installed. |
+| `trustedProxies` | `string[]` | `[]` | Literal IPs of reverse proxies whose `X-Forwarded-For` is trusted. Required when the proxy/LB runs on a **different machine**, otherwise all its clients share one rate-limit bucket (same-machine loopback proxies are trusted by default). Only list proxies that overwrite or append the header. |
 | `apps` | `object` | `{}` | Multi-app mode. Maps `<appName>` → physical directory. Each app is served under `/<appName>/...`. When set, `root` is ignored and unknown prefixes return 404. |
 
 ### Multi-App Hosting
@@ -96,6 +97,7 @@ All JSON keys have an equivalent flag and override the file:
 | `--rate-limit <n>` | `requestsPerMinutePerIp` (0 disables) |
 | `--abuse-threshold <n>` | `abuseThresholdPerMinute` |
 | `--cors <origins>` | comma-separated origins |
+| `--trusted-proxies <ips>` | `trustedProxies` (comma-separated) |
 | `--no-stats` | `statsEnabled = false` |
 | `-h`, `--help` | prints usage and exits |
 
@@ -235,6 +237,17 @@ server {
         }
     }
 }
+```
+
+A proxy on the **same machine** (as above, `127.0.0.1`) is trusted automatically and
+per-client rate limiting works out of the box. If the proxy or load balancer runs on a
+**different machine**, add its IP to `trustedProxies` (or `--trusted-proxies`) —
+otherwise Hina.Host sees every request as coming from the proxy's IP and all clients
+share a single rate-limit bucket (mass `429` once their combined traffic exceeds the
+limit):
+
+```json
+{ "trustedProxies": ["10.0.0.5"] }
 ```
 
 ### Behind Apache Reverse Proxy

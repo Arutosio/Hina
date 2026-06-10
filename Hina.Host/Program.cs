@@ -67,7 +67,14 @@ builder.Services.AddSingleton<AccessStats>();
 builder.Services.Configure<ForwardedHeadersOptions>(o =>
 {
     o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    // Only proxies listed in trustedProxies may rewrite the client IP via
+    // X-Forwarded-For (plus the loopback default for same-machine proxies).
+    // The rate limiter and the /stats loopback gate key on that IP: trusting an
+    // unlisted proxy would let remote callers spoof it, while NOT listing a real
+    // remote proxy/LB collapses all its clients into one rate-limit bucket.
     o.KnownProxies.Clear();
+    foreach (string p in options.TrustedProxies)
+        o.KnownProxies.Add(IPAddress.Parse(p));
 });
 
 builder.Services.AddRateLimiter(rl =>
@@ -275,6 +282,9 @@ static void PrintHelp()
           --abuse-threshold <n>      Log warning when (IP,App) exceeds N req/min (default: 300)
           --no-stats                 Disable the /stats endpoint (loopback-only by default)
           --cors <origin[,origin]>   Enable CORS for the given origins
+          --trusted-proxies <ip[,ip]> Reverse-proxy IPs whose X-Forwarded-For is trusted
+                                     (needed behind a remote proxy/LB so rate limiting
+                                     sees real client IPs; json key: "trustedProxies")
           --setup                    Run the interactive setup wizard (overwrites existing config)
           -h, --help                 Show this help
 

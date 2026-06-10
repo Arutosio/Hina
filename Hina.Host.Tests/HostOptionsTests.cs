@@ -180,6 +180,21 @@ namespace Hina.Host.Tests
         }
 
         [Fact]
+        public void Load_RootIsNotAnObject_ThrowsActionableError()
+        {
+            // A config whose root is an array/string parses as JSON, but TryGetProperty
+            // on a non-object root throws a raw InvalidOperationException at startup.
+            string cfg = Path.Combine(_tempDir, "hina.host.json");
+            File.WriteAllText(cfg, "[1,2,3]");
+
+            var ex = Assert.Throws<InvalidDataException>(
+                () => HostOptions.Load(new[] { "--config", cfg }, EmptyConfig()));
+
+            Assert.Contains(cfg, ex.Message);
+            Assert.Contains("object", ex.Message);
+        }
+
+        [Fact]
         public void Load_TrustedProxies_DefaultsToEmpty()
         {
             var opt = HostOptions.Load(Array.Empty<string>(), EmptyConfig());

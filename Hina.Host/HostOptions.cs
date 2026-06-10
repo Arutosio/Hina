@@ -46,6 +46,15 @@ namespace Hina.Host
                 using (doc)
                 {
                     var r = doc.RootElement;
+                    if (r.ValueKind != JsonValueKind.Object)
+                    {
+                        // TryGetProperty on a non-object root throws a raw
+                        // InvalidOperationException; fail with the same actionable shape
+                        // as the not-valid-JSON case instead.
+                        throw new InvalidDataException(
+                            $"Host config '{Path.GetFullPath(jsonPath)}' must contain a JSON object at the top level (found {r.ValueKind}). " +
+                            "Fix the file, or delete it and re-run with --setup to regenerate it.");
+                    }
                     if (r.TryGetProperty("root", out var v) && v.ValueKind == JsonValueKind.String) opt.Root = v.GetString()!;
                     if (r.TryGetProperty("urls", out v) && v.ValueKind == JsonValueKind.String) opt.Urls = v.GetString();
                     if (r.TryGetProperty("requestsPerMinutePerIp", out v) && v.TryGetInt32(out int n))

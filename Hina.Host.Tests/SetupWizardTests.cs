@@ -50,19 +50,31 @@ namespace Hina.Host.Tests
         }
 
         [Fact]
-        public void IsConfigMissingOrEmpty_NotAnObject_True()
+        public void IsConfigMissingOrEmpty_WhitespaceOnly_True()
         {
-            string p = PathFor("array.json");
-            File.WriteAllText(p, "[1,2,3]");
+            string p = PathFor("blank.json");
+            File.WriteAllText(p, "  \n\t ");
             Assert.True(SetupWizard.IsConfigMissingOrEmpty(p));
         }
 
+        // A corrupt-but-non-empty config must NOT trigger the auto-wizard: the wizard
+        // ends with File.WriteAllText over the user's file, so a single JSON typo in a
+        // hand-maintained config (apps, cors, ...) would destroy it after the prompts.
+        // Corrupt configs flow to HostOptions.Load, which names the file and the error.
         [Fact]
-        public void IsConfigMissingOrEmpty_InvalidJson_True()
+        public void IsConfigMissingOrEmpty_NotAnObject_False()
+        {
+            string p = PathFor("array.json");
+            File.WriteAllText(p, "[1,2,3]");
+            Assert.False(SetupWizard.IsConfigMissingOrEmpty(p));
+        }
+
+        [Fact]
+        public void IsConfigMissingOrEmpty_InvalidJson_False()
         {
             string p = PathFor("broken.json");
-            File.WriteAllText(p, "not json at all");
-            Assert.True(SetupWizard.IsConfigMissingOrEmpty(p));
+            File.WriteAllText(p, """{ "urls": "http://0.0.0.0:5000" "apps": {} }""");
+            Assert.False(SetupWizard.IsConfigMissingOrEmpty(p));
         }
 
         [Fact]

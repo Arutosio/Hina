@@ -18,8 +18,18 @@ namespace Hina.CLI.Commands
     // Mutations take the registry lock; reads go through the shared read-lock helper.
     internal static class PermsCommand
     {
+        private static readonly HashSet<string> KnownFlags =
+            new HashSet<string>(StringComparer.Ordinal) { "--grant", "--revoke" };
+
         public static async Task<int> RunAsync(CommandContext ctx, string[] args)
         {
+            string? unknownFlag = Args.FirstUnknownFlag(args, KnownFlags, startIndex: 1);
+            if (unknownFlag != null)
+            {
+                ctx.Logger.LogError("Unknown flag '{Flag}'. Usage: hina perms [list] | <app> [--grant <path>[:ro|:rw]] [--revoke <path>]", unknownFlag);
+                return 2;
+            }
+
             string? name = Args.FirstPositional(args, startIndex: 1);
             string? grant = Args.GetValue(args, "--grant");
             string? revoke = Args.GetValue(args, "--revoke");

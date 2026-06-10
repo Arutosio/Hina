@@ -223,6 +223,41 @@ namespace Hina.CLI.Tests
             Assert.Contains(log.Messages, m => m.Contains("--base"));
         }
 
+        [Theory]
+        [InlineData("update")]
+        [InlineData("reinstall")]
+        public async Task UpdateAndReinstall_Cancelled_ReturnCancelledExitCode(string verb)
+        {
+            // Both commands wrapped their work in catch(Exception), converting a Ctrl+C
+            // (OperationCanceledException) into "failed" exit 2 — the router's dedicated
+            // "Cancelled." path (exit 1) was unreachable. The app must exist so the flow
+            // reaches the descriptor fetch, where the cancelled token surfaces as OCE.
+            await SeedApp("demo");
+            Directory.CreateDirectory(Path.Combine(InstallPaths.ForRoot(_root).AppsRoot, "demo"));
+            using var cts = new CancellationTokenSource();
+            cts.Cancel();
+            var ctx = new CommandContext(InstallPaths.ForRoot(_root), NullLogger.Instance, NullLoggerFactory.Instance, cts.Token);
+
+            Assert.Equal(1, await CommandRouter.DispatchAsync(ctx, new[] { verb, "demo" }));
+        }
+
+        [Theory]
+        [InlineData("perms", "demo", "--grant-all")]
+        [InlineData("update", "demo", "--alll")]
+        [InlineData("reinstall", "demo", "--rotate-keys")]
+        public async Task TypoedFlag_ReturnsUsageErrorNamingTheFlag(params string[] args)
+        {
+            // install/uninstall already reject unknown flags; update/reinstall/perms silently
+            // ignored them — a typo'd --rotate-keys or --allow-downgrade changes behavior
+            // with no diagnostic.
+            await SeedApp("demo");
+            var log = new CapturingLogger();
+            var ctx = new CommandContext(InstallPaths.ForRoot(_root), log, NullLoggerFactory.Instance, CancellationToken.None);
+
+            Assert.Equal(2, await CommandRouter.DispatchAsync(ctx, args));
+            Assert.Contains(log.Messages, m => m.Contains("Unknown flag"));
+        }
+
         [Fact]
         public async Task Uninstall_UnknownFlag_ReturnsUsageError()
         {

@@ -35,5 +35,15 @@ namespace Hina.CLI.Tests
             Assert.Throws<FormatException>(() =>
                 NetworkArgs.FromArgs(new[] { "install", "https://e.com/a.json", "--retries", value }));
         }
+
+        [Fact]
+        public void FromArgs_TrailingFlagWithoutValue_Throws()
+        {
+            // `hina install <url> --retries` (number forgotten) was silently treated as
+            // "flag absent" and ran with the default — the documented contract is that a
+            // PRESENT flag with no usable value fails loudly.
+            Assert.Throws<FormatException>(() =>
+                NetworkArgs.FromArgs(new[] { "install", "https://e.com/a.json", "--retries" }));
+        }
     }
 }

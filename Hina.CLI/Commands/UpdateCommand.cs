@@ -36,6 +36,11 @@ namespace Hina.CLI.Commands
                 // rather than silently using 4 (see NetworkArgs for the same rule).
                 int jobs = 4;
                 string? jobsArg = Args.GetValue(args, "--jobs");
+                if (jobsArg == null && Args.HasFlag(args, "--jobs"))
+                {
+                    // Trailing `--jobs` with the number forgotten must not silently run with 4.
+                    throw new FormatException("Missing value for --jobs. Expected a positive integer.");
+                }
                 if (jobsArg != null)
                 {
                     if (!int.TryParse(jobsArg, out int parsed) || parsed <= 0)

@@ -88,6 +88,87 @@ namespace Hina.Host.Tests
         }
 
         [Fact]
+        public void Load_CorruptJsonConfig_ThrowsActionableError()
+        {
+            // A service/container start with a corrupt hina.host.json must produce an error
+            // naming the file, not an unhandled JsonReaderException stack trace (exit 134).
+            string cfg = Path.Combine(_tempDir, "hina.host.json");
+            File.WriteAllText(cfg, "{ \"root\": \"patch\", brokenjson");
+
+            var ex = Assert.Throws<InvalidDataException>(
+                () => HostOptions.Load(new[] { "--config", cfg }, EmptyConfig()));
+
+            Assert.Contains(cfg, ex.Message);
+        }
+
+        [Fact]
+        public void Load_PortOutOfRange_ThrowsActionableError()
+        {
+            // `--port 99999` used to flow into Kestrel and crash at bind time with a raw
+            // ArgumentOutOfRangeException. The wizard validates ports; the CLI flag must too.
+            var ex = Assert.Throws<InvalidDataException>(
+                () => HostOptions.Load(new[] { "--port", "99999" }, EmptyConfig()));
+
+            Assert.Contains("--port", ex.Message);
+            Assert.Contains("99999", ex.Message);
+        }
+
+        [Fact]
+        public void Load_PortNotANumber_ThrowsActionableError()
+        {
+            // A typo'd `--port abc` was silently ignored and the host bound the default port —
+            // the user thinks they chose a port and the server is listening elsewhere.
+            var ex = Assert.Throws<InvalidDataException>(
+                () => HostOptions.Load(new[] { "--port", "abc" }, EmptyConfig()));
+
+            Assert.Contains("--port", ex.Message);
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData("game/a")]
+        [InlineData("   ")]
+        public void Load_InvalidAppName_ThrowsActionableError(string appName)
+        {
+            // An empty app name mounts at "/" but the unknown-prefix filter then 404s every
+            // request; a name with '/' can never match a first path segment. Both leave the
+            // server up but serving nothing — fail fast at load instead.
+            string cfg = Path.Combine(_tempDir, "hina.host.json");
+            File.WriteAllText(cfg, $$"""{ "apps": { {{System.Text.Json.JsonSerializer.Serialize(appName)}}: "/srv/x" } }""");
+
+            var ex = Assert.Throws<InvalidDataException>(
+                () => HostOptions.Load(new[] { "--config", cfg }, EmptyConfig()));
+
+            Assert.Contains("apps", ex.Message);
+        }
+
+        [Theory]
+        [InlineData("-5")]
+        [InlineData("abc")]
+        public void Load_InvalidRateLimit_ThrowsActionableError(string value)
+        {
+            // A negative rate limit boots the server fine but every request then 500s
+            // (FixedWindowRateLimiterOptions rejects negative PermitLimit per partition);
+            // a non-numeric value was silently ignored. Both must fail at startup.
+            var ex = Assert.Throws<InvalidDataException>(
+                () => HostOptions.Load(new[] { "--rate-limit", value }, EmptyConfig()));
+
+            Assert.Contains("--rate-limit", ex.Message);
+        }
+
+        [Fact]
+        public void Load_NegativeRateLimitInJson_ThrowsActionableError()
+        {
+            string cfg = Path.Combine(_tempDir, "hina.host.json");
+            File.WriteAllText(cfg, """{ "requestsPerMinutePerIp": -5 }""");
+
+            var ex = Assert.Throws<InvalidDataException>(
+                () => HostOptions.Load(new[] { "--config", cfg }, EmptyConfig()));
+
+            Assert.Contains("requestsPerMinutePerIp", ex.Message);
+        }
+
+        [Fact]
         public void Load_LegacyPatcherRootSetting_OverridesDefault()
         {
             var config = new ConfigurationBuilder()

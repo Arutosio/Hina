@@ -55,10 +55,16 @@ namespace Hina.Builder.Init
             List<PlatformVariant> platforms = new List<PlatformVariant>();
             List<VariantDir> variantDirs = DetectVariantDirs(input);
 
+            DirectoryInfo? commonDir = null;
             if (variantDirs.Count > 0)
             {
                 Console.WriteLine();
                 Console.WriteLine($"Detected {variantDirs.Count} platform variant folder(s); building one manifest per variant.");
+                commonDir = DetectCommonDir(input);
+                if (commonDir != null)
+                {
+                    Console.WriteLine("Found shared folder 'common/'; its files will be merged into every variant (variant files win on conflict).");
+                }
                 platforms = CollectVariants(prompt, variantDirs, logger);
                 if (platforms.Count == 0)
                 {
@@ -159,7 +165,8 @@ namespace Hina.Builder.Init
                         Version = version,
                         SignKeyPath = keyPath,
                         ChunkingMode = "cdc",
-                        Platform = vd.Token
+                        Platform = vd.Token,
+                        Common = commonDir?.FullName
                     }, logger, ct);
                     if (code != 0)
                     {
@@ -313,6 +320,13 @@ namespace Hina.Builder.Init
             public string? Arch { get; init; }
             public DirectoryInfo Dir { get; init; } = null!;
         }
+
+        // In variant mode, a sibling subfolder literally named "common" holds files shared by
+        // every variant (merged at build time; the variant's copy wins on a path conflict).
+        // Exact Ordinal match: on Linux "common" and "Common" can coexist, so a case-insensitive
+        // match would be ambiguous. In single-payload mode the folder is ordinary content.
+        private static DirectoryInfo? DetectCommonDir(DirectoryInfo input)
+            => input.EnumerateDirectories().FirstOrDefault(d => string.Equals(d.Name, "common", StringComparison.Ordinal));
 
         // Immediate subdirs whose NAME is a valid platform token (os[-arch]) are treated as
         // per-platform variant folders. None ⇒ single-payload mode.

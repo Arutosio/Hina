@@ -35,6 +35,10 @@ namespace Hina.PackageManager.Tests
         // Same seam for CreateMenuShortcut (update add-phase cancellation).
         public CancellationTokenSource? CancelOnCreateShortcut { get; set; }
 
+        // Cancels the source but completes normally — simulates Ctrl+C arriving in the
+        // window between the last add-phase step and the final registry write.
+        public CancellationTokenSource? CancelAfterCreateShortcut { get; set; }
+
         public Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, CancellationToken ct)
         {
             if (CancelOnCreateShortcut != null)
@@ -42,6 +46,7 @@ namespace Hina.PackageManager.Tests
                 CancelOnCreateShortcut.Cancel();
                 ct.ThrowIfCancellationRequested();
             }
+            CancelAfterCreateShortcut?.Cancel();
             if (ThrowOnCreateShortcutId != null && entry.Id == ThrowOnCreateShortcutId)
             {
                 throw new System.InvalidOperationException($"Simulated failure creating shortcut '{entry.Id}'.");

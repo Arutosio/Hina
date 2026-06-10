@@ -345,12 +345,18 @@ namespace Hina.PackageManager.Install
             // so we merge with any changes other concurrent operations made to OTHER
             // apps; we then overwrite our own app's row with the updated entry.
             // H1: if SaveAsync still fails, dump a recovery snapshot.
+            // This is the commit point and runs on CancellationToken.None: all the work
+            // is already done (files, hooks, entries are at v2), so a Ctrl+C in this
+            // window must not abort the write — it would leave files at v2 with the
+            // registry still claiming v1, and the swallowed cancellation surfaced as a
+            // bogus "registry could not be saved: operation was canceled" failure.
+            // Bounded: AcquireAsync gives up with a TimeoutException after its max wait.
             try
             {
-                using RegistryLock writeLock = await locks.AcquireAsync(ct);
+                using RegistryLock writeLock = await locks.AcquireAsync(CancellationToken.None);
                 registry = store.Load();
                 registry.Apps[name] = updated;
-                await store.SaveAsync(registry, ct);
+                await store.SaveAsync(registry, CancellationToken.None);
             }
             catch (Exception saveEx)
             {

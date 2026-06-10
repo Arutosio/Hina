@@ -107,8 +107,11 @@ namespace Hina.PackageManager.Install
             }
             catch (System.Exception ex) { _logger.LogDebug(ex, "Removal of descriptor cache failed for {Name} (fail-soft).", name); }
 
+            // Commit point past the point of no return declared above: the install dir is
+            // already gone, so this write must not observe ct — a Ctrl+C here would leave
+            // a registry row pointing at a deleted directory (ghost app in `hina list`).
             registry.Apps.Remove(name);
-            await store.SaveAsync(registry, ct);
+            await store.SaveAsync(registry, CancellationToken.None);
 
             return new UninstallResult { Name = name, Removed = true };
         }

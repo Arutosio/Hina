@@ -178,5 +178,75 @@ namespace Hina.Host.Tests
             var opt = HostOptions.Load(Array.Empty<string>(), config);
             Assert.Equal("legacy-root", opt.Root);
         }
+
+        [Fact]
+        public void Load_RootIsNotAnObject_ThrowsActionableError()
+        {
+            // A config whose root is an array/string parses as JSON, but TryGetProperty
+            // on a non-object root throws a raw InvalidOperationException at startup.
+            string cfg = Path.Combine(_tempDir, "hina.host.json");
+            File.WriteAllText(cfg, "[1,2,3]");
+
+            var ex = Assert.Throws<InvalidDataException>(
+                () => HostOptions.Load(new[] { "--config", cfg }, EmptyConfig()));
+
+            Assert.Contains(cfg, ex.Message);
+            Assert.Contains("object", ex.Message);
+        }
+
+        [Fact]
+        public void Load_TrustedProxies_DefaultsToEmpty()
+        {
+            var opt = HostOptions.Load(Array.Empty<string>(), EmptyConfig());
+            Assert.Empty(opt.TrustedProxies);
+        }
+
+        [Fact]
+        public void Load_TrustedProxiesFromJson_ParsesList()
+        {
+            string cfg = Path.Combine(_tempDir, "hina.host.json");
+            File.WriteAllText(cfg, """{ "trustedProxies": ["10.1.2.3", "2001:db8::1"] }""");
+
+            var opt = HostOptions.Load(new[] { "--config", cfg }, EmptyConfig());
+
+            Assert.Equal(new[] { "10.1.2.3", "2001:db8::1" }, opt.TrustedProxies);
+        }
+
+        [Fact]
+        public void Load_TrustedProxiesFromFlag_ParsesCommaSeparatedList()
+        {
+            var opt = HostOptions.Load(new[] { "--trusted-proxies", "10.1.2.3, 10.1.2.4" }, EmptyConfig());
+
+            Assert.Equal(new[] { "10.1.2.3", "10.1.2.4" }, opt.TrustedProxies);
+        }
+
+        [Theory]
+        [InlineData("not-an-ip")]
+        [InlineData("10.1.2.3/24")]
+        [InlineData("proxy.example.com")]
+        public void Load_InvalidTrustedProxyInJson_ThrowsActionableError(string value)
+        {
+            // CIDR ranges and hostnames are not supported — only literal IPs. A typo'd
+            // entry must fail at startup, not silently leave the proxy untrusted (which
+            // would put every client in one rate-limit bucket with no visible cause).
+            string cfg = Path.Combine(_tempDir, "hina.host.json");
+            File.WriteAllText(cfg, $$"""{ "trustedProxies": ["{{value}}"] }""");
+
+            var ex = Assert.Throws<InvalidDataException>(
+                () => HostOptions.Load(new[] { "--config", cfg }, EmptyConfig()));
+
+            Assert.Contains("trustedProxies", ex.Message);
+            Assert.Contains(value, ex.Message);
+        }
+
+        [Fact]
+        public void Load_InvalidTrustedProxyInFlag_ThrowsActionableError()
+        {
+            var ex = Assert.Throws<InvalidDataException>(
+                () => HostOptions.Load(new[] { "--trusted-proxies", "nope" }, EmptyConfig()));
+
+            Assert.Contains("--trusted-proxies", ex.Message);
+            Assert.Contains("nope", ex.Message);
+        }
     }
 }

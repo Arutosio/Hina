@@ -490,6 +490,58 @@ namespace Hina.PackageManager.Tests
             Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
         }
 
+        [Fact]
+        public async Task Update_DescriptorRenamesApp_IsRefused()
+        {
+            // The pinned key and the version direction are both guarded, but the app's
+            // primary identity wasn't: a re-fetched descriptor declaring a different name
+            // updated fine and refreshed the descriptor cache with the new name, leaving
+            // the registry row keyed "demo" with a cached descriptor claiming "demo2".
+            await InstallV1();
+
+            AppDescriptor renamed = BuildDescriptor(_pubKey, name: "demo2", version: "1.1.0");
+            DescriptorSigner.AttachSignature(renamed, Convert.FromBase64String(_privKey));
+
+            UpdateService svc = new UpdateService(
+                _paths, _platform,
+                fetcher: new StubFetcher(renamed),
+                patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
+
+            UpdateResult result = await svc.UpdateAsync("demo", null, CancellationToken.None);
+
+            Assert.Equal(UpdateStatus.Failed, result.Status);
+            Assert.Contains("demo2", result.Message);
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        [Fact]
+        public async Task Update_CancelledAfterHookAdd_StillCommitsRegistry()
+        {
+            // Ctrl+C landing between the end of the add-phase and the final registry write:
+            // every piece of work is already done (files v2, hooks/entries v2), so the commit
+            // must complete instead of leaving files at v2 with the registry still at v1 and
+            // reporting a bogus "registry could not be saved: operation was canceled" failure.
+            await InstallV1();
+
+            AppDescriptor v2 = BuildDescriptor(_pubKey, version: "1.1.0");
+            v2.Entries[0].Id = "main2";
+            DescriptorSigner.AttachSignature(v2, Convert.FromBase64String(_privKey));
+
+            using var cts = new CancellationTokenSource();
+            _platform.CancelAfterCreateShortcut = cts;
+            UpdateService svc = new UpdateService(
+                _paths, _platform,
+                fetcher: new StubFetcher(v2),
+                patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
+
+            UpdateResult result = await svc.UpdateAsync("demo", null, cts.Token);
+
+            Assert.Equal(UpdateStatus.Updated, result.Status);
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("1.1.0", reg.Apps["demo"].InstalledVersion);
+        }
+
         private static AppDescriptor BuildDescriptor(string publicKey, string name = "demo", string version = "1.0.0")
         {
             return new AppDescriptor

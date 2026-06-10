@@ -93,6 +93,23 @@ namespace Hina.PackageManager.Install
             // [2] Validate + signature pinning.
             DescriptorValidator.Validate(descriptor).EnsureValid();
 
+            // The app's primary identity must not drift on update: the registry row and the
+            // descriptor cache are both keyed by the installed name, so accepting a renamed
+            // descriptor leaves a row "demo" whose cached descriptor claims "demo2". Refuse,
+            // like the pinned-key and downgrade gates above/below.
+            if (!string.Equals(descriptor.Name, app.Name, StringComparison.Ordinal))
+            {
+                return new UpdateResult
+                {
+                    Name = name,
+                    FromVersion = app.InstalledVersion,
+                    ToVersion = descriptor.Version,
+                    Status = UpdateStatus.Failed,
+                    Message = $"Descriptor at {app.DescriptorUrl} now declares name '{descriptor.Name}' but '{app.Name}' is installed. " +
+                              $"If the publisher renamed the app, install it fresh with `hina install <url>` and then `hina uninstall {app.Name}`."
+                };
+            }
+
             // [2a] Same minHinaVersion gate as InstallService — block an update that would
             //      drag the install into a state this Hina can't drive.
             if (!string.IsNullOrWhiteSpace(descriptor.MinHinaVersion) && !HinaVersion.IsSatisfiedBy(descriptor.MinHinaVersion))
@@ -345,12 +362,18 @@ namespace Hina.PackageManager.Install
             // so we merge with any changes other concurrent operations made to OTHER
             // apps; we then overwrite our own app's row with the updated entry.
             // H1: if SaveAsync still fails, dump a recovery snapshot.
+            // This is the commit point and runs on CancellationToken.None: all the work
+            // is already done (files, hooks, entries are at v2), so a Ctrl+C in this
+            // window must not abort the write — it would leave files at v2 with the
+            // registry still claiming v1, and the swallowed cancellation surfaced as a
+            // bogus "registry could not be saved: operation was canceled" failure.
+            // Bounded: AcquireAsync gives up with a TimeoutException after its max wait.
             try
             {
-                using RegistryLock writeLock = await locks.AcquireAsync(ct);
+                using RegistryLock writeLock = await locks.AcquireAsync(CancellationToken.None);
                 registry = store.Load();
                 registry.Apps[name] = updated;
-                await store.SaveAsync(registry, ct);
+                await store.SaveAsync(registry, CancellationToken.None);
             }
             catch (Exception saveEx)
             {

@@ -6,20 +6,25 @@ namespace Hina.Host
     // terminal is attached; this class only owns the config-file logic and the prompts.
     internal static class SetupWizard
     {
-        // True when the wizard should be offered: no config yet, an empty JSON object, or
-        // an unparseable file.
+        // True when the wizard should be offered: no config yet, a whitespace-only file,
+        // or an empty JSON object. A corrupt-but-non-empty file must return false: the
+        // wizard ends by overwriting the file, so auto-running it would destroy a
+        // hand-maintained config over a single JSON typo. Corrupt configs flow to
+        // HostOptions.Load instead, which reports the file and the parse error.
         public static bool IsConfigMissingOrEmpty(string path)
         {
             if (!File.Exists(path)) return true;
+            string text;
+            try { text = File.ReadAllText(path); } catch { return false; }
+            if (string.IsNullOrWhiteSpace(text)) return true;
             try
             {
-                using var doc = JsonDocument.Parse(File.ReadAllText(path));
-                if (doc.RootElement.ValueKind != JsonValueKind.Object) return true;
-                int props = 0;
-                foreach (var _ in doc.RootElement.EnumerateObject()) { props++; break; }
-                return props == 0;
+                using var doc = JsonDocument.Parse(text);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object) return false;
+                foreach (var _ in doc.RootElement.EnumerateObject()) return false;
+                return true;
             }
-            catch { return true; }
+            catch { return false; }
         }
 
         public static bool Run(string outPath, bool force)

@@ -486,6 +486,16 @@ namespace Hina.PackageManager.Install
                     {
                         results[idx] = await UpdateAsync(names[idx], options, ct);
                     }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        // One app throwing (e.g. its re-fetched descriptor fails validation)
+                        // must not fault the whole run and discard every other app's result.
+                        results[idx] = new UpdateResult { Name = names[idx], Status = UpdateStatus.Failed, Message = ex.Message };
+                    }
                     finally
                     {
                         gate.Release();

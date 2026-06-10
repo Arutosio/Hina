@@ -25,8 +25,26 @@ namespace Hina.Core.Patching
             {
                 return null;
             }
-            string json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize(json, HinaCoreJsonContext.Default.PatchJournal);
+            try
+            {
+                string json = File.ReadAllText(path);
+                PatchJournal? journal = JsonSerializer.Deserialize(json, HinaCoreJsonContext.Default.PatchJournal);
+                if (journal == null)
+                {
+                    throw new JsonException("Journal deserialized to null.");
+                }
+                return journal;
+            }
+            catch (JsonException ex)
+            {
+                // A corrupt journal (interrupted save, full disk) would otherwise make every
+                // future patch fail with a raw parser error and no recovery hint — and the
+                // user has no way to know the journal file is the blocker.
+                throw new InvalidDataException(
+                    $"Patch journal at '{path}' is corrupt (likely an interrupted save). " +
+                    "Backups (*.hina.bak) may still exist next to the patched files; restore them " +
+                    "manually if needed, then delete the journal file to let patching continue.", ex);
+            }
         }
 
         public async Task SaveAsync(string path)

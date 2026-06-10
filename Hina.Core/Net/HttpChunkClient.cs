@@ -79,8 +79,14 @@ namespace Hina.Core.Net
 
         public async Task<byte[]> GetChunkAsync(Uri baseUrl, string strongHash, CancellationToken ct, int expectedSize = 0)
         {
-            // Chunk URL uses a two-character bucket based on hash prefix.
+            // Chunk URL uses a two-character bucket based on hash prefix. A hostile/corrupt
+            // manifest can carry a hash shorter than that; fail as a manifest error instead
+            // of an ArgumentOutOfRangeException from Substring.
             string hashOnly = HashOnly(strongHash);
+            if (hashOnly.Length < 2)
+            {
+                throw new InvalidDataException($"Manifest contains an invalid chunk strong hash '{strongHash}'.");
+            }
             string bucket = hashOnly.Substring(0, 2);
             string relative = $"chunks/{bucket}/{hashOnly}.chunk.br";
             Uri chunkUrl = new Uri(baseUrl, relative);

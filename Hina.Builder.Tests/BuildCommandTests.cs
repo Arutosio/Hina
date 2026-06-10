@@ -36,6 +36,36 @@ namespace Hina.Builder.Tests
             Platform = platform
         };
 
+        // A typo'd chunk parameter ('--chunk 0', min > max…) used to escape as an unhandled
+        // ArgumentOutOfRangeException with a stack trace — the builder has no top-level
+        // catch. It must be a clean usage error (exit 2) instead.
+        [Theory]
+        [InlineData("fixed", 0, 2048, 65536, 8192)]
+        [InlineData("fixed", -5, 2048, 65536, 8192)]
+        [InlineData("cdc", 65536, 0, 65536, 8192)]
+        [InlineData("cdc", 65536, 2048, 65536, 0)]
+        [InlineData("cdc", 65536, 65536, 2048, 8192)]
+        public async Task Build_InvalidChunkParams_FailsWithUsageError(string mode, int chunk, int min, int max, int avg)
+        {
+            File.WriteAllText(Path.Combine(_input, "game"), "payload");
+            var opts = new BuildOptions
+            {
+                Input = _input,
+                Output = _out,
+                BaseUrl = "https://patch.example.com/",
+                Version = "1.0.0",
+                ChunkingMode = mode,
+                ChunkSize = chunk,
+                MinChunk = min,
+                MaxChunk = max,
+                AvgChunk = avg
+            };
+
+            int code = await BuildCommand.RunAsync(opts, NullLogger.Instance, CancellationToken.None);
+
+            Assert.Equal(2, code);
+        }
+
         [Fact]
         public async Task Build_WithPlatform_WritesPlatformManifest()
         {

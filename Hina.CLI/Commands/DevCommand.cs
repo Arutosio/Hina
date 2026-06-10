@@ -62,7 +62,16 @@ namespace Hina.CLI.Commands
             // ApplyOverrides) silently dropped retry/timeout/CDC settings from hina.config.json
             // whenever any CLI override was passed.
             PatcherConfig config = LoadConfigOrDefault(configPath);
-            if (!string.IsNullOrWhiteSpace(baseUrl)) config.BaseUrl = new Uri(baseUrl);
+            if (!string.IsNullOrWhiteSpace(baseUrl))
+            {
+                // `new Uri` would throw a raw UriFormatException that never names the flag.
+                if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out Uri? parsedBase))
+                {
+                    logger.LogError("--base '{Url}' is not a valid absolute URL (expected e.g. http://localhost:49876/).", baseUrl);
+                    return 2;
+                }
+                config.BaseUrl = parsedBase;
+            }
             if (!string.IsNullOrWhiteSpace(trustedKey)) config.TrustedPublicKey = trustedKey;
             if (!string.IsNullOrWhiteSpace(channel)) config.Channel = channel;
 

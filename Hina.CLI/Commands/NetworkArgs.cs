@@ -36,6 +36,12 @@ namespace Hina.CLI.Commands
             // `--retries -5` or `--retries abc` look honored while the engine ignored them.
             if (raw == null)
             {
+                // GetValue can't see a value after a flag that is the LAST token; without this
+                // check `--retries` (number forgotten) silently ran with the default.
+                if (Args.HasFlag(args, flag))
+                {
+                    throw new System.FormatException($"Missing value for {flag}. Expected a positive integer.");
+                }
                 return fallback;
             }
             if (int.TryParse(raw, out int parsed) && parsed > 0)

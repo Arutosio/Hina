@@ -28,8 +28,20 @@ namespace Hina.PackageManager.Tests
         // update add-phase failure / rollback path). Other ids still succeed.
         public string? ThrowOnCreateShortcutId { get; set; }
 
+        // Test seam: when set, RemoveMenuShortcut cancels this source and throws — simulates
+        // the user pressing Ctrl+C while the platform integration step is in flight.
+        public CancellationTokenSource? CancelOnRemoveShortcut { get; set; }
+
+        // Same seam for CreateMenuShortcut (update add-phase cancellation).
+        public CancellationTokenSource? CancelOnCreateShortcut { get; set; }
+
         public Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, CancellationToken ct)
         {
+            if (CancelOnCreateShortcut != null)
+            {
+                CancelOnCreateShortcut.Cancel();
+                ct.ThrowIfCancellationRequested();
+            }
             if (ThrowOnCreateShortcutId != null && entry.Id == ThrowOnCreateShortcutId)
             {
                 throw new System.InvalidOperationException($"Simulated failure creating shortcut '{entry.Id}'.");
@@ -41,6 +53,11 @@ namespace Hina.PackageManager.Tests
 
         public Task RemoveMenuShortcut(string evidencePath, CancellationToken ct)
         {
+            if (CancelOnRemoveShortcut != null)
+            {
+                CancelOnRemoveShortcut.Cancel();
+                ct.ThrowIfCancellationRequested();
+            }
             RemovedShortcuts.Add(evidencePath);
             return Task.CompletedTask;
         }

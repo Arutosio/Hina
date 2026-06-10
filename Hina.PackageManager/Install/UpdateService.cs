@@ -83,8 +83,10 @@ namespace Hina.PackageManager.Install
             {
                 descriptor = await _fetcher.FetchAsync(new Uri(app.DescriptorUrl), ct);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
+                // User cancellation must propagate (UpdateAllAsync aborts on it); only real
+                // fetch failures (network, HTTP timeout) become a Failed result.
                 return new UpdateResult { Name = name, FromVersion = app.InstalledVersion, Status = UpdateStatus.Failed, Message = ex.Message };
             }
 
@@ -227,6 +229,18 @@ namespace Hina.PackageManager.Install
                     throw new InvalidOperationException("PatchClient.PatchAsync reported failure.");
                 }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Ctrl+C mid-patch: still roll back to a consistent state (with a token that
+                // can't be cancelled — cleanup must complete), then let cancellation propagate
+                // instead of reporting a Failed result.
+                _logger.LogInformation("Update of {Name} cancelled during patch; rolling back.", name);
+                try { await patcher.RollbackAsync(app.InstallPath, CancellationToken.None); }
+                catch (Exception rbEx) { _logger.LogDebug(rbEx, "Patch rollback failed for {Name} (fail-soft).", name); }
+                try { await SaveAppRowLockedAsync(locks, store, name, previousSnapshot, CancellationToken.None); }
+                catch (Exception saveEx) { _logger.LogDebug(saveEx, "Registry snapshot restore failed for {Name} (fail-soft).", name); }
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Patch failed for {Name}; rolling back.", name);
@@ -246,17 +260,6 @@ namespace Hina.PackageManager.Install
             // [7] Apply diffs. Remove first (so an addToPath with the same target name doesn't collide).
             HookExecutor hooks = new HookExecutor(_platform, _logger);
 
-            foreach (HookEvidence ev in hooksToRemove)
-            {
-                try { await hooks.UndoAsync(ev, ct); }
-                catch (Exception ex) { _logger.LogDebug(ex, "Undo of removed hook {Action} failed for {Name} (fail-soft).", ev.Action, name); }
-            }
-            foreach (ShellEntryRecord r in entriesToRemove)
-            {
-                try { await _platform.RemoveMenuShortcut(r.Evidence, ct); }
-                catch (Exception ex) { _logger.LogDebug(ex, "Removal of shell entry {Id} failed for {Name} (fail-soft).", r.Id, name); }
-            }
-
             // Build updated registry entry.
             InstalledApp updated = new InstalledApp
             {
@@ -274,15 +277,28 @@ namespace Hina.PackageManager.Install
                 ShellEntries = UpdateDiff.SurvivingEntries(app.ShellEntries, entriesToRemove)
             };
 
-            // B1: bracket the additions so a mid-flight failure (e.g. registerAutostart
+            // B1: bracket removals AND additions so a mid-flight failure (e.g. registerAutostart
             // perm denied) doesn't leak half-applied hooks. On failure we undo what we
             // just added in reverse, best-effort re-restore what we just removed, and
             // restore the pre-update registry snapshot so the user sees a clean rollback.
+            // Removal steps stay fail-soft for real errors, but user cancellation escapes
+            // them so Ctrl+C rolls back instead of committing a half-diffed state.
             List<ShellEntryRecord> addedEntries = new List<ShellEntryRecord>();
             List<HookEvidence> addedHooks = new List<HookEvidence>();
 
             try
             {
+                foreach (HookEvidence ev in hooksToRemove)
+                {
+                    try { await hooks.UndoAsync(ev, ct); }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { _logger.LogDebug(ex, "Undo of removed hook {Action} failed for {Name} (fail-soft).", ev.Action, name); }
+                }
+                foreach (ShellEntryRecord r in entriesToRemove)
+                {
+                    try { await _platform.RemoveMenuShortcut(r.Evidence, ct); }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { _logger.LogDebug(ex, "Removal of shell entry {Id} failed for {Name} (fail-soft).", r.Id, name); }
+                }
+
                 foreach (ShellEntry entry in entriesToAdd)
                 {
                     string evidence = await _platform.CreateMenuShortcut(entry, app.InstallPath, ct);
@@ -296,6 +312,15 @@ namespace Hina.PackageManager.Install
                     addedHooks.Add(evidence);
                     updated.ExecutedHooks.Add(evidence);
                 }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                _logger.LogInformation("Update of {Name} cancelled during hook/entry changes; rolling back.", name);
+                await RollbackFailedAddAsync(
+                    name, app, hooks, patcher, previousDescriptor,
+                    addedHooks, addedEntries, entriesToRemove, hooksToRemove,
+                    locks, store, previousSnapshot);
+                throw;
             }
             catch (Exception addEx)
             {

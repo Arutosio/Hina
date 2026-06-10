@@ -122,6 +122,115 @@ namespace Hina.Core.Tests
         }
 
         [Fact]
+        public async Task GetChunkAsync_RetryOnCorruptChunkThenSuccess()
+        {
+            // A CDN edge serving one corrupt object (hash mismatch) is transient: a retry can hit
+            // a healthy node. The chunk is content-addressed, so integrity failures are safe to retry.
+            int callCount = 0;
+            byte[] original = new byte[] { 1, 2, 3, 4 };
+            byte[] good = BrotliCodec.Compress(original);
+            byte[] corrupt = BrotliCodec.Compress(new byte[] { 9, 9, 9, 9 });
+
+            var handler = new SequenceHandler(new Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>[]
+            {
+                (req, ct) =>
+                {
+                    callCount++;
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent(corrupt)
+                    });
+                },
+                (req, ct) =>
+                {
+                    callCount++;
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent(good)
+                    });
+                }
+            });
+
+            using var http = new HttpClient(handler);
+            var policy = new RetryPolicy(maxRetries: 3, baseDelayMs: 10, jitterRng: new Random(42));
+            var client = new HttpChunkClient(http, policy);
+
+            byte[] result = await client.GetChunkAsync(BaseUrl, Hash(original), CancellationToken.None);
+
+            Assert.Equal(original, result);
+            Assert.Equal(2, callCount);
+        }
+
+        [Fact]
+        public async Task GetChunkAsync_RetryOnUndecodableChunkThenSuccess()
+        {
+            // Corrupt-at-rest objects usually fail Brotli decode before the hash check runs;
+            // that's the same transient store corruption and gets the same retry.
+            int callCount = 0;
+            byte[] original = new byte[] { 5, 6, 7, 8 };
+            byte[] good = BrotliCodec.Compress(original);
+            byte[] notBrotli = new byte[] { 0xFF, 0xFE, 0xFD, 0xFC, 0xFB };
+
+            var handler = new SequenceHandler(new Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>[]
+            {
+                (req, ct) =>
+                {
+                    callCount++;
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent(notBrotli)
+                    });
+                },
+                (req, ct) =>
+                {
+                    callCount++;
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent(good)
+                    });
+                }
+            });
+
+            using var http = new HttpClient(handler);
+            var policy = new RetryPolicy(maxRetries: 3, baseDelayMs: 10, jitterRng: new Random(42));
+            var client = new HttpChunkClient(http, policy);
+
+            byte[] result = await client.GetChunkAsync(BaseUrl, Hash(original), CancellationToken.None);
+
+            Assert.Equal(original, result);
+            Assert.Equal(2, callCount);
+        }
+
+        [Fact]
+        public async Task GetChunkAsync_CorruptChunkExhaustsRetries_Throws()
+        {
+            // Persistently corrupt chunk (tampered store): retries are bounded, then the
+            // integrity error propagates so the install fails loudly instead of looping.
+            int callCount = 0;
+            byte[] corrupt = BrotliCodec.Compress(new byte[] { 9, 9, 9, 9 });
+
+            var handler = new SequenceHandler(new Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>[]
+            {
+                (req, ct) =>
+                {
+                    callCount++;
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent(corrupt)
+                    });
+                }
+            });
+
+            using var http = new HttpClient(handler);
+            var policy = new RetryPolicy(maxRetries: 2, baseDelayMs: 10, jitterRng: new Random(42));
+            var client = new HttpChunkClient(http, policy);
+
+            await Assert.ThrowsAsync<ChunkIntegrityException>(() => client.GetChunkAsync(
+                BaseUrl, Hash(new byte[] { 1, 2, 3, 4 }), CancellationToken.None));
+            Assert.Equal(3, callCount); // initial attempt + 2 retries
+        }
+
+        [Fact]
         public async Task GetChunkAsync_NoRetryOn404()
         {
             int callCount = 0;
@@ -241,6 +350,58 @@ namespace Hina.Core.Tests
         public void IsTransient_NetworkError_NoStatusCode_ReturnsTrue()
         {
             Assert.True(RetryPolicy.IsTransient(new HttpRequestException("Connection refused")));
+        }
+
+        [Theory]
+        [InlineData(-1)]
+        [InlineData(-1000)]
+        public void CalculateDelay_NegativeBaseDelay_NeverNegative(int badBase)
+        {
+            // A negative retryBaseDelayMs in hina.config.json reached Task.Delay unclamped:
+            // -1000 throws ArgumentOutOfRangeException on the first retry, and -1 means
+            // Task.Delay(-1) — an INFINITE wait that hangs the update forever.
+            var policy = new RetryPolicy(maxRetries: 3, baseDelayMs: badBase, jitterRng: new Random(42));
+            for (int attempt = 1; attempt <= 5; attempt++)
+            {
+                Assert.InRange(policy.CalculateDelay(attempt), 0, RetryPolicy.DefaultMaxDelayMs);
+            }
+        }
+
+        [Fact]
+        public async Task GetChunkAsync_NegativeBaseDelay_StillRetriesAndSucceeds()
+        {
+            int callCount = 0;
+            byte[] original = new byte[] { 4, 5, 6 };
+            byte[] compressed = BrotliCodec.Compress(original);
+
+            var handler = new SequenceHandler(new Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>[]
+            {
+                (req, ct) =>
+                {
+                    callCount++;
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                    {
+                        Content = new StringContent("Server Error")
+                    });
+                },
+                (req, ct) =>
+                {
+                    callCount++;
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent(compressed)
+                    });
+                }
+            });
+
+            using var http = new HttpClient(handler);
+            var policy = new RetryPolicy(maxRetries: 3, baseDelayMs: -1000, jitterRng: new Random(42));
+            var client = new HttpChunkClient(http, policy);
+
+            byte[] result = await client.GetChunkAsync(BaseUrl, Hash(original), CancellationToken.None);
+
+            Assert.Equal(original, result);
+            Assert.Equal(2, callCount);
         }
 
         [Fact]

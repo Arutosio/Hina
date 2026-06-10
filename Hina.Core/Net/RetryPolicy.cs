@@ -23,9 +23,12 @@ namespace Hina.Core.Net
 
         public RetryPolicy(int maxRetries, int baseDelayMs, int maxDelayMs = DefaultMaxDelayMs, ILogger? logger = null, Random? jitterRng = null)
         {
-            _maxRetries = maxRetries;
-            _baseDelayMs = baseDelayMs;
-            _maxDelayMs = Math.Max(baseDelayMs, maxDelayMs);
+            // Clamp config-sourced values: a negative retryBaseDelayMs (hina.config.json) would
+            // reach Task.Delay unfiltered — -1000 throws ArgumentOutOfRangeException on the first
+            // retry, and -1 means Task.Delay(-1), an infinite wait that hangs the operation.
+            _maxRetries = Math.Max(0, maxRetries);
+            _baseDelayMs = Math.Max(0, baseDelayMs);
+            _maxDelayMs = Math.Max(_baseDelayMs, Math.Max(0, maxDelayMs));
             _logger = logger ?? NullLogger.Instance;
             _jitterRng = jitterRng ?? Random.Shared;
         }
@@ -72,6 +75,14 @@ namespace Hina.Core.Net
 
         public static bool IsTransient(Exception ex)
         {
+            if (ex is ChunkIntegrityException)
+            {
+                // Chunks are content-addressed; a body that fails decode or hash check means one
+                // store/CDN node served a corrupt object. A re-fetch can hit a healthy node, and
+                // the hash check makes retrying tamper-safe.
+                return true;
+            }
+
             if (ex is TaskCanceledException || ex is OperationCanceledException)
             {
                 // Timeout (not user-cancellation) is transient

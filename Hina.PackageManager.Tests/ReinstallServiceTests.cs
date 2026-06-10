@@ -88,6 +88,61 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public async Task Reinstall_InvalidDescriptor_RefusesAndLeavesAppInstalled()
+        {
+            // A correctly signed but structurally invalid descriptor (publisher pushed a broken
+            // update) used to pass the key+signature pre-checks, uninstall the app, and only
+            // then fail InstallService validation — leaving the user with nothing.
+            (string priv, string pub) = KeyGenerator.GenerateEd25519();
+            AppDescriptor good = BuildDescriptor(pub, "1.0.0");
+            DescriptorSigner.AttachSignature(good, Convert.FromBase64String(priv));
+
+            FakePatchClient PatchFactory(Hina.Core.Configuration.PatcherConfig cfg) =>
+                new FakePatchClient(cfg, NewExecFiles());
+
+            InstallService install = new InstallService(_paths, _platform, new StubFetcher(good), PatchFactory);
+            await install.InstallAsync(new Uri("https://example.com/demo.json"), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
+
+            AppDescriptor broken = BuildDescriptor(pub, "1.1.0");
+            broken.Entries[0].Exec = "/absolute/path/is/invalid";
+            DescriptorSigner.AttachSignature(broken, Convert.FromBase64String(priv));
+
+            ReinstallService svc = new ReinstallService(_paths, _platform, new StubFetcher(broken), PatchFactory);
+            await Assert.ThrowsAnyAsync<Exception>(() => svc.ReinstallAsync("demo", rotateKey: false, CancellationToken.None));
+
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.True(reg.Apps.ContainsKey("demo"), "app must remain installed when the new descriptor is invalid");
+            Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        [Fact]
+        public async Task Reinstall_MinHinaVersionTooNew_RefusesAndLeavesAppInstalled()
+        {
+            // Publisher bumps minHinaVersion past the running binary: the reinstall must refuse
+            // BEFORE uninstalling, not strand the user app-less behind the version gate.
+            (string priv, string pub) = KeyGenerator.GenerateEd25519();
+            AppDescriptor good = BuildDescriptor(pub, "1.0.0");
+            DescriptorSigner.AttachSignature(good, Convert.FromBase64String(priv));
+
+            FakePatchClient PatchFactory(Hina.Core.Configuration.PatcherConfig cfg) =>
+                new FakePatchClient(cfg, NewExecFiles());
+
+            InstallService install = new InstallService(_paths, _platform, new StubFetcher(good), PatchFactory);
+            await install.InstallAsync(new Uri("https://example.com/demo.json"), new InstallOptions { AssumeTrustOnFirstUse = true }, CancellationToken.None);
+
+            AppDescriptor gated = BuildDescriptor(pub, "1.1.0");
+            gated.MinHinaVersion = "999.0.0";
+            DescriptorSigner.AttachSignature(gated, Convert.FromBase64String(priv));
+
+            ReinstallService svc = new ReinstallService(_paths, _platform, new StubFetcher(gated), PatchFactory);
+            await Assert.ThrowsAnyAsync<Exception>(() => svc.ReinstallAsync("demo", rotateKey: false, CancellationToken.None));
+
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.True(reg.Apps.ContainsKey("demo"), "app must remain installed when minHinaVersion is not satisfied");
+            Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        [Fact]
         public async Task Reinstall_DifferentKey_WithoutRotateFlag_RefusesAndLeavesAppInstalled()
         {
             (string priv, string pub) = KeyGenerator.GenerateEd25519();

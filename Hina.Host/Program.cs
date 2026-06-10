@@ -30,7 +30,18 @@ if (forceSetup || (!Console.IsInputRedirected && SetupWizard.IsConfigMissingOrEm
 
 var builder = WebApplication.CreateBuilder(args);
 
-HostOptions options = HostOptions.Load(args, builder.Configuration);
+HostOptions options;
+try
+{
+    options = HostOptions.Load(args, builder.Configuration);
+}
+catch (InvalidDataException ex)
+{
+    // Validation errors are already actionable (they name the offending file/flag);
+    // print them cleanly instead of dying with an unhandled-exception stack trace.
+    Console.Error.WriteLine($"Configuration error: {ex.Message}");
+    return 1;
+}
 
 static string? GetArgTop(string[] args, string name)
 {

@@ -73,8 +73,20 @@ namespace Hina.Core.Net
 
             using Stream stream = await response.Content.ReadAsStreamAsync(ct);
             using CappedReadStream limited = new CappedReadStream(stream, MaxManifestBytes);
-            Manifest.Manifest? manifest = await JsonSerializer.DeserializeAsync(limited, HinaCoreJsonContext.Default.Manifest, ct);
-            return manifest ?? new Manifest.Manifest();
+            try
+            {
+                Manifest.Manifest? manifest = await JsonSerializer.DeserializeAsync(limited, HinaCoreJsonContext.Default.Manifest, ct);
+                return manifest ?? new Manifest.Manifest();
+            }
+            catch (JsonException ex)
+            {
+                // A proxy login page, captive portal, or an HTML 404 served as 200 lands here.
+                // Mirror the descriptor fetcher: name the URL instead of leaking the raw
+                // parser error ("'<' is an invalid start of a value").
+                throw new InvalidDataException(
+                    $"The server at {manifestUrl} did not return a valid manifest (JSON parse failed: {ex.Message}) " +
+                    "Check that the base URL points at a Hina patch root and that no proxy/captive portal is intercepting the request.");
+            }
         }
 
         public async Task<byte[]> GetChunkAsync(Uri baseUrl, string strongHash, CancellationToken ct, int expectedSize = 0)
@@ -152,15 +164,29 @@ namespace Hina.Core.Net
         // Chunks are content-addressed: the URL names the chunk by its SHA-256. Verify the
         // decompressed bytes actually hash to that name, independent of the optional whole-file
         // verify pass (PatcherConfig.Verify) — so a corrupt/tampered chunk is rejected even when
-        // whole-file verification is disabled, and the failure is localized for retry.
+        // whole-file verification is disabled. Integrity failures throw ChunkIntegrityException,
+        // which RetryPolicy treats as transient: one corrupt CDN edge object shouldn't kill the
+        // whole install when a re-fetch can hit a healthy node. The decompression-bomb cap stays
+        // a plain InvalidDataException — deterministic hostility, retrying it is pointless.
         private static byte[] DecompressAndVerify(byte[] compressed, int compressedLength, string expectedHashOnly, long maxBytes)
         {
-            byte[] data = BrotliCodec.Decompress(compressed, 0, compressedLength, maxBytes);
+            byte[] data;
+            try
+            {
+                data = BrotliCodec.Decompress(compressed, 0, compressedLength, maxBytes);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // BrotliStream reports malformed input as InvalidOperationException; surface it
+                // as an actionable integrity error instead of a raw runtime exception.
+                throw new ChunkIntegrityException(
+                    $"Chunk {expectedHashOnly} is not valid Brotli data. The chunk store returned corrupt or truncated content.", ex);
+            }
 
             string actual = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(data));
             if (!string.Equals(actual, expectedHashOnly, StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidDataException(
+                throw new ChunkIntegrityException(
                     $"Chunk content hash mismatch: expected {expectedHashOnly}, got {actual}. The chunk store returned corrupt or tampered data.");
             }
             return data;

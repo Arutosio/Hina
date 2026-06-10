@@ -36,6 +36,67 @@ namespace Hina.Builder.Tests
             Platform = platform
         };
 
+        [Theory]
+        [InlineData(".")]      // --out == --input
+        [InlineData("store")]  // --out inside --input
+        public async Task Build_OutputInsideInput_FailsWithUsageError(string relOut)
+        {
+            // InitCommand already refuses an output inside the app folder; build had no such
+            // guard. With --out inside --input, the chunk store and manifest land in the input
+            // tree, so the NEXT build chunks the previous build's store into the manifest and
+            // clients download the whole chunk store as app content.
+            await File.WriteAllTextAsync(Path.Combine(_input, "app.bin"), "data");
+            string outDir = Path.GetFullPath(Path.Combine(_input, relOut));
+
+            int code = await BuildCommand.RunAsync(new BuildOptions
+            {
+                Input = _input,
+                Output = outDir,
+                BaseUrl = "https://patch.example.com/",
+                Version = "1.0.0"
+            }, NullLogger.Instance, CancellationToken.None);
+
+            Assert.Equal(2, code);
+        }
+
+        [Fact]
+        public async Task Build_InvalidBaseUrl_FailsWithUsageError()
+        {
+            // 'not a url' reached new Uri(...) and escaped as a raw UriFormatException.
+            await File.WriteAllTextAsync(Path.Combine(_input, "app.bin"), "data");
+
+            int code = await BuildCommand.RunAsync(new BuildOptions
+            {
+                Input = _input,
+                Output = _out,
+                BaseUrl = "not a url",
+                Version = "1.0.0"
+            }, NullLogger.Instance, CancellationToken.None);
+
+            Assert.Equal(2, code);
+        }
+
+        [Fact]
+        public async Task Build_SignKeyNotBase64_FailsWithUsageError()
+        {
+            // A wrong file passed as --sign-key (e.g. the .pub or the descriptor itself)
+            // escaped as a raw FormatException that never named the file.
+            await File.WriteAllTextAsync(Path.Combine(_input, "app.bin"), "data");
+            string keyPath = Path.Combine(_base, "not-a-key.txt");
+            await File.WriteAllTextAsync(keyPath, "this is not base64!!");
+
+            int code = await BuildCommand.RunAsync(new BuildOptions
+            {
+                Input = _input,
+                Output = _out,
+                BaseUrl = "https://patch.example.com/",
+                SignKeyPath = keyPath,
+                Version = "1.0.0"
+            }, NullLogger.Instance, CancellationToken.None);
+
+            Assert.Equal(2, code);
+        }
+
         // A typo'd chunk parameter ('--chunk 0', min > max…) used to escape as an unhandled
         // ArgumentOutOfRangeException with a stack trace — the builder has no top-level
         // catch. It must be a clean usage error (exit 2) instead.

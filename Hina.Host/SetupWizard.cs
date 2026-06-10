@@ -57,6 +57,13 @@ namespace Hina.Host
                 {
                     string name = Ask("  App name (blank to stop)", "").Trim();
                     if (string.IsNullOrEmpty(name)) break;
+                    if (name.Contains('/') || name.Contains('\\'))
+                    {
+                        // Mirrors HostOptions.Load: the name becomes the /<name> URL prefix,
+                        // so a slash would leave the host serving nothing for this app.
+                        Console.WriteLine($"  '{name}' is not a valid app name: it becomes the /<name> URL prefix and must not contain slashes.");
+                        continue;
+                    }
                     string path = Ask($"  Path for '{name}'", $"./patches/{name}").Trim();
                     apps[name] = path;
                 }

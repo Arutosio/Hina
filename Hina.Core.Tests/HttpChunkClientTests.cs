@@ -46,6 +46,28 @@ namespace Hina.Core.Tests
         }
 
         [Fact]
+        public async Task GetManifestAsync_HtmlResponse_ThrowsActionableError()
+        {
+            // A proxy/captive portal or a 404-page-served-as-200 returns HTML where the
+            // manifest should be. The descriptor path already maps this to an actionable
+            // error (round 7); the manifest path must not leak a raw JsonException
+            // ("'<' is an invalid start of a value").
+            var handler = new FakeHandler((req, ct) =>
+                Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("<html><body>Login required</body></html>", Encoding.UTF8, "text/html")
+                }));
+
+            using var http = new HttpClient(handler);
+            var client = new HttpChunkClient(http);
+
+            var ex = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                client.GetManifestAsync(new Uri("http://cdn.test.com/"), "stable", CancellationToken.None));
+
+            Assert.Contains("manifest.json", ex.Message);
+        }
+
+        [Fact]
         public async Task GetManifestAsync_NonStableChannel_UsesChannelInFilename()
         {
             string json = JsonSerializer.Serialize(new Manifest.Manifest { Version = "2.0.0-beta" });
@@ -208,7 +230,7 @@ namespace Hina.Core.Tests
             using var http = new HttpClient(handler);
             var client = new HttpChunkClient(http);
 
-            await Assert.ThrowsAsync<InvalidDataException>(() => client.GetChunkAsync(
+            await Assert.ThrowsAsync<Hina.Core.Net.ChunkIntegrityException>(() => client.GetChunkAsync(
                 new Uri("http://cdn.test.com/"),
                 "sha256:" + Sha256Hex(Encoding.UTF8.GetBytes("the real expected content")),
                 CancellationToken.None));

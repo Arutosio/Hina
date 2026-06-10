@@ -91,6 +91,39 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public async Task Uninstall_CancelledDuringShellEntryRemoval_PropagatesAndKeepsApp()
+        {
+            // Ctrl+C while a platform step is in flight must STOP the uninstall before the
+            // destructive directory delete — not be swallowed by the fail-soft catches.
+            InstallPaths paths = InstallPaths.ForRoot(_root);
+            string appDir = Path.Combine(_root, "appdir-cancel");
+            Directory.CreateDirectory(appDir);
+            await File.WriteAllTextAsync(Path.Combine(appDir, "f.txt"), "x");
+
+            Registry.Registry reg = new Registry.Registry();
+            InstalledApp app = new InstalledApp
+            {
+                Name = "demo",
+                InstalledVersion = "1.0.0",
+                InstallPath = appDir
+            };
+            app.ShellEntries.Add(new ShellEntryRecord { Id = "main", Evidence = "/fake/apps/main.desktop" });
+            reg.Apps["demo"] = app;
+            await new RegistryStore(paths.RegistryFile).SaveAsync(reg);
+
+            using var cts = new CancellationTokenSource();
+            var platform = new FakePlatformIntegration { CancelOnRemoveShortcut = cts };
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                new UninstallService(paths, platform).UninstallAsync("demo", cts.Token));
+
+            // Files untouched and app still registered: the uninstall is retryable on purpose.
+            Assert.True(Directory.Exists(appDir));
+            Assert.True(File.Exists(Path.Combine(appDir, "f.txt")));
+            Assert.True(new RegistryStore(paths.RegistryFile).Load().Apps.ContainsKey("demo"));
+        }
+
+        [Fact]
         public async Task Uninstall_InstallPathIsDirectorySymlink_RemovesLinkNotTarget()
         {
             InstallPaths paths = InstallPaths.ForRoot(_root);

@@ -183,6 +183,82 @@ namespace Hina.CLI.Tests
         }
 
         [Fact]
+        public async Task Perms_GrantOnlyAccessSuffix_ReturnsUsageErrorNamingTheFlag()
+        {
+            // `--grant :rw` strips the access suffix down to an empty path; Path.GetFullPath("")
+            // then threw ArgumentException and the user saw "The path is empty." with no hint
+            // which flag was wrong. It must be a usage error that names --grant.
+            await SeedApp("demo");
+
+            var log = new CapturingLogger();
+            var ctx = new CommandContext(InstallPaths.ForRoot(_root), log, NullLoggerFactory.Instance, CancellationToken.None);
+
+            int exit = await CommandRouter.DispatchAsync(ctx, new[] { "perms", "demo", "--grant", ":rw" });
+
+            Assert.Equal(2, exit);
+            Assert.Contains(log.Messages, m => m.Contains("--grant"));
+        }
+
+        private sealed class CapturingLogger : Microsoft.Extensions.Logging.ILogger
+        {
+            public System.Collections.Generic.List<string> Messages { get; } = new();
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+            public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+                TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+                => Messages.Add(formatter(state, exception));
+        }
+
+        [Fact]
+        public async Task Dev_InvalidBaseUrl_ReturnsUsageErrorNamingTheFlag()
+        {
+            // `hina dev check --base "not a url"` reached `new Uri(baseUrl)` and surfaced the
+            // raw "Invalid URI: ..." with no hint that --base was the malformed flag.
+            var log = new CapturingLogger();
+            var ctx = new CommandContext(InstallPaths.ForRoot(_root), log, NullLoggerFactory.Instance, CancellationToken.None);
+
+            int exit = await CommandRouter.DispatchAsync(ctx, new[] { "dev", "check", "--dir", _root, "--base", "not a url" });
+
+            Assert.Equal(2, exit);
+            Assert.Contains(log.Messages, m => m.Contains("--base"));
+        }
+
+        [Theory]
+        [InlineData("update")]
+        [InlineData("reinstall")]
+        public async Task UpdateAndReinstall_Cancelled_ReturnCancelledExitCode(string verb)
+        {
+            // Both commands wrapped their work in catch(Exception), converting a Ctrl+C
+            // (OperationCanceledException) into "failed" exit 2 — the router's dedicated
+            // "Cancelled." path (exit 1) was unreachable. The app must exist so the flow
+            // reaches the descriptor fetch, where the cancelled token surfaces as OCE.
+            await SeedApp("demo");
+            Directory.CreateDirectory(Path.Combine(InstallPaths.ForRoot(_root).AppsRoot, "demo"));
+            using var cts = new CancellationTokenSource();
+            cts.Cancel();
+            var ctx = new CommandContext(InstallPaths.ForRoot(_root), NullLogger.Instance, NullLoggerFactory.Instance, cts.Token);
+
+            Assert.Equal(1, await CommandRouter.DispatchAsync(ctx, new[] { verb, "demo" }));
+        }
+
+        [Theory]
+        [InlineData("perms", "demo", "--grant-all")]
+        [InlineData("update", "demo", "--alll")]
+        [InlineData("reinstall", "demo", "--rotate-keys")]
+        public async Task TypoedFlag_ReturnsUsageErrorNamingTheFlag(params string[] args)
+        {
+            // install/uninstall already reject unknown flags; update/reinstall/perms silently
+            // ignored them — a typo'd --rotate-keys or --allow-downgrade changes behavior
+            // with no diagnostic.
+            await SeedApp("demo");
+            var log = new CapturingLogger();
+            var ctx = new CommandContext(InstallPaths.ForRoot(_root), log, NullLoggerFactory.Instance, CancellationToken.None);
+
+            Assert.Equal(2, await CommandRouter.DispatchAsync(ctx, args));
+            Assert.Contains(log.Messages, m => m.Contains("Unknown flag"));
+        }
+
+        [Fact]
         public async Task Uninstall_UnknownFlag_ReturnsUsageError()
         {
             // `uninstall` takes no flags; a typo must be rejected, not silently ignored

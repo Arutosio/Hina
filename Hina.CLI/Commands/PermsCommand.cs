@@ -136,6 +136,12 @@ namespace Hina.CLI.Commands
             string pathPart = spec;
             if (spec.EndsWith(":rw", StringComparison.Ordinal)) { access = "rw"; pathPart = spec[..^3]; }
             else if (spec.EndsWith(":ro", StringComparison.Ordinal)) { pathPart = spec[..^3]; }
+            if (string.IsNullOrWhiteSpace(pathPart))
+            {
+                // `--grant :rw` would otherwise reach Path.GetFullPath("") and surface as a
+                // bare "The path is empty." with no hint which flag was malformed.
+                throw new ArgumentException($"--grant '{spec}' is missing the path part. Expected --grant <path>[:ro|:rw].");
+            }
             return (AbsPath(pathPart), access);
         }
 

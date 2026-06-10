@@ -183,6 +183,33 @@ namespace Hina.CLI.Tests
         }
 
         [Fact]
+        public async Task Perms_GrantOnlyAccessSuffix_ReturnsUsageErrorNamingTheFlag()
+        {
+            // `--grant :rw` strips the access suffix down to an empty path; Path.GetFullPath("")
+            // then threw ArgumentException and the user saw "The path is empty." with no hint
+            // which flag was wrong. It must be a usage error that names --grant.
+            await SeedApp("demo");
+
+            var log = new CapturingLogger();
+            var ctx = new CommandContext(InstallPaths.ForRoot(_root), log, NullLoggerFactory.Instance, CancellationToken.None);
+
+            int exit = await CommandRouter.DispatchAsync(ctx, new[] { "perms", "demo", "--grant", ":rw" });
+
+            Assert.Equal(2, exit);
+            Assert.Contains(log.Messages, m => m.Contains("--grant"));
+        }
+
+        private sealed class CapturingLogger : Microsoft.Extensions.Logging.ILogger
+        {
+            public System.Collections.Generic.List<string> Messages { get; } = new();
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+            public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+                TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+                => Messages.Add(formatter(state, exception));
+        }
+
+        [Fact]
         public async Task Uninstall_UnknownFlag_ReturnsUsageError()
         {
             // `uninstall` takes no flags; a typo must be rejected, not silently ignored

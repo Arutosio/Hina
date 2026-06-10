@@ -268,6 +268,19 @@ namespace Hina.Core.Patching
 
                     result.AppliedFiles.Add(file.Path);
                 }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // User cancellation: clean up like a failure (restore backups, drop temp),
+                    // but propagate the cancellation instead of reporting Success=false —
+                    // callers must see "cancelled", not "patch failed".
+                    _logger.LogInformation("Patch cancelled for {FilePath}; rolling back.", file.Path);
+                    await RollbackAsync(rootDir, CancellationToken.None);
+                    if (File.Exists(tempPath))
+                    {
+                        File.Delete(tempPath);
+                    }
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Failed to patch file {FilePath}", file.Path);

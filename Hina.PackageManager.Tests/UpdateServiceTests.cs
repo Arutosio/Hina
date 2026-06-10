@@ -423,6 +423,73 @@ namespace Hina.PackageManager.Tests
             Assert.Equal(UpdateStatus.Updated, result.Status);
         }
 
+        [Fact]
+        public async Task Update_CancelledDuringFetch_PropagatesCancellation()
+        {
+            // Ctrl+C during the descriptor re-fetch must propagate as cancellation, not be
+            // reported as UpdateStatus.Failed — `update --all` relies on the exception to abort.
+            await InstallV1();
+
+            using var cts = new CancellationTokenSource();
+            UpdateService svc = new UpdateService(
+                _paths, _platform,
+                fetcher: new CancellingFetcher(cts),
+                patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => svc.UpdateAsync("demo", null, cts.Token));
+
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        [Fact]
+        public async Task Update_CancelledDuringPatch_RollsBackAndPropagates()
+        {
+            await InstallV1();
+
+            AppDescriptor v2 = BuildDescriptor(_pubKey, version: "1.1.0");
+            DescriptorSigner.AttachSignature(v2, Convert.FromBase64String(_privKey));
+
+            using var cts = new CancellationTokenSource();
+            UpdateService svc = new UpdateService(
+                _paths, _platform,
+                fetcher: new StubFetcher(v2),
+                patchClientFactory: cfg => new CancellingPatchClient(cfg, cts));
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => svc.UpdateAsync("demo", null, cts.Token));
+
+            // Registry row restored to the pre-update snapshot.
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        [Fact]
+        public async Task Update_CancelledDuringHookAdd_RollsBackAndPropagates()
+        {
+            await InstallV1();
+
+            // v2 renames the shell entry so the diff has both a removal and an addition;
+            // the cancellation fires on the add-phase CreateMenuShortcut.
+            AppDescriptor v2 = BuildDescriptor(_pubKey, version: "1.1.0");
+            v2.Entries[0].Id = "main2";
+            DescriptorSigner.AttachSignature(v2, Convert.FromBase64String(_privKey));
+
+            using var cts = new CancellationTokenSource();
+            _platform.CancelOnCreateShortcut = cts;
+            UpdateService svc = new UpdateService(
+                _paths, _platform,
+                fetcher: new StubFetcher(v2),
+                patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => svc.UpdateAsync("demo", null, cts.Token));
+
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
+        }
+
         private static AppDescriptor BuildDescriptor(string publicKey, string name = "demo", string version = "1.0.0")
         {
             return new AppDescriptor
@@ -473,6 +540,42 @@ namespace Hina.PackageManager.Tests
         {
             _onPatch();
             return Task.FromResult(new Hina.Core.Patching.PatchResult { Success = false, Message = "simulated failure" });
+        }
+        public Task<Hina.Core.Patching.VerifyResult> VerifyAsync(string rootDir, CancellationToken ct)
+            => Task.FromResult(new Hina.Core.Patching.VerifyResult { Success = true });
+        public Task RollbackAsync(string rootDir, CancellationToken ct) => Task.CompletedTask;
+    }
+
+    // Simulates Ctrl+C arriving while the descriptor fetch is in flight.
+    internal sealed class CancellingFetcher : DescriptorFetcher
+    {
+        private readonly CancellationTokenSource _cts;
+        public CancellingFetcher(CancellationTokenSource cts) { _cts = cts; }
+        public override Task<AppDescriptor> FetchAsync(Uri url, CancellationToken ct)
+        {
+            _cts.Cancel();
+            ct.ThrowIfCancellationRequested();
+            throw new InvalidOperationException("unreachable");
+        }
+    }
+
+    // Simulates Ctrl+C arriving while the patch download is in flight.
+    internal sealed class CancellingPatchClient : Hina.Core.Patching.IPatchClient
+    {
+        private readonly CancellationTokenSource _cts;
+        public CancellingPatchClient(Hina.Core.Configuration.PatcherConfig config, CancellationTokenSource cts)
+        {
+            Config = config;
+            _cts = cts;
+        }
+        public Hina.Core.Configuration.PatcherConfig Config { get; }
+        public Task<Hina.Core.Patching.CheckResult> CheckAsync(string rootDir, CancellationToken ct)
+            => Task.FromResult(new Hina.Core.Patching.CheckResult { IsUpdateAvailable = true });
+        public Task<Hina.Core.Patching.PatchResult> PatchAsync(string rootDir, CancellationToken ct)
+        {
+            _cts.Cancel();
+            ct.ThrowIfCancellationRequested();
+            throw new InvalidOperationException("unreachable");
         }
         public Task<Hina.Core.Patching.VerifyResult> VerifyAsync(string rootDir, CancellationToken ct)
             => Task.FromResult(new Hina.Core.Patching.VerifyResult { Success = true });

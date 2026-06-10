@@ -42,18 +42,24 @@ namespace Hina.PackageManager.Install
 
             HookExecutor hooks = new HookExecutor(_platform);
 
-            // Reverse-order hook undo.
+            // Reverse-order hook undo. Fail-soft on real errors so repeated uninstalls converge,
+            // but user cancellation (Ctrl+C) must NOT be treated as a step failure: it has to
+            // stop the uninstall before the destructive directory delete below.
             for (int i = app.ExecutedHooks.Count - 1; i >= 0; i--)
             {
                 try { await hooks.UndoAsync(app.ExecutedHooks[i], ct); }
-                catch (System.Exception ex) { _logger.LogDebug(ex, "Undo of hook {Action} failed for {Name} (fail-soft).", app.ExecutedHooks[i].Action, name); }
+                catch (System.Exception ex) when (ex is not System.OperationCanceledException) { _logger.LogDebug(ex, "Undo of hook {Action} failed for {Name} (fail-soft).", app.ExecutedHooks[i].Action, name); }
             }
 
             foreach (ShellEntryRecord entry in app.ShellEntries)
             {
                 try { await _platform.RemoveMenuShortcut(entry.Evidence, ct); }
-                catch (System.Exception ex) { _logger.LogDebug(ex, "Removal of shell entry {Id} failed for {Name} (fail-soft).", entry.Id, name); }
+                catch (System.Exception ex) when (ex is not System.OperationCanceledException) { _logger.LogDebug(ex, "Removal of shell entry {Id} failed for {Name} (fail-soft).", entry.Id, name); }
             }
+
+            // Last chance to honour Ctrl+C before the point of no return: everything above is
+            // re-doable, the recursive delete below is not.
+            ct.ThrowIfCancellationRequested();
 
             // App directory: refuse to follow a symlink. If a user (or a previous Hina
             // install with --portable or similar) made InstallPath a symlink pointing at

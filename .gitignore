@@ -388,3 +388,6 @@ MigrationBackup/
 # Release script output (scripts/release.sh)
 dist/
 .DS_Store
+
+# Claude Code session-local state (lock files, local settings)
+.claude/

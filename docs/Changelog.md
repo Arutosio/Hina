@@ -4,6 +4,31 @@ All notable changes to Hina are documented in this file.
 
 ---
 
+## Unreleased
+
+### `hina-builder build --common` — shared files across platform variants
+
+- **New `--common <dir>` flag**: a folder of OS-independent files (game data, assets)
+  merged into the build at their root-relative paths, so a multi-platform app no longer
+  needs the shared assets physically copied into every variant input folder. The chunk
+  store is content-addressed, so each shared asset is stored once no matter how many
+  variants reference it, and an update to a common file delta-patches every platform.
+- On a relative-path collision the `--input` (variant) copy wins — a variant can override
+  a shared asset for one OS. Each override is logged; paths differing only by case are
+  flagged with a warning (they collide on Windows/macOS installs).
+- `hina-builder init` auto-detects a subfolder named `common/` next to the variant
+  folders and merges it into every variant build. **Behavior change:** in variant mode
+  such a folder used to be silently excluded from all manifests. In single-payload mode
+  nothing changes (`common/` is ordinary app content).
+- No client change needed: a merged manifest is indistinguishable from one built from
+  physically copied files.
+- Internal: manifest and chunk store are now produced from one shared, ordinal-sorted
+  file snapshot (`InputSet`) instead of two independent directory enumerations — manifest
+  file order is now deterministic across OSes and the manifest can no longer disagree
+  with the store if files change mid-build.
+
+---
+
 ## v1.4.3 — host proxy support, installer hardening, scoop fix
 
 11 fixes from bug-hunt rounds 9–10 (PR #30, PR #31). Test suite: 615 → 629 tests.

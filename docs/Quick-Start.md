@@ -55,6 +55,7 @@ universal build of that OS):
 
 ```
 game/
+  common/         OS-independent files (game data, assets) shared by every variant
   windows-x64/    your Windows build
   macos-arm64/    Apple Silicon build
   macos-x64/      Intel build
@@ -63,6 +64,10 @@ game/
 
 > Coming from `game_windows_x86_64`? Rename to `windows-x64`. The folder name must be exactly
 > the token, nothing else.
+
+Files in `common/` are merged into **every** variant's manifest at their root-relative paths
+(no copying into each folder needed); if a variant ships its own copy of the same path, the
+variant's file wins.
 
 **2. Run the wizard** — it detects the variant folders and builds each one:
 
@@ -79,9 +84,9 @@ write the descriptor yourself:
 
 ```sh
 hina-builder keygen --out keys --name game
-hina-builder build --input game/windows-x64 --platform windows-x64 --out patch --base https://you.example/ --version 1.0.0 --sign-key keys/game.key.b64
-hina-builder build --input game/macos-arm64 --platform macos-arm64 --out patch --base https://you.example/ --version 1.0.0 --sign-key keys/game.key.b64
-# …one per variant, same --out
+hina-builder build --input game/windows-x64 --common game/common --platform windows-x64 --out patch --base https://you.example/ --version 1.0.0 --sign-key keys/game.key.b64
+hina-builder build --input game/macos-arm64 --common game/common --platform macos-arm64 --out patch --base https://you.example/ --version 1.0.0 --sign-key keys/game.key.b64
+# …one per variant, same --out and same --common
 hina dev sign-descriptor --in hina.app.json --key keys/game.key.b64
 ```
 

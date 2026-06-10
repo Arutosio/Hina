@@ -250,9 +250,15 @@ the variant matching its machine:
   warning; it errors cleanly when no variant serves the OS.
 - `platforms` (when non-empty) is authoritative and the `exec` map is ignored. Apps with no
   `platforms` keep the legacy single-manifest behavior unchanged.
+- OS-independent files shared by every variant (game data, assets — even ones that update
+  over time) don't need to be copied into each variant folder: keep them in a `common/`
+  folder and the builder merges them into every variant's manifest (`--common <dir>`). On
+  the same relative path the variant's copy wins, so a variant can still override a shared
+  asset for one OS.
 
 See the [Builder Guide](Builder-Guide.md) for the per-variant build commands and host layout;
-`hina-builder init` detects per-variant subfolders and builds them automatically.
+`hina-builder init` detects per-variant subfolders (including `common/`) and builds them
+automatically.
 
 ### The optional `sandbox` block
 
@@ -472,9 +478,11 @@ End-to-end:
    `hina install <descriptor-url>`.
 
 For a **multi-platform** app, build each variant subfolder with `--platform <token>` into the
-**same** `--out` (shared chunk store) and declare a `platforms` array instead of `exec` — see
-the [Builder Guide](Builder-Guide.md). Or just run `hina-builder init`, which detects the
-per-variant subfolders, writes the signed descriptor, and builds every variant for you.
+**same** `--out` (shared chunk store), pass OS-independent shared files with
+`--common <dir>`, and declare a `platforms` array instead of `exec` — see the
+[Builder Guide](Builder-Guide.md). Or just run `hina-builder init`, which detects the
+per-variant subfolders (and a `common/` folder), writes the signed descriptor, and builds
+every variant for you.
 
 ---
 

@@ -352,6 +352,58 @@ namespace Hina.Core.Tests
             Assert.True(RetryPolicy.IsTransient(new HttpRequestException("Connection refused")));
         }
 
+        [Theory]
+        [InlineData(-1)]
+        [InlineData(-1000)]
+        public void CalculateDelay_NegativeBaseDelay_NeverNegative(int badBase)
+        {
+            // A negative retryBaseDelayMs in hina.config.json reached Task.Delay unclamped:
+            // -1000 throws ArgumentOutOfRangeException on the first retry, and -1 means
+            // Task.Delay(-1) — an INFINITE wait that hangs the update forever.
+            var policy = new RetryPolicy(maxRetries: 3, baseDelayMs: badBase, jitterRng: new Random(42));
+            for (int attempt = 1; attempt <= 5; attempt++)
+            {
+                Assert.InRange(policy.CalculateDelay(attempt), 0, RetryPolicy.DefaultMaxDelayMs);
+            }
+        }
+
+        [Fact]
+        public async Task GetChunkAsync_NegativeBaseDelay_StillRetriesAndSucceeds()
+        {
+            int callCount = 0;
+            byte[] original = new byte[] { 4, 5, 6 };
+            byte[] compressed = BrotliCodec.Compress(original);
+
+            var handler = new SequenceHandler(new Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>[]
+            {
+                (req, ct) =>
+                {
+                    callCount++;
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                    {
+                        Content = new StringContent("Server Error")
+                    });
+                },
+                (req, ct) =>
+                {
+                    callCount++;
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent(compressed)
+                    });
+                }
+            });
+
+            using var http = new HttpClient(handler);
+            var policy = new RetryPolicy(maxRetries: 3, baseDelayMs: -1000, jitterRng: new Random(42));
+            var client = new HttpChunkClient(http, policy);
+
+            byte[] result = await client.GetChunkAsync(BaseUrl, Hash(original), CancellationToken.None);
+
+            Assert.Equal(original, result);
+            Assert.Equal(2, callCount);
+        }
+
         [Fact]
         public void CalculateDelay_ExponentialBackoff()
         {

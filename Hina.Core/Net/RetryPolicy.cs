@@ -23,9 +23,12 @@ namespace Hina.Core.Net
 
         public RetryPolicy(int maxRetries, int baseDelayMs, int maxDelayMs = DefaultMaxDelayMs, ILogger? logger = null, Random? jitterRng = null)
         {
-            _maxRetries = maxRetries;
-            _baseDelayMs = baseDelayMs;
-            _maxDelayMs = Math.Max(baseDelayMs, maxDelayMs);
+            // Clamp config-sourced values: a negative retryBaseDelayMs (hina.config.json) would
+            // reach Task.Delay unfiltered — -1000 throws ArgumentOutOfRangeException on the first
+            // retry, and -1 means Task.Delay(-1), an infinite wait that hangs the operation.
+            _maxRetries = Math.Max(0, maxRetries);
+            _baseDelayMs = Math.Max(0, baseDelayMs);
+            _maxDelayMs = Math.Max(_baseDelayMs, Math.Max(0, maxDelayMs));
             _logger = logger ?? NullLogger.Instance;
             _jitterRng = jitterRng ?? Random.Shared;
         }

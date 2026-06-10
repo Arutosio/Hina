@@ -210,6 +210,20 @@ namespace Hina.CLI.Tests
         }
 
         [Fact]
+        public async Task Dev_InvalidBaseUrl_ReturnsUsageErrorNamingTheFlag()
+        {
+            // `hina dev check --base "not a url"` reached `new Uri(baseUrl)` and surfaced the
+            // raw "Invalid URI: ..." with no hint that --base was the malformed flag.
+            var log = new CapturingLogger();
+            var ctx = new CommandContext(InstallPaths.ForRoot(_root), log, NullLoggerFactory.Instance, CancellationToken.None);
+
+            int exit = await CommandRouter.DispatchAsync(ctx, new[] { "dev", "check", "--dir", _root, "--base", "not a url" });
+
+            Assert.Equal(2, exit);
+            Assert.Contains(log.Messages, m => m.Contains("--base"));
+        }
+
+        [Fact]
         public async Task Uninstall_UnknownFlag_ReturnsUsageError()
         {
             // `uninstall` takes no flags; a typo must be rejected, not silently ignored

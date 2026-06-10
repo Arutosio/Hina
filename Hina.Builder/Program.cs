@@ -71,8 +71,9 @@ namespace Hina.Builder
             Console.WriteLine("  hina-builder init [--input <dir>]");
             Console.WriteLine("      Interactive wizard: scans the folder, asks a few questions, and generates a");
             Console.WriteLine("      signed hina.app.json plus the manifest/chunk store ready to host.");
-            Console.WriteLine("  hina-builder build --input <dir> --out <dir> --base <url> [--platform <os[-arch]>] [--version v] [--chunk 65536] [--chunking fixed|cdc] [--min-chunk 2048] [--max-chunk 65536] [--avg-chunk 8192] [--sign-key key.b64] [-v|--verbose]");
+            Console.WriteLine("  hina-builder build --input <dir> --out <dir> --base <url> [--platform <os[-arch]>] [--common <dir>] [--version v] [--chunk 65536] [--chunking fixed|cdc] [--min-chunk 2048] [--max-chunk 65536] [--avg-chunk 8192] [--sign-key key.b64] [-v|--verbose]");
             Console.WriteLine("      --platform writes manifest.<token>.json (one per variant) into a shared chunk store.");
+            Console.WriteLine("      --common merges a shared-files folder into the build; on a path conflict the --input copy wins.");
             Console.WriteLine("  hina-builder keygen [--out <dir>] [--name <prefix>]");
         }
     }

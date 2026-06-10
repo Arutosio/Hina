@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Hina.Builder;
@@ -173,6 +174,246 @@ namespace Hina.Builder.Tests
             File.WriteAllText(Path.Combine(_input, "game"), "x");
             int code = await BuildCommand.RunAsync(Opts("solaris-sparc"), NullLogger.Instance, CancellationToken.None);
             Assert.Equal(2, code);
+        }
+
+        // ---- --common: shared files merged into the variant build ----
+
+        private string MakeCommonDir(params (string RelPath, string Content)[] files)
+        {
+            string common = Path.Combine(_base, "common");
+            Directory.CreateDirectory(common);
+            foreach ((string rel, string content) in files)
+            {
+                string full = Path.Combine(common, rel.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+                File.WriteAllText(full, content);
+            }
+            return common;
+        }
+
+        [Fact]
+        public async Task Build_WithCommon_MergesCommonFilesIntoManifest()
+        {
+            File.WriteAllText(Path.Combine(_input, "game"), "linux binary");
+            string common = MakeCommonDir(("data/map0.mul", "map bytes"), ("art.mul", "art bytes"));
+
+            int code = await BuildCommand.RunAsync(new BuildOptions
+            {
+                Input = _input,
+                Output = _out,
+                BaseUrl = "https://patch.example.com/",
+                Version = "1.0.0",
+                ChunkingMode = "cdc",
+                Platform = "linux",
+                Common = common
+            }, NullLogger.Instance, CancellationToken.None);
+
+            Assert.Equal(0, code);
+            var manifest = await Hina.Core.Manifest.ManifestSerializer.ReadAsync(
+                Path.Combine(_out, "manifest.linux.json"), CancellationToken.None);
+            var paths = manifest.Files.Select(f => f.Path).ToList();
+            Assert.Contains("game", paths);
+            Assert.Contains("data/map0.mul", paths);
+            Assert.Contains("art.mul", paths);
+            Assert.True(Directory.Exists(Path.Combine(_out, "chunks")));
+        }
+
+        [Fact]
+        public async Task Build_WithCommon_NoPlatform_WritesMergedManifestJson()
+        {
+            File.WriteAllText(Path.Combine(_input, "game"), "binary");
+            string common = MakeCommonDir(("shared.dat", "shared"));
+
+            int code = await BuildCommand.RunAsync(new BuildOptions
+            {
+                Input = _input,
+                Output = _out,
+                BaseUrl = "https://patch.example.com/",
+                Version = "1.0.0",
+                ChunkingMode = "cdc",
+                Common = common
+            }, NullLogger.Instance, CancellationToken.None);
+
+            Assert.Equal(0, code);
+            var manifest = await Hina.Core.Manifest.ManifestSerializer.ReadAsync(
+                Path.Combine(_out, "manifest.json"), CancellationToken.None);
+            Assert.Contains(manifest.Files, f => f.Path == "shared.dat");
+            Assert.Contains(manifest.Files, f => f.Path == "game");
+        }
+
+        [Fact]
+        public async Task Build_WithCommon_VariantOverridesCommonFile_VariantWins_AndLogs()
+        {
+            File.WriteAllText(Path.Combine(_input, "config.ini"), "variant-version-longer");
+            string common = MakeCommonDir(("config.ini", "common"));
+            var log = new CapturingLogger();
+
+            int code = await BuildCommand.RunAsync(new BuildOptions
+            {
+                Input = _input,
+                Output = _out,
+                BaseUrl = "https://patch.example.com/",
+                Version = "1.0.0",
+                ChunkingMode = "cdc",
+                Platform = "linux",
+                Common = common
+            }, log, CancellationToken.None);
+
+            Assert.Equal(0, code);
+            var manifest = await Hina.Core.Manifest.ManifestSerializer.ReadAsync(
+                Path.Combine(_out, "manifest.linux.json"), CancellationToken.None);
+            var entry = Assert.Single(manifest.Files, f => f.Path == "config.ini");
+            Assert.Equal("variant-version-longer".Length, entry.Size);
+            Assert.Contains(log.Messages, m => m.Contains("config.ini") && m.Contains("overrides"));
+        }
+
+        [Fact]
+        public async Task Build_WithCommon_OverriddenCommonChunks_NotWrittenToStore()
+        {
+            // Learn the overridden common file's chunk names from a throwaway build of the
+            // common side alone, then assert none of them landed in the real store.
+            File.WriteAllText(Path.Combine(_input, "config.ini"), "variant-version-longer");
+            string common = MakeCommonDir(("config.ini", "common-only-content"));
+
+            string refOut = Path.Combine(_base, "ref-out");
+            int refCode = await BuildCommand.RunAsync(new BuildOptions
+            {
+                Input = common,
+                Output = refOut,
+                BaseUrl = "https://patch.example.com/",
+                Version = "1.0.0",
+                ChunkingMode = "cdc"
+            }, NullLogger.Instance, CancellationToken.None);
+            Assert.Equal(0, refCode);
+            string[] commonChunks = Directory.GetFiles(Path.Combine(refOut, "chunks"), "*.chunk.br", SearchOption.AllDirectories)
+                .Select(Path.GetFileName)
+                .ToArray()!;
+            Assert.NotEmpty(commonChunks);
+
+            int code = await BuildCommand.RunAsync(new BuildOptions
+            {
+                Input = _input,
+                Output = _out,
+                BaseUrl = "https://patch.example.com/",
+                Version = "1.0.0",
+                ChunkingMode = "cdc",
+                Platform = "linux",
+                Common = common
+            }, NullLogger.Instance, CancellationToken.None);
+            Assert.Equal(0, code);
+
+            string[] storeChunks = Directory.GetFiles(Path.Combine(_out, "chunks"), "*.chunk.br", SearchOption.AllDirectories)
+                .Select(Path.GetFileName)
+                .ToArray()!;
+            foreach (string chunk in commonChunks)
+            {
+                Assert.DoesNotContain(chunk, storeChunks);
+            }
+        }
+
+        [Fact]
+        public async Task Build_CommonNotFound_FailsWithUsageError()
+        {
+            File.WriteAllText(Path.Combine(_input, "game"), "x");
+            var log = new CapturingLogger();
+
+            int code = await BuildCommand.RunAsync(new BuildOptions
+            {
+                Input = _input,
+                Output = _out,
+                BaseUrl = "https://patch.example.com/",
+                Common = Path.Combine(_base, "absent")
+            }, log, CancellationToken.None);
+
+            Assert.Equal(2, code);
+            Assert.Contains(log.Messages, m => m.Contains("--common"));
+        }
+
+        [Theory]
+        [InlineData("in/shared")]   // --common inside --input
+        [InlineData("in")]          // --common == --input
+        public async Task Build_CommonOverlappingInput_FailsWithUsageError(string relCommon)
+        {
+            File.WriteAllText(Path.Combine(_input, "game"), "x");
+            string common = Path.Combine(_base, relCommon.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(common);
+            var log = new CapturingLogger();
+
+            int code = await BuildCommand.RunAsync(new BuildOptions
+            {
+                Input = _input,
+                Output = _out,
+                BaseUrl = "https://patch.example.com/",
+                Common = common
+            }, log, CancellationToken.None);
+
+            Assert.Equal(2, code);
+            Assert.Contains(log.Messages, m => m.Contains("--common"));
+        }
+
+        [Fact]
+        public async Task Build_InputInsideCommon_FailsWithUsageError()
+        {
+            // The whole --input tree would also be enumerated as common content.
+            string common = Path.Combine(_base, "tree");
+            string input = Path.Combine(common, "variant");
+            Directory.CreateDirectory(input);
+            File.WriteAllText(Path.Combine(input, "game"), "x");
+
+            int code = await BuildCommand.RunAsync(new BuildOptions
+            {
+                Input = input,
+                Output = _out,
+                BaseUrl = "https://patch.example.com/",
+                Common = common
+            }, NullLogger.Instance, CancellationToken.None);
+
+            Assert.Equal(2, code);
+        }
+
+        [Fact]
+        public async Task Build_OutInsideCommon_FailsWithUsageError()
+        {
+            File.WriteAllText(Path.Combine(_input, "game"), "x");
+            string common = MakeCommonDir(("shared.dat", "s"));
+
+            int code = await BuildCommand.RunAsync(new BuildOptions
+            {
+                Input = _input,
+                Output = Path.Combine(common, "store"),
+                BaseUrl = "https://patch.example.com/",
+                Common = common
+            }, NullLogger.Instance, CancellationToken.None);
+
+            Assert.Equal(2, code);
+        }
+
+        [Fact]
+        public async Task Build_CommonInsideOut_FailsWithUsageError()
+        {
+            File.WriteAllText(Path.Combine(_input, "game"), "x");
+            string common = Path.Combine(_out, "common");
+            Directory.CreateDirectory(common);
+
+            int code = await BuildCommand.RunAsync(new BuildOptions
+            {
+                Input = _input,
+                Output = _out,
+                BaseUrl = "https://patch.example.com/",
+                Common = common
+            }, NullLogger.Instance, CancellationToken.None);
+
+            Assert.Equal(2, code);
+        }
+
+        private sealed class CapturingLogger : Microsoft.Extensions.Logging.ILogger
+        {
+            public System.Collections.Generic.List<string> Messages { get; } = new();
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+            public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+                TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+                => Messages.Add(formatter(state, exception));
         }
     }
 }

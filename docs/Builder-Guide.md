@@ -107,24 +107,33 @@ ship one **variant** per `(os[, arch])` and the client fetches just that variant
 
 **Publisher layout** — one subfolder per variant, named by its token `<os>[-<arch>]`
 (os ∈ `windows|macos|linux`, arch ∈ `x64|arm64|x86|arm`; omit arch for a build that works on
-any arch of that OS):
+any arch of that OS). Files identical on every OS (game data, assets) go in a `common/`
+folder instead of being copied into each variant:
 
 ```
 mygame-build/
+  common/        maps, art, sounds — OS-independent files, shared by every variant
   windows-x64/   Game.exe + dll
   macos-arm64/   MyGame.app/Contents/MacOS/MyGame
   macos-x64/     MyGame.app/Contents/MacOS/MyGame
   linux/         game + libs          # no arch ⇒ universal linux build
 ```
 
-Build each variant into the **same** `--out` with `--platform <token>` — chunks are
-content-addressed, so the shared store dedupes assets common to multiple variants:
+Build each variant into the **same** `--out` with `--platform <token>`, passing the shared
+folder with `--common` — its files are merged into every variant's manifest at their
+root-relative paths (a client installs `common/maps/map0.mul` as `maps/map0.mul`). Chunks
+are content-addressed, so the shared store stores each asset once no matter how many
+variants reference it, and an update to a common file delta-patches every platform:
 
 ```shell
-hina-builder build --input mygame-build/windows-x64 --platform windows-x64 --out patch --base https://patch.example.com/ --version 1.0.0 --sign-key keys/mygame.key.b64
-hina-builder build --input mygame-build/macos-arm64 --platform macos-arm64 --out patch --base https://patch.example.com/ --version 1.0.0 --sign-key keys/mygame.key.b64
-hina-builder build --input mygame-build/linux       --platform linux       --out patch --base https://patch.example.com/ --version 1.0.0 --sign-key keys/mygame.key.b64
+hina-builder build --input mygame-build/windows-x64 --common mygame-build/common --platform windows-x64 --out patch --base https://patch.example.com/ --version 1.0.0 --sign-key keys/mygame.key.b64
+hina-builder build --input mygame-build/macos-arm64 --common mygame-build/common --platform macos-arm64 --out patch --base https://patch.example.com/ --version 1.0.0 --sign-key keys/mygame.key.b64
+hina-builder build --input mygame-build/linux       --common mygame-build/common --platform linux       --out patch --base https://patch.example.com/ --version 1.0.0 --sign-key keys/mygame.key.b64
 ```
+
+If the same relative path exists in both `--common` and `--input`, the `--input` (variant)
+copy wins — so a variant can override a shared asset for one OS. Each override is logged
+during the build.
 
 **Host layout** (shared chunk store):
 
@@ -151,8 +160,9 @@ hina-builder build --input mygame-build/linux       --platform linux       --out
 The client picks the most specific variant for its machine; if there's no native build for an
 arm64 host it falls back to the `x64` build (Rosetta on macOS, emulation on Windows) with a
 warning, and errors cleanly when no variant serves the OS. `hina-builder init` detects these
-subfolders automatically and builds every variant for you. Apps with no `platforms` keep the
-legacy single-manifest behavior.
+subfolders automatically — including `common/` — and builds every variant for you. Apps with
+no `platforms` keep the legacy single-manifest behavior (there a folder named `common/` is
+ordinary app content).
 
 ---
 
@@ -174,6 +184,8 @@ Scans a directory, chunks every file, and produces a manifest plus a chunk store
 | `--max-chunk` | No | `65536` | Maximum CDC chunk size in bytes |
 | `--avg-chunk` | No | `8192` | Target average CDC chunk size in bytes |
 | `--sign-key` | No | -- | Path to Ed25519 private key file (`.key.b64`) for signing the manifest |
+| `--platform` | No | -- | Variant token `<os>[-<arch>]`; writes `manifest.<token>.json` into a shared `--out` store |
+| `--common` | No | -- | Folder of shared files merged into the build; on the same relative path the `--input` copy wins (per-OS override) |
 | `-v`, `--verbose` | No | off | Enable debug-level logging output |
 
 ### Examples

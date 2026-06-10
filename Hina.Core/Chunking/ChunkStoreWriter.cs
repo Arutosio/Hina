@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Hina.Core.Compression;
 using Hina.Core.Hashing;
+using Hina.Core.Inputs;
 using Hina.Core.Manifest;
 using Hina.Core.Rsync;
 
@@ -32,30 +33,30 @@ namespace Hina.Core.Chunking
 
         public async Task WriteChunksAsync(DirectoryInfo root, DirectoryInfo chunkStoreDir, CancellationToken ct)
         {
-            if (!root.Exists)
-            {
-                throw new DirectoryNotFoundException(root.FullName);
-            }
+            await WriteChunksAsync(InputSet.Resolve(new[] { root }), chunkStoreDir, ct);
+        }
 
+        public async Task WriteChunksAsync(InputSet inputs, DirectoryInfo chunkStoreDir, CancellationToken ct)
+        {
             chunkStoreDir.Create();
 
             if (_chunker != null)
             {
-                await WriteChunksWithChunkerAsync(root, chunkStoreDir, ct);
+                await WriteChunksWithChunkerAsync(inputs.Files, chunkStoreDir, ct);
             }
             else
             {
-                await WriteChunksFixedAsync(root, chunkStoreDir, ct);
+                await WriteChunksFixedAsync(inputs.Files, chunkStoreDir, ct);
             }
         }
 
-        private async Task WriteChunksWithChunkerAsync(DirectoryInfo root, DirectoryInfo chunkStoreDir, CancellationToken ct)
+        private async Task WriteChunksWithChunkerAsync(IReadOnlyList<InputFile> files, DirectoryInfo chunkStoreDir, CancellationToken ct)
         {
-            foreach (string filePath in Directory.EnumerateFiles(root.FullName, "*", SearchOption.AllDirectories))
+            foreach (InputFile file in files)
             {
                 ct.ThrowIfCancellationRequested();
 
-                byte[] fileData = await File.ReadAllBytesAsync(filePath, ct);
+                byte[] fileData = await File.ReadAllBytesAsync(file.AbsolutePath, ct);
                 List<ManifestChunk> chunks;
                 using (var ms = new MemoryStream(fileData))
                 {
@@ -87,14 +88,14 @@ namespace Hina.Core.Chunking
             }
         }
 
-        private async Task WriteChunksFixedAsync(DirectoryInfo root, DirectoryInfo chunkStoreDir, CancellationToken ct)
+        private async Task WriteChunksFixedAsync(IReadOnlyList<InputFile> files, DirectoryInfo chunkStoreDir, CancellationToken ct)
         {
             // Store chunks by strong hash so clients can fetch missing blocks.
-            foreach (string filePath in Directory.EnumerateFiles(root.FullName, "*", SearchOption.AllDirectories))
+            foreach (InputFile file in files)
             {
                 ct.ThrowIfCancellationRequested();
 
-                using (FileStream fs = File.OpenRead(filePath))
+                using (FileStream fs = File.OpenRead(file.AbsolutePath))
                 {
                     long fileOffset = 0;
                     int index = 0;

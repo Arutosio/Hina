@@ -1,10 +1,13 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Hina.Core.Cli;
 using Hina.Core.Chunking;
 using Hina.Core.Hashing;
+using Hina.Core.Inputs;
 using Hina.Core.Manifest;
 using Hina.Core.Rsync;
 using Microsoft.Extensions.Logging;
@@ -32,9 +35,15 @@ namespace Hina.Builder
         // so each variant's build dedupes common chunks against the others.
         public string? Platform { get; init; }
 
+        // Optional shared-files folder merged into the build (game data identical across
+        // variants). On a relative-path collision the --input copy wins, so a variant can
+        // still override a shared asset.
+        public string? Common { get; init; }
+
         public static BuildOptions FromArgs(string[] args) => new BuildOptions
         {
             Platform = Args.GetValue(args, "--platform"),
+            Common = Args.GetValue(args, "--common"),
             Input = Args.GetValue(args, "--input") ?? string.Empty,
             Output = Args.GetValue(args, "--out") ?? string.Empty,
             BaseUrl = Args.GetValue(args, "--base") ?? string.Empty,
@@ -86,6 +95,32 @@ namespace Hina.Builder
                 return 2;
             }
 
+            if (!string.IsNullOrWhiteSpace(options.Common))
+            {
+                if (!Directory.Exists(options.Common))
+                {
+                    logger.LogError("--common folder not found: {Common}", options.Common);
+                    return 2;
+                }
+                if (IsInside(options.Common, options.Input) || IsInside(options.Input, options.Common))
+                {
+                    logger.LogError("--common '{Common}' must not be inside --input '{Input}' (or contain it): its files would be packaged twice.",
+                        options.Common, options.Input);
+                    return 2;
+                }
+                if (IsInside(options.Output, options.Common))
+                {
+                    logger.LogError("--out '{Out}' must be outside the --common folder '{Common}': the manifest and chunk store would be picked up as shared files by the next build.",
+                        options.Output, options.Common);
+                    return 2;
+                }
+                if (IsInside(options.Common, options.Output))
+                {
+                    logger.LogError("--common '{Common}' must be outside --out '{Out}'.", options.Common, options.Output);
+                    return 2;
+                }
+            }
+
             string manifestName = "manifest.json";
             if (!string.IsNullOrEmpty(options.Platform))
             {
@@ -124,8 +159,34 @@ namespace Hina.Builder
                 logger.LogError("--base '{Url}' is not a valid absolute URL (expected e.g. https://cdn.example.com/mygame/).", options.BaseUrl);
                 return 2;
             }
+            // One resolved file set consumed by BOTH the manifest and the chunk store, so the
+            // two can never disagree. Roots in precedence order: common first, --input last
+            // (variant wins on a relative-path collision).
+            List<DirectoryInfo> roots = new List<DirectoryInfo>();
+            if (!string.IsNullOrWhiteSpace(options.Common))
+            {
+                roots.Add(new DirectoryInfo(options.Common));
+            }
+            roots.Add(inputDir);
+            InputSet inputs = InputSet.Resolve(roots);
+
+            if (roots.Count > 1)
+            {
+                int variantCount = inputs.Files.Count(f => f.SourceRoot == inputDir.FullName);
+                logger.LogInformation("Merging shared files from {Common}: {CommonCount} common + {VariantCount} variant files ({OverrideCount} overridden by the variant).",
+                    roots[0].FullName, inputs.Files.Count - variantCount, variantCount, inputs.Overrides.Count);
+                foreach (InputOverride ov in inputs.Overrides)
+                {
+                    logger.LogInformation("Variant overrides common file: {Path}", ov.RelativePath);
+                }
+            }
+            foreach (string clash in inputs.CaseClashes)
+            {
+                logger.LogWarning("Paths differing only by case will collide on Windows/macOS installs: {Path}", clash);
+            }
+
             logger.LogInformation("Building manifest from {InputDir}", inputDir.FullName);
-            Manifest manifest = await manifestBuilder.BuildAsync(inputDir, baseUri, options.ChunkSize, chunker, ct);
+            Manifest manifest = await manifestBuilder.BuildAsync(inputs, baseUri, options.ChunkSize, chunker, ct);
             manifest.Version = options.Version;
             if (!string.IsNullOrWhiteSpace(options.SignKeyPath))
             {
@@ -150,7 +211,7 @@ namespace Hina.Builder
 
             outputDir.Create();
             await ManifestSerializer.WriteAsync(manifest, Path.Combine(outputDir.FullName, manifestName), ct);
-            await chunkWriter.WriteChunksAsync(inputDir, chunkDir, ct);
+            await chunkWriter.WriteChunksAsync(inputs, chunkDir, ct);
 
             logger.LogInformation("Build complete");
             logger.LogInformation("Manifest: {ManifestPath}", Path.Combine(outputDir.FullName, manifestName));

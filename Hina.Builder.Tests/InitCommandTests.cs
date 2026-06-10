@@ -158,6 +158,69 @@ namespace Hina.Builder.Tests
         }
 
         [Fact]
+        public async Task Init_VariantSubdirsWithCommonFolder_MergesCommonIntoEveryVariantManifest()
+        {
+            WriteBin("windows-x64", "Game.exe", new byte[] { 0x4D, 0x5A, 0x90, 0x00 });   // PE
+            WriteBin("linux", "game", new byte[] { 0x7F, 0x45, 0x4C, 0x46 });              // ELF
+            string commonDir = Path.Combine(_payload, "common");
+            Directory.CreateDirectory(commonDir);
+            await File.WriteAllTextAsync(Path.Combine(commonDir, "shared.dat"), "game data shared by every OS");
+
+            ScriptedPrompt script = new ScriptedPrompt(
+                asks: new[]
+                {
+                    "mygame", "My Game", "1.2.3", "Acme", "A fun game", "",
+                    "https://patch.example.com/",
+                    _out
+                },
+                confirms: new[]
+                {
+                    true, true,   // use detected exec for each of the 2 variants
+                    true,         // sandbox
+                    true,         // internet
+                    true          // generate key
+                },
+                chooses: new[] { 1 });
+
+            int code = await InitCommand.RunAsync(
+                new[] { "init", "--input", _payload }, script, NullLogger.Instance, CancellationToken.None);
+
+            Assert.Equal(0, code);
+
+            string patch = Path.Combine(_out, "patch");
+            foreach (string manifestName in new[] { "manifest.windows-x64.json", "manifest.linux.json" })
+            {
+                var manifest = await Hina.Core.Manifest.ManifestSerializer.ReadAsync(
+                    Path.Combine(patch, manifestName), CancellationToken.None);
+                // Shared file present at its root-relative path, NOT under a common/ prefix.
+                Assert.Contains(manifest.Files, f => f.Path == "shared.dat");
+                Assert.DoesNotContain(manifest.Files, f => f.Path.StartsWith("common/", StringComparison.Ordinal));
+            }
+        }
+
+        [Fact]
+        public async Task Init_SinglePayloadWithCommonSubfolder_PackagedAsOrdinaryContent()
+        {
+            // No variant subdirs: a folder named "common" is just app content and keeps its
+            // path prefix in the manifest.
+            WriteElf("game");
+            string commonDir = Path.Combine(_payload, "common");
+            Directory.CreateDirectory(commonDir);
+            await File.WriteAllTextAsync(Path.Combine(commonDir, "shared.dat"), "asset");
+
+            int code = await InitCommand.RunAsync(
+                new[] { "init", "--input", _payload },
+                SingleLinuxScript(),
+                NullLogger.Instance,
+                CancellationToken.None);
+
+            Assert.Equal(0, code);
+            var manifest = await Hina.Core.Manifest.ManifestSerializer.ReadAsync(
+                Path.Combine(_out, "patch", "manifest.json"), CancellationToken.None);
+            Assert.Contains(manifest.Files, f => f.Path == "common/shared.dat");
+        }
+
+        [Fact]
         public async Task Init_ReRun_UsesExistingDescriptorAsDefaults()
         {
             WriteElf("game");

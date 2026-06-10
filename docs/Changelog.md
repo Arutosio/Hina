@@ -4,6 +4,61 @@ All notable changes to Hina are documented in this file.
 
 ---
 
+## v1.4.2 — reliability and robustness fixes from bug-hunt rounds 7–8
+
+24 user-reachable bug fixes from two systematic bug-hunt rounds (PR #26, PR #28).
+Test suite: 540 → 615 tests.
+
+### Critical
+
+- **Update no longer hangs forever on a negative `retryBaseDelayMs`.** A config value
+  of `-1` reached `Task.Delay(-1)` (infinite delay) on the first retry; `-1000` crashed
+  with an out-of-range exception. Negative retry delays are now clamped at zero.
+- **Ctrl+C no longer destroys an installed app.** Cancelling during `uninstall` (or the
+  uninstall phase of `reinstall`) swallowed the cancellation and deleted files anyway;
+  cancelling `update --all` mid-app reported a bogus failure instead of aborting.
+  Cancellation now propagates end-to-end (services and CLI) and rollback completes
+  before the abort.
+- **`reinstall` validates the new version before uninstalling the old one.** A broken
+  (but signed) descriptor or a raised `minHinaVersion` used to be discovered only
+  after the working copy was already gone, leaving no app installed.
+
+### Fixed — client (hina)
+
+- Corrupted-chunk downloads (CDN edge serving truncated/garbage data) are now retried
+  as transient instead of failing the install on the first bad chunk.
+- A crash-interrupted update no longer leaves a corrupted patch journal that blocks
+  the next run; recovery handles truncated/garbage journal files.
+- Manifest or descriptor URLs answered with HTML (captive portal, misconfigured proxy)
+  produce an actionable error naming the URL instead of a raw JSON parse crash.
+- `update --all` stops at the first Ctrl+C instead of marching through remaining apps.
+- A `hina.config.json` with missing/empty paths or out-of-range numeric values is
+  reported with the offending file and key instead of crashing.
+- `perms --grant ':rw'` and similar malformed grants produce a usage error naming
+  `--grant`; `update`/`reinstall`/`perms` now reject unknown flags (typos like
+  `--isnecure` were silently ignored — security-relevant for `--insecure`).
+- A trailing valued flag with no value (`hina install <url> --retries`) fails loudly
+  instead of being silently dropped.
+
+### Fixed — host (hina-host)
+
+- Startup validation: corrupted config JSON, invalid `--port`, negative rate limits
+  (which made **every** request fail with 500), `summaryIntervalSeconds < 1`
+  (busy-spin CPU), and empty/slash-containing app names now exit with an actionable
+  message instead of crashing or serving broken responses.
+- Access statistics no longer grow unbounded (memory leak under long uptimes).
+
+### Fixed — builder (hina-builder)
+
+- `--out` inside (or equal to) `--input` is rejected — the next build used to chunk
+  the output store into the manifest itself, so clients downloaded the store as if it
+  were the app.
+- `--chunk 0`, malformed `--base` URLs, an unreadable `--sign-key`, and a truncated
+  hash in an existing store now produce actionable errors instead of crashes or
+  corrupt output; the init wizard validates its port prompt.
+
+---
+
 ## v1.4.1 — delta-update and chunk-serving fixes, patch-path performance
 
 ### Fixed

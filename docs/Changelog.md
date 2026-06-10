@@ -4,6 +4,65 @@ All notable changes to Hina are documented in this file.
 
 ---
 
+## v1.4.3 — host proxy support, installer hardening, scoop fix
+
+11 fixes from bug-hunt rounds 9–10 (PR #30, PR #31). Test suite: 615 → 629 tests.
+
+### Host (hina-host)
+
+- **Per-client rate limiting behind a remote reverse proxy.** `X-Forwarded-For` was
+  never trusted from a non-loopback address, so behind a remote proxy/LB every client
+  shared the proxy's IP — one rate-limit bucket for everyone and mass 429 once their
+  combined traffic crossed the limit. New `trustedProxies` json key / `--trusted-proxies`
+  flag opts specific proxy IPs in (validated at startup). Default unchanged: remote
+  `X-Forwarded-For` stays untrusted, so a spoofed loopback client IP still cannot reach
+  the loopback-only `/stats`. Same-machine proxies keep working out of the box.
+- **The setup wizard no longer destroys a corrupt config.** A hand-maintained
+  `hina.host.json` with one JSON typo counted as "missing or empty", so an interactive
+  start auto-ran the wizard and overwrote the file — apps/cors/rate-limit setup lost.
+  Corrupt non-empty files now surface the parse error with the file named instead.
+- A config whose root is not a JSON object (e.g. `[1,2,3]`) failed startup with a raw
+  exception; now an actionable error.
+
+### Client (hina)
+
+- **Ctrl+C in the commit window no longer fakes a failed update.** Cancellation between
+  the end of the add-phase and the final registry write was reported as "Files updated
+  but the registry could not be saved: The operation was canceled." with files at v2 and
+  the registry at v1. The commit point now always completes.
+- Same class in `uninstall`: cancellation after the (already irreversible) directory
+  delete left a ghost registry row pointing at a deleted directory.
+- **An update that renames the app is refused.** A re-fetched descriptor with a different
+  `name` used to update fine, leaving the registry row keyed by the old name with a
+  cached descriptor claiming the new one (silent identity drift). The error names both
+  names and the recovery path.
+
+### Installers (curl|sh / PowerShell)
+
+- **install.sh could destroy the user's shell rc file.** When the backup copy of
+  `.zshrc`/`.bashrc` failed (unreadable file, disk full), the PATH-setup step replaced
+  the entire file with just the hina block. The copy must now succeed or the file is
+  skipped with a manual-add hint.
+- **Checksum verification can no longer be skipped by a network error.** Both installers
+  treated any failure fetching the `.sha256` as "not published" and fell back to a
+  structural archive check — a transient outage (or a MITM blocking just the checksum)
+  silently downgraded the install to unverified. Only a real HTTP 404 (old releases) may
+  skip now; `HINA_NO_CHECKSUM=1` remains the explicit bypass.
+- **install.ps1 is idempotent again.** The non-interactive version check compared
+  `"hina 1.4.2"` against `"v1.4.2"` and could never match: every scripted re-run
+  re-downloaded and reinstalled, and an installed build newer than the target was
+  silently downgraded. Numeric semver compare now, mirroring install.sh.
+- install.sh: the fish PATH line now quotes the install dir (a directory with a space
+  split into two PATH entries).
+
+### Packaging
+
+- **`scoop install` works.** The manifest declared an `extract_dir` that does not exist
+  in the release zips (the binary sits at the archive root), so scoop could never
+  produce a working shim. The manifest is regenerated with this release.
+
+---
+
 ## v1.4.2 — reliability and robustness fixes from bug-hunt rounds 7–8
 
 24 user-reachable bug fixes from two systematic bug-hunt rounds (PR #26, PR #28).

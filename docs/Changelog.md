@@ -4,9 +4,11 @@ All notable changes to Hina are documented in this file.
 
 ---
 
-## Unreleased
+## v1.5.0 — shared files across platform variants
 
-### `hina-builder build --common` — shared files across platform variants
+Test suite: 629 → 650 tests.
+
+### `hina-builder build --common`
 
 - **New `--common <dir>` flag**: a folder of OS-independent files (game data, assets)
   merged into the build at their root-relative paths, so a multi-platform app no longer

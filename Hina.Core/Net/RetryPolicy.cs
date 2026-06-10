@@ -72,6 +72,14 @@ namespace Hina.Core.Net
 
         public static bool IsTransient(Exception ex)
         {
+            if (ex is ChunkIntegrityException)
+            {
+                // Chunks are content-addressed; a body that fails decode or hash check means one
+                // store/CDN node served a corrupt object. A re-fetch can hit a healthy node, and
+                // the hash check makes retrying tamper-safe.
+                return true;
+            }
+
             if (ex is TaskCanceledException || ex is OperationCanceledException)
             {
                 // Timeout (not user-cancellation) is transient

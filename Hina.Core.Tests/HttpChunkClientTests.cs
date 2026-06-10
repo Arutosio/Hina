@@ -208,7 +208,7 @@ namespace Hina.Core.Tests
             using var http = new HttpClient(handler);
             var client = new HttpChunkClient(http);
 
-            await Assert.ThrowsAsync<InvalidDataException>(() => client.GetChunkAsync(
+            await Assert.ThrowsAsync<Hina.Core.Net.ChunkIntegrityException>(() => client.GetChunkAsync(
                 new Uri("http://cdn.test.com/"),
                 "sha256:" + Sha256Hex(Encoding.UTF8.GetBytes("the real expected content")),
                 CancellationToken.None));

@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hina — rsync-style patcher & cross-platform package manager</title>
+    <meta name="description" content="Hina is an open-source, rsync-like patcher for game clients and desktop apps, plus a cross-platform package manager with Flatpak-style sandboxing. Delta updates, Ed25519 signing, Brotli chunk storage. .NET 10, NativeAOT." />
+    <meta name="keywords" content="Hina, patcher, rsync, package manager, delta update, game client updater, sandbox, AppContainer, Landlock, Ed25519, .NET, NativeAOT, open source" />
+    <link rel="canonical" href="https://hina.arutosio.com/" />
+    <link rel="icon" href="./Images/favicon.ico" sizes="any" />
+
+    <!-- Open Graph / Twitter -->
+    <meta property="og:title" content="Hina — rsync-style patcher & package manager" />
+    <meta property="og:description" content="Fast, bandwidth-efficient delta updates and Flatpak-style sandboxing across Linux, macOS and Windows. Open source, .NET 10." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://hina.arutosio.com/" />
+    <meta property="og:image" content="https://hina.arutosio.com/Images/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Hina — rsync-style patcher & package manager" />
+    <meta name="twitter:description" content="Delta updates + sandboxing for game clients and desktop apps. Open source, .NET 10." />
+    <meta name="twitter:image" content="https://hina.arutosio.com/Images/og-image.png" />
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./Styles/hina.css" />
+  </head>
+  <body data-bs-spy="scroll" data-bs-target="#navbar" data-bs-offset="120" tabindex="0">
+    <!-- aurora background -->
+    <div class="aurora" aria-hidden="true"></div>
+
+    <!-- NAVBAR -->
+    <nav id="navbar" class="navbar navbar-expand-lg fixed-top hina-nav">
+      <div class="container">
+        <a class="navbar-brand d-flex align-items-center gap-2" href="#home">
+          <img src="./Images/hina-logo.png" alt="Hina logo" width="36" height="36" />
+          <span class="brand-word">Hina</span>
+        </a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" aria-controls="nav" aria-expanded="false" aria-label="Toggle navigation">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="nav">
+          <ul class="navbar-nav ms-auto mb-2 mb-lg-0 align-items-lg-center">
+            <li class="nav-item"><a class="nav-link" href="#features">Features</a></li>
+            <li class="nav-item"><a class="nav-link" href="#how">How it works</a></li>
+            <li class="nav-item"><a class="nav-link" href="#install">Install</a></li>
+            <li class="nav-item"><a class="nav-link" href="#components">Components</a></li>
+            <li class="nav-item"><a class="nav-link" href="#docs">Docs</a></li>
+            <li class="nav-item ms-lg-2">
+              <a class="btn btn-hina-outline btn-sm" href="https://github.com/Arutosio/Hina" target="_blank" rel="noopener">
+                <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+                GitHub
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </nav>
+
+    <main>
+      <!-- HERO -->
+      <header id="home" class="hero">
+        <div class="container">
+          <div class="row align-items-center g-5">
+            <div class="col-lg-7 text-center text-lg-start">
+              <span class="badge-pill"><span class="dot"></span> v1.6.0 · Apache-2.0 · .NET 10 NativeAOT</span>
+              <h1 class="hero-title">Ship updates that move <span class="grad">only what changed</span>.</h1>
+              <p class="hero-sub">
+                Hina is an open-source, <strong>rsync-like patcher</strong> for game clients and desktop
+                applications — and a <strong>cross-platform package manager</strong> with Flatpak-style
+                sandboxing. Rolling-checksum delta transfers, Ed25519-signed manifests, Brotli chunk
+                storage. Standalone CLI or an embeddable library.
+              </p>
+              <div class="hero-cta">
+                <a href="#install" class="btn btn-hina btn-lg">Get started</a>
+                <a href="#how" class="btn btn-hina-ghost btn-lg">How it works</a>
+              </div>
+              <div class="hero-meta">
+                <span>⚡ Transfers only changed chunks</span>
+                <span>🔒 Sandboxed on Linux · macOS · Windows</span>
+                <span>🧩 No proprietary services</span>
+              </div>
+            </div>
+            <div class="col-lg-5 text-center">
+              <div class="hero-logo-wrap">
+                <img src="./Images/hina-logo.png" alt="Hina mascot logo" class="hero-logo" width="220" height="220" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <!-- WHAT IS HINA / TWO PILLARS -->
+      <section id="what" class="section">
+        <div class="container">
+          <div class="row g-4">
+            <div class="col-md-6">
+              <article class="pillar">
+                <div class="pillar-ico">⟳</div>
+                <h3>A delta patcher</h3>
+                <p>
+                  Hina computes rolling checksums against local files and downloads only the chunks that
+                  differ, then rebuilds and verifies each file in place. Content-defined chunking keeps
+                  deduplication high even when files grow or shift.
+                </p>
+              </article>
+            </div>
+            <div class="col-md-6">
+              <article class="pillar">
+                <div class="pillar-ico">📦</div>
+                <h3>A package manager</h3>
+                <p>
+                  Install, update and remove desktop apps from a signed descriptor — with Flatpak-style
+                  filesystem isolation enforced before the app starts: Landlock on Linux, Seatbelt on
+                  macOS, and AppContainer on Windows <span class="tag-new">new in 1.6.0</span>.
+                </p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FEATURES -->
+      <section id="features" class="section">
+        <div class="container">
+          <div class="section-head">
+            <h2>Built for fast, verifiable updates</h2>
+            <p>Everything you need to patch a 50&nbsp;GB game over a thin pipe — safely.</p>
+          </div>
+          <div class="row g-4">
+            <div class="col-md-6 col-lg-4"><div class="feature"><h4>⚡ rsync-like delta patching</h4><p>Rolling-checksum matching transfers only changed blocks, not whole files.</p></div></div>
+            <div class="col-md-6 col-lg-4"><div class="feature"><h4>🧬 Content-defined chunking</h4><p>FastCDC-inspired boundaries dedupe well across insertions and deletions.</p></div></div>
+            <div class="col-md-6 col-lg-4"><div class="feature"><h4>✍️ Ed25519 manifest signing</h4><p>Every manifest is cryptographically verified before any patching begins.</p></div></div>
+            <div class="col-md-6 col-lg-4"><div class="feature"><h4>🔎 Per-chunk &amp; per-file hashing</h4><p>Integrity checks at every stage — download, rebuild and swap.</p></div></div>
+            <div class="col-md-6 col-lg-4"><div class="feature"><h4>🗜️ Brotli chunk storage</h4><p>Compressed, content-addressed blocks cut server bandwidth and storage.</p></div></div>
+            <div class="col-md-6 col-lg-4"><div class="feature"><h4>🔁 Retry with backoff</h4><p>Automatic recovery from transient 5xx and network errors.</p></div></div>
+            <div class="col-md-6 col-lg-4"><div class="feature"><h4>↩️ Backup &amp; rollback</h4><p>Automatic backups enable instant rollback when a patch fails.</p></div></div>
+            <div class="col-md-6 col-lg-4"><div class="feature"><h4>🧵 Concurrent downloads</h4><p>Configurable parallelism for faster patching on fat pipes.</p></div></div>
+            <div class="col-md-6 col-lg-4"><div class="feature"><h4>🛡️ Flatpak-style sandboxing</h4><p>Filesystem &amp; network scope enforced on Linux, macOS and Windows.</p></div></div>
+            <div class="col-md-6 col-lg-4"><div class="feature"><h4>🌐 Static hosting</h4><p>Ship the bundled ASP.NET Core host, or any CDN / Nginx / S3.</p></div></div>
+            <div class="col-md-6 col-lg-4"><div class="feature"><h4>📋 Structured logging</h4><p>Built on Microsoft.Extensions.Logging with <code>--verbose</code> debug output.</p></div></div>
+            <div class="col-md-6 col-lg-4"><div class="feature"><h4>🔓 Open source end-to-end</h4><p>Apache-2.0, no proprietary dependencies or services.</p></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- HOW IT WORKS -->
+      <section id="how" class="section">
+        <div class="container">
+          <div class="section-head">
+            <h2>How it works</h2>
+            <p>Build once, ship chunks. Clients fetch only what they're missing.</p>
+          </div>
+          <div class="row g-4">
+            <div class="col-lg-6">
+              <div class="pipeline">
+                <h4 class="pipeline-title">Build pipeline</h4>
+                <ol class="steps">
+                  <li><span>Build artifacts</span><small>your game / app files</small></li>
+                  <li><span>Hina.Builder</span><small>scan + chunk</small></li>
+                  <li><span>manifest.json</span><small>file list, hashes, chunk map, optional signature</small></li>
+                  <li><span>chunks/</span><small>Brotli blocks stored by content hash</small></li>
+                  <li><span>Static host / CDN</span><small>Hina.Host, Nginx, S3…</small></li>
+                </ol>
+              </div>
+            </div>
+            <div class="col-lg-6">
+              <div class="pipeline">
+                <h4 class="pipeline-title">Client patch pipeline</h4>
+                <ol class="steps">
+                  <li><span>Fetch manifest</span><small>verify Ed25519 signature</small></li>
+                  <li><span>Rolling-checksum scan</span><small>compare local files</small></li>
+                  <li><span>Download missing chunks</span><small>concurrent · retry + backoff</small></li>
+                  <li><span>Rebuild &amp; verify</span><small>hash-check, then swap in place</small></li>
+                  <li><span>Success or rollback</span><small>restore from backup on failure</small></li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- INSTALL -->
+      <section id="install" class="section">
+        <div class="container">
+          <div class="section-head">
+            <h2>Install in one line</h2>
+            <p>Self-contained binary — no runtime to install. Pick your platform.</p>
+          </div>
+          <div class="install-card">
+            <div class="os-tabs" role="tablist">
+              <button class="os-tab active" data-os="unix" role="tab">Linux / macOS</button>
+              <button class="os-tab" data-os="ps" role="tab">Windows · PowerShell</button>
+              <button class="os-tab" data-os="scoop" role="tab">Windows · Scoop</button>
+              <button class="os-tab" data-os="msi" role="tab">Windows · MSI</button>
+            </div>
+
+            <div class="os-panel active" data-os="unix">
+              <div class="code-block">
+                <code id="cmd-unix">curl -fsSL https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.sh | bash</code>
+                <button class="copy-btn" data-copy="cmd-unix" aria-label="Copy command">Copy</button>
+              </div>
+              <p class="install-note">Lands in <code>~/.local/bin/hina</code>. Verifies the SHA-256 of the download before extracting.</p>
+            </div>
+
+            <div class="os-panel" data-os="ps">
+              <div class="code-block">
+                <code id="cmd-ps">iwr -useb https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.ps1 | iex</code>
+                <button class="copy-btn" data-copy="cmd-ps" aria-label="Copy command">Copy</button>
+              </div>
+              <p class="install-note">Installs to <code>%LOCALAPPDATA%\Hina\bin</code> and prepends it to your user PATH — no admin needed.</p>
+            </div>
+
+            <div class="os-panel" data-os="scoop">
+              <div class="code-block">
+                <code id="cmd-scoop">scoop install https://github.com/Arutosio/Hina/releases/latest/download/hina.json</code>
+                <button class="copy-btn" data-copy="cmd-scoop" aria-label="Copy command">Copy</button>
+              </div>
+              <p class="install-note">Auto-updates afterwards with <code>scoop update</code>.</p>
+            </div>
+
+            <div class="os-panel" data-os="msi">
+              <p class="install-note mt-0">Prefer a double-click installer? Grab the signed-per-user MSI (x64 or arm64) from the latest release — installs to <code>%LOCALAPPDATA%\Hina\bin</code>, no admin.</p>
+              <a class="btn btn-hina" href="https://github.com/Arutosio/Hina/releases/latest" target="_blank" rel="noopener">Download from Releases ↗</a>
+            </div>
+
+            <p class="verify-line">Then run <code>hina --help</code>. Verify a release with the published <code>.sha256</code> sums.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- COMPONENTS -->
+      <section id="components" class="section">
+        <div class="container">
+          <div class="section-head">
+            <h2>One toolkit, five parts</h2>
+            <p>Use the CLI, or embed the core library in your own app.</p>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-6 col-lg-4"><div class="comp"><h4>Hina.CLI</h4><p>The <code>hina</code> command: install, update, run, perms, host — the user-facing entry point.</p></div></div>
+            <div class="col-md-6 col-lg-4"><div class="comp"><h4>Hina.PackageManager</h4><p>Install/update engine, descriptor schema, signature chain and the sandbox backends.</p></div></div>
+            <div class="col-md-6 col-lg-4"><div class="comp"><h4>Hina.Builder</h4><p>Turns a build directory into a manifest + content-addressed chunk store.</p></div></div>
+            <div class="col-md-6 col-lg-4"><div class="comp"><h4>Hina.Host</h4><p>Bundled ASP.NET Core static host with rate-limiting, health and multi-app serving.</p></div></div>
+            <div class="col-md-6 col-lg-4"><div class="comp"><h4>Hina.Core</h4><p>The reusable patching library: chunking, rolling checksum, verification, retry.</p></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- DOCS -->
+      <section id="docs" class="section">
+        <div class="container">
+          <div class="section-head">
+            <h2>Documentation</h2>
+            <p>Deep dives live in the repo's <code>docs/</code> directory.</p>
+          </div>
+          <div class="row g-3 doc-grid">
+            <div class="col-6 col-md-4 col-lg-3"><a class="doc-link" href="https://github.com/Arutosio/Hina/blob/master/docs/Architecture.md" target="_blank" rel="noopener">Architecture</a></div>
+            <div class="col-6 col-md-4 col-lg-3"><a class="doc-link" href="https://github.com/Arutosio/Hina/blob/master/docs/PackageManager-Guide.md" target="_blank" rel="noopener">Package Manager Guide</a></div>
+            <div class="col-6 col-md-4 col-lg-3"><a class="doc-link" href="https://github.com/Arutosio/Hina/blob/master/docs/CLI-Guide.md" target="_blank" rel="noopener">CLI Guide</a></div>
+            <div class="col-6 col-md-4 col-lg-3"><a class="doc-link" href="https://github.com/Arutosio/Hina/blob/master/docs/Builder-Guide.md" target="_blank" rel="noopener">Builder Guide</a></div>
+            <div class="col-6 col-md-4 col-lg-3"><a class="doc-link" href="https://github.com/Arutosio/Hina/blob/master/docs/Host-Guide.md" target="_blank" rel="noopener">Host Guide</a></div>
+            <div class="col-6 col-md-4 col-lg-3"><a class="doc-link" href="https://github.com/Arutosio/Hina/blob/master/docs/Security.md" target="_blank" rel="noopener">Security</a></div>
+            <div class="col-6 col-md-4 col-lg-3"><a class="doc-link" href="https://github.com/Arutosio/Hina/blob/master/docs/Integration-Guide.md" target="_blank" rel="noopener">Integration Guide</a></div>
+            <div class="col-6 col-md-4 col-lg-3"><a class="doc-link" href="https://github.com/Arutosio/Hina/blob/master/docs/Configuration.md" target="_blank" rel="noopener">Configuration</a></div>
+            <div class="col-6 col-md-4 col-lg-3"><a class="doc-link" href="https://github.com/Arutosio/Hina/blob/master/docs/Troubleshooting.md" target="_blank" rel="noopener">Troubleshooting</a></div>
+            <div class="col-6 col-md-4 col-lg-3"><a class="doc-link" href="https://github.com/Arutosio/Hina/blob/master/docs/Changelog.md" target="_blank" rel="noopener">Changelog</a></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- CTA STRIP -->
+      <section class="cta-strip">
+        <div class="container text-center">
+          <h2>Start shipping smaller updates today.</h2>
+          <div class="hero-cta justify-content-center">
+            <a href="#install" class="btn btn-hina btn-lg">Install Hina</a>
+            <a href="https://github.com/Arutosio/Hina" target="_blank" rel="noopener" class="btn btn-hina-ghost btn-lg">Star on GitHub</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="site-footer">
+      <div class="container">
+        <div class="d-flex flex-column flex-md-row align-items-center justify-content-between gap-3">
+          <div class="d-flex align-items-center gap-2">
+            <img src="./Images/hina-logo.png" alt="" width="28" height="28" />
+            <span>Hina · Apache-2.0</span>
+          </div>
+          <div class="footer-links">
+            <a href="https://github.com/Arutosio/Hina" target="_blank" rel="noopener">GitHub</a>
+            <a href="https://github.com/Arutosio/Hina/blob/master/docs/Home.md" target="_blank" rel="noopener">Docs</a>
+            <a href="https://github.com/Arutosio/Hina/releases" target="_blank" rel="noopener">Releases</a>
+            <a href="https://github.com/Arutosio/Hina/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+          </div>
+          <div class="text-muted-2">Built by Arutosio · .NET 10</div>
+        </div>
+      </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="./JavaScript/main.js"></script>
+  </body>
+</html>

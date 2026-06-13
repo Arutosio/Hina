@@ -104,17 +104,37 @@
   // ---------- scroll → active section ----------
   var sections = Array.prototype.slice.call(document.querySelectorAll(".sec"));
   var active = null;
+
+  // ---------- dot nav ----------
+  var NAV = { hero: "Home", update: "Updates", features: "Features", how: "How", sandbox: "Sandbox", install: "Install", components: "Parts", docs: "Docs", end: "Hi 👋" };
+  var dotnav = document.getElementById("dotnav");
+  var dotFor = {};
+  if (dotnav) {
+    sections.forEach(function (s) {
+      if (!s.id || !NAV[s.id]) return;
+      var b = document.createElement("button");
+      b.type = "button"; b.setAttribute("aria-label", NAV[s.id]);
+      b.innerHTML = '<span class="dot-i"></span><span class="dot-label">' + NAV[s.id] + "</span>";
+      b.addEventListener("click", function () { s.scrollIntoView({ behavior: reduce ? "auto" : "smooth" }); });
+      dotnav.appendChild(b);
+      dotFor[s.id] = b;
+    });
+  }
+  function setActiveDot(s) {
+    if (!s) return;
+    Object.keys(dotFor).forEach(function (id) { dotFor[id].classList.toggle("active", id === s.id); });
+  }
   if ("IntersectionObserver" in window && sections.length) {
     var io = new IntersectionObserver(function (entries) {
       // pick the most-visible intersecting section
       var best = null, bestRatio = 0;
       entries.forEach(function (e) { if (e.isIntersecting && e.intersectionRatio > bestRatio) { best = e.target; bestRatio = e.intersectionRatio; } });
-      if (best && best !== active) { active = best; narrate(best); }
+      if (best && best !== active) { active = best; narrate(best); setActiveDot(best); }
     }, { threshold: [0.35, 0.6] });
     sections.forEach(function (s) { io.observe(s); });
   }
 
   // first line (greet) once the sprite/image is ready-ish
   var first = document.getElementById("hero") || sections[0];
-  if (first) { active = first; narrate(first); }
+  if (first) { active = first; narrate(first); setActiveDot(first); }
 })();

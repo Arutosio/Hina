@@ -27,9 +27,7 @@
       (function () {
         try {
           var q = new URLSearchParams(location.search).get("theme");
-          var t = (q === "dark" || q === "light") ? q
-                : localStorage.getItem("hina-theme")
-                || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+          var t = (q === "dark" || q === "light") ? q : (localStorage.getItem("hina-theme") || "dark");
           document.documentElement.setAttribute("data-theme", t);
         } catch (e) { document.documentElement.setAttribute("data-theme", "light"); }
       })();

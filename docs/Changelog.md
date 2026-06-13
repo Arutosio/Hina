@@ -19,11 +19,14 @@ All notable changes to Hina are documented in this file.
 - **Diagnosis of the prior "all grants denied" symptom:** it was a CI-environment
   artifact, not a code bug. A non-interactive / service session (the GitHub
   `windows-latest` runner, Windows Server services, session 0) creates the AppContainer
-  without error but the kernel silently ignores its runtime DACL grants. The backend now
-  gates on `Environment.UserInteractive` and falls through to NoOp (runs unsandboxed with a
-  one-time warning) in those contexts, so it never launches an app that cannot read its
-  own files. The `windows-sandbox` CI probe SKIP-passes there and runs the strict check
-  only on an interactive desktop.
+  without error but the kernel silently ignores its runtime DACL grants. The backend screens
+  true session-0 service contexts via `Environment.UserInteractive` (NoOp + one-time warning
+  there, so it never launches an app that cannot read its own files). That screen is partial:
+  some windowed-but-headless contexts (notably the GitHub `windows-latest` CI runner) still
+  report `UserInteractive == true` and reach the backend with grants ignored — the
+  `windows-sandbox` CI probe covers those by SKIP-ing on `$env:CI` / `$env:GITHUB_ACTIONS` and
+  running the strict `READ=0 WRITE=1` check only on a real interactive desktop, which is the
+  supported enforcement target.
 - `sandboxEnforceable` in `InstallService` now includes Windows, so the install-time
   disclosure reports "runs sandboxed" on Windows desktops.
 

@@ -32,9 +32,10 @@ namespace Hina.PackageManager.Sandbox
     // Windows (gated by IsSupported + the OperatingSystem guard in Launch).
     //
     // Fail-soft, like the other backends: any setup failure logs a warning and runs the
-    // app directly (unsandboxed) — a sandbox problem never blocks a launch. Non-interactive
-    // sessions (where AppContainer grants are silently ignored) never reach this class —
-    // SandboxLauncherFactory gates on Environment.UserInteractive and returns NoOp there.
+    // app directly (unsandboxed) — a sandbox problem never blocks a launch. SandboxLauncherFactory
+    // screens true session-0 service contexts via Environment.UserInteractive (NoOp there); note
+    // that screen is PARTIAL — some windowed-but-headless contexts (e.g. CI runners) still report
+    // UserInteractive == true and reach this class with AppContainer grants silently ignored.
     //
     // System DLL dirs (System32, WinSxS, the GAC) already carry an ALL APPLICATION PACKAGES
     // ACE granting read+execute to every AppContainer, so we deliberately do NOT ACL them

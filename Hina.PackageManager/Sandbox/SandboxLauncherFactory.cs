@@ -30,12 +30,15 @@ namespace Hina.PackageManager.Sandbox
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                // AppContainer runtime DACL grants are only honoured in an interactive
-                // desktop session. In a non-interactive / service context (session 0, the
-                // GitHub windows-latest CI runner, Windows Server services) the lowbox is
-                // created without error but every grant is silently ignored, so the app
-                // would launch unable to read its own files. Don't claim enforcement there —
-                // fall through to NoOp (runs unsandboxed + one-time warning) instead.
+                // AppContainer runtime DACL grants are honoured in a normal interactive
+                // desktop session (the supported enforcement target). Environment.UserInteractive
+                // screens out true session-0 service contexts (no window station), where the
+                // lowbox is created without error but every grant is silently ignored — there we
+                // fall through to NoOp (runs unsandboxed + one-time warning) rather than launch an
+                // app denied its own files. NOTE this screen is PARTIAL: some windowed-but-headless
+                // contexts (notably the GitHub windows-latest CI runner) still report
+                // UserInteractive == true and reach the backend with grants ignored; the
+                // windows-sandbox CI probe covers those by SKIP-ing on $env:CI.
                 if (Environment.UserInteractive)
                 {
                     WindowsSandbox windows = new WindowsSandbox(logger);

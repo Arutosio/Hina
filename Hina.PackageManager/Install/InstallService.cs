@@ -254,15 +254,15 @@ namespace Hina.PackageManager.Install
 
         // Tell the user exactly what filesystem scope a sandboxed app declares, with extra
         // emphasis on the unrestricted "host" escape hatch. `enforceable` is false where the
-        // platform can't enforce (Windows — no working backend yet; or an old Linux kernel
-        // without Landlock) — there the scope is declared but NOT applied, so we say so plainly
-        // instead of implying isolation that won't happen.
+        // platform can't enforce (an old Linux kernel without Landlock, or a Windows session that
+        // can't honour AppContainer) — there the scope is declared but NOT applied, so we say so
+        // plainly instead of implying isolation that won't happen.
         private void DiscloseSandbox(SandboxSpec sandbox, bool enforceable)
         {
             if (!enforceable)
             {
                 _logger.LogWarning(
-                    "This app DECLARES a filesystem sandbox, but Hina does not enforce sandboxing on this OS yet. " +
+                    "This app DECLARES a filesystem sandbox, but Hina cannot enforce sandboxing in this environment. " +
                     "The app will run with FULL user privileges (no isolation). Its declared scope:");
             }
             else

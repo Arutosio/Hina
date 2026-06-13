@@ -4,6 +4,29 @@ All notable changes to Hina are documented in this file.
 
 ---
 
+## v1.6.0 — Windows filesystem sandbox (AppContainer)
+
+### Windows sandbox now enforced
+
+- **Windows joins Linux and macOS as a sandbox-enforcing platform.** The AppContainer
+  (lowbox) backend (`WindowsSandbox`) is now selected by `SandboxLauncherFactory` on
+  Windows 8+, so a sandboxed app's shortcut routes through `hina run` and launches inside
+  an AppContainer with only its declared filesystem scope granted (per-app package SID
+  DACL ACEs) and, when `network: true` is not declared, the `internetClient` capability
+  withheld. Verified on a real Windows 11 desktop: the probe reports `READ=0 WRITE=1`
+  (ungranted path denied, granted path writable) and an outbound TCP connect is allowed
+  with network and denied with `--deny-network`.
+- **Diagnosis of the prior "all grants denied" symptom:** it was a CI-environment
+  artifact, not a code bug. A non-interactive / service session (the GitHub
+  `windows-latest` runner, Windows Server services, session 0) creates the AppContainer
+  without error but the kernel silently ignores its runtime DACL grants. The backend now
+  gates on `Environment.UserInteractive` and falls through to NoOp (runs unsandboxed with a
+  one-time warning) in those contexts, so it never launches an app that cannot read its
+  own files. The `windows-sandbox` CI probe SKIP-passes there and runs the strict check
+  only on an interactive desktop.
+- `sandboxEnforceable` in `InstallService` now includes Windows, so the install-time
+  disclosure reports "runs sandboxed" on Windows desktops.
+
 ## v1.5.0 — shared files across platform variants
 
 Test suite: 629 → 650 tests.

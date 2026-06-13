@@ -196,14 +196,14 @@ namespace Hina.PackageManager.Install
 
                 // [12] Shell entries. Sandboxed apps launch via `hina run` so the
                 // filesystem sandbox is installed before the app process starts — enforced on
-                // Linux (Landlock) and macOS (sandbox-exec). On an OS without a working backend
-                // (Windows — its AppContainer backend is implemented but unverified, see
-                // WindowsSandbox) the launchOverride is ignored (the app launches directly), so
-                // we must NOT route through `hina run` (it would gain nothing) and we must tell
-                // the user the sandbox is not enforced.
+                // Linux (Landlock), macOS (sandbox-exec) and Windows (AppContainer). On an OS
+                // without a working backend the launchOverride is ignored (the app launches
+                // directly), so we must NOT route through `hina run` (it would gain nothing) and
+                // we must tell the user the sandbox is not enforced.
                 bool sandboxRequested = descriptor.Sandbox?.Enabled == true;
                 bool sandboxEnforceable = RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
-                    || RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+                    || RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                    || RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
                 if (sandboxRequested)
                 {
                     DiscloseSandbox(descriptor.Sandbox!, sandboxEnforceable);

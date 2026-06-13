@@ -1,17 +1,19 @@
-# Windows sandbox backend — AppContainer (implemented, NOT verified)
+# Windows sandbox backend — AppContainer (implemented and verified)
 
-Status: **implemented but unverified — Windows ships as NoOp.** The AppContainer
-backend (`Hina.PackageManager/Sandbox/WindowsSandbox.cs`, pure policy in
-`WindowsAppContainerPolicy.cs`) is written and its ACL plumbing is proven correct on
-CI, but the lowbox it creates honors no runtime access grant, so
-`SandboxLauncherFactory` deliberately does **not** select it. On Windows a sandboxed
-app runs unsandboxed with a one-time warning, exactly like before. This note records
-the design and the investigation so the work can be resumed on a real Windows box.
+Status: **implemented, verified, and wired in.** The AppContainer backend
+(`Hina.PackageManager/Sandbox/WindowsSandbox.cs`, pure policy in
+`WindowsAppContainerPolicy.cs`) is selected by `SandboxLauncherFactory` on Windows 8+.
+On a real Windows 11 desktop (build 26200) the probe reports `READ=0 WRITE=1` — an
+ungranted "secret" dir is denied while a dir granted the container's package SID is
+writable.
 
-Why it can't be finished here: the dev host is macOS, so AppContainer cannot be run
-or debugged locally — the only feedback channel is the `windows-latest` CI probe
-(`scripts/windows-sandbox-probe.ps1`), which gives logs but no interactive debugging
-(no Process Explorer, no breakpoints).
+The earlier "honors no runtime grant" symptom (below) was a **CI-environment artifact**,
+not a code bug: the GitHub `windows-latest` runner (Windows Server 2025, non-interactive
+service session) cannot honour AppContainer runtime grants. On such a session Hina fails
+soft to a direct launch with a warning, and the probe SKIP-passes; on a real desktop it
+PASSes. Originally this could not be diagnosed because the dev host was macOS — the only
+feedback was the headless CI probe. Diagnosed 2026-06-13 on a real Windows box: a sandboxed
+`whoami` confirmed a Low-integrity lowbox token, and the probe confirmed grants are honoured.
 
 ## Design: low-privilege AppContainer
 
@@ -33,7 +35,7 @@ or debugged locally — the only feedback channel is the `windows-latest` CI pro
 System DLL dirs are deliberately not ACL'd — they already carry an `ALL APPLICATION
 PACKAGES` ACE granting read+execute to every container.
 
-## What the CI probe proved
+## Historical: what the CI probe showed (now understood as a CI-runner limitation)
 
 On a real `windows-latest` runner, with `icacls` + `--verbose` logging:
 
@@ -52,24 +54,22 @@ On a real `windows-latest` runner, with `icacls` + `--verbose` logging:
   Every combination was denied; only the System32 baseline (system-level
   `ALL APPLICATION PACKAGES`) was reachable.
 
-## Leading hypothesis / next step
+## Resolution
 
-The pattern — only the system baseline reachable, every runtime grant ignored — points
-to an **over-restricted token**: most likely the AppContainer process is running at an
-integrity level below the objects (so all write-up is blocked), and/or the lowbox
-restricting-SID set isn't being satisfied the way the DACL grants expect. Confirming
-this needs **Process Explorer on a real Windows machine** to read the live process's
-integrity level and token groups/restricting-SIDs, then adjust token creation
-accordingly. Reference implementations that work (e.g. Chromium's AppContainer sandbox)
-do access user-profile paths, so this is a fixable wiring issue, not a Windows limit.
+Diagnosed on a real Windows 11 desktop. A sandboxed `whoami /all` showed the child at
+**Low integrity** with a lowbox token; the probe then reported `READ=0 WRITE=1` — the
+ungranted secret denied (deny-by-default isolation active) and the package-SID-granted
+dir writable (the grant is honoured). So the code was correct all along; the CI runner's
+non-interactive/service session is simply a context where AppContainer runtime grants do
+not apply. The backend is now selected by the factory and Windows is included in
+`sandboxEnforceable`, so sandboxed apps route through `hina run`.
 
-Until then, the honest NoOp + install-time warning stays — shipping the backend would
-launch apps that cannot read their own install directory, strictly worse than NoOp.
-
-## Verification harness (ready for when it works)
+## Verification harness
 
 `scripts/windows-sandbox-probe.ps1` + the `windows-sandbox` job in
 `.github/workflows/dotnet.yml`: a child runs under the sandbox granted only a `docs:rw`
 dir (not a `secret` dir) and must be denied the secret read + allowed the docs write
-(`READ=0 WRITE=1`). It SKIP-passes while Windows is NoOp; wire `WindowsSandbox` into the
-factory and it becomes the real enforcement proof with no other changes.
+(`READ=0 WRITE=1`). On the CI runner (which can't honour AppContainer) hina fails soft and
+the probe SKIP-passes; on a real desktop session it runs the full enforcement check and
+PASSes. To reproduce locally: build `Hina.CLI` and run
+`./scripts/windows-sandbox-probe.ps1 -HinaExe <path-to-Hina.CLI.exe>`.

@@ -292,10 +292,10 @@ The remaining capabilities are **not enforced** — surfaced to the user (by
 Hina does not provide.
 
 **What is enforced where** — the **filesystem** scope and the **`network`**
-capability are enforced on **Linux** (via Landlock; network needs kernel 6.7+) and
-**macOS** (via `sandbox-exec`). On Windows the declared scope is shown at install
-time with a warning that it is *not* applied (an AppContainer backend is implemented
-but unverified). See the [Sandboxing](#sandboxing) section for the full model.
+capability are enforced on **Linux** (via Landlock; network needs kernel 6.7+),
+**macOS** (via `sandbox-exec`) and **Windows 8+** (via AppContainer). A non-interactive
+Windows session (e.g. CI) that cannot honour AppContainer falls back to a direct launch
+with a warning. See the [Sandboxing](#sandboxing) section for the full model.
 
 ### Validation rules
 
@@ -383,16 +383,17 @@ deliberately narrow:
 - **macOS** enforces via `sandbox-exec` (Seatbelt): `hina run` generates a profile
   from the declared scope and launches the app under `sandbox-exec -f <profile>`,
   so its shortcut routes through `hina run` just like Linux.
-- **Windows does not enforce the sandbox yet.** An AppContainer backend is
-  implemented but unverified (see `docs/Windows-Sandbox-Design.md`), so Windows uses
-  NoOp: installing a sandboxed app there warns that it runs with full user
-  privileges, and its shortcut launches the binary directly — it does **not** route
-  through `hina run` (which would gain nothing).
-- **Old kernel / no Landlock / no sandbox-exec / Windows** → a no-op plus a one-time
-  warning. A missing or too-old sandbox backend never blocks a launch.
-- **`network` is enforced on Linux 6.7+ and macOS.** A sandboxed app that doesn't
-  declare `network: true` has outbound network denied (Landlock ABI ≥ 4 / Seatbelt);
-  on older Linux kernels and other OSes it falls back to declared-only. `audio`,
+- **Windows 8+** enforces via AppContainer (lowbox): `hina run` creates a per-app
+  AppContainer, grants its package SID the declared scope (DACL ACEs), and launches the
+  app under a `SECURITY_CAPABILITIES` token, so its shortcut routes through `hina run`
+  just like Linux/macOS (see `docs/Windows-Sandbox-Design.md`). A non-interactive/service
+  session (e.g. CI) that cannot honour AppContainer falls back to a direct launch + warning.
+- **Old kernel / no Landlock / no sandbox-exec / non-interactive Windows** → a no-op
+  plus a one-time warning. A missing or unavailable sandbox backend never blocks a launch.
+- **`network` is enforced on Linux 6.7+, macOS and Windows.** A sandboxed app that doesn't
+  declare `network: true` has outbound network denied (Landlock ABI ≥ 4 / Seatbelt /
+  AppContainer `internetClient` capability withheld);
+  on older Linux kernels it falls back to declared-only. `audio`,
   `microphone`, `screen`, `input`, and `devices` remain declared-only — surfaced to
   the user as *"declared — not enforced"*; nothing restricts them yet.
 - **No portals.** There are no dynamic file-picker grants. Scope is the static set

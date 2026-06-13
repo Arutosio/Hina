@@ -5,10 +5,17 @@
 > to be exhaustive so a fresh Claude Code session (or a human) can pick it up with
 > minimal doubt. **Tell the new session: "read `docs/Windows-Sandbox-Resume.md`".**
 >
-> One-line status: **the AppContainer backend is fully implemented and its ACL plumbing
-> is proven correct on real Windows CI, but the lowbox process it creates is denied all
-> runtime-granted access; Windows therefore ships as NoOp until this is debugged on a
-> real Windows machine with Process Explorer.**
+> **RESOLVED (2026-06-13).** Diagnosed on a real Windows 11 desktop (build 26200): the
+> backend works — the probe reports `READ=0 WRITE=1` (ungranted secret denied, package-SID
+> grant honoured). The earlier "all grants denied" was a **CI-environment artifact**: the
+> GitHub `windows-latest` runner (Windows Server 2025, non-interactive/service session)
+> cannot honour AppContainer runtime grants. Not a code bug. The backend is now wired in
+> (`SandboxLauncherFactory` + `sandboxEnforceable |= Windows`); the probe SKIP-passes on CI
+> and PASSes on a desktop. The historical investigation below is kept for reference.
+>
+> One-line status (historical): the AppContainer backend is fully implemented and its ACL
+> plumbing is proven correct on real Windows CI, but the lowbox process it creates is denied
+> all runtime-granted access on the CI runner.
 
 ---
 

@@ -276,8 +276,8 @@ but over-reaching app sees only the paths it declares.
 
 | Surface | Status |
 |---------|--------|
-| **Filesystem scope** | Enforced on **Linux** via Landlock (unprivileged, kernel ≥ 5.13, no root / no bubblewrap) and on **macOS** via `sandbox-exec` (Seatbelt). On **Windows** it is **declared but NOT enforced** — the app runs with full user privileges (warned at install time). An AppContainer backend is implemented but unverified (see `docs/Windows-Sandbox-Design.md`), so Windows stays NoOp. |
-| **`network` capability** | Enforced on **Linux 6.7+** (Landlock ABI ≥ 4) and **macOS** (Seatbelt `deny default` network): when a sandboxed app does not declare `network: true`, outbound network is denied. On older Linux kernels (ABI < 4) and Windows it is declared-only (a log line notes it is not enforced). |
+| **Filesystem scope** | Enforced on **Linux** via Landlock (unprivileged, kernel ≥ 5.13, no root / no bubblewrap), on **macOS** via `sandbox-exec` (Seatbelt), and on **Windows 8+** via AppContainer (lowbox), verified on a real desktop (see `docs/Windows-Sandbox-Design.md`). Note: non-interactive/service sessions (e.g. the GitHub `windows-latest` CI runner) cannot honour AppContainer runtime grants, so there Hina fails soft to a direct spawn and warns it runs unsandboxed. |
+| **`network` capability** | Enforced on **Linux 6.7+** (Landlock ABI ≥ 4), **macOS** (Seatbelt `deny default` network) and **Windows** (AppContainer: the `internetClient` capability is withheld when `network: true` is not declared): outbound network is denied for a sandboxed app that does not declare `network: true`. On older Linux kernels (ABI < 4) it is declared-only (a log line notes it is not enforced). |
 | **Other capabilities** (`audio`, `microphone`, `screen`, `input`, `devices`) | **Declared-only, never enforced yet.** `hina perms` shows them as "declared — not enforced". No portals (PipeWire / Wayland / per-OS device policy) are wired up. |
 
 When a descriptor carries no `sandbox` block (or `sandbox.enabled` is `false`), the
@@ -334,17 +334,18 @@ and applies it before the app starts:
 - **macOS**: generates a Seatbelt profile and launches the app under
   `sandbox-exec -f <profile>`.
 
-On **Windows** the shortcut launches the app directly (no working backend yet — an
-AppContainer backend is implemented but unverified, see
-`docs/Windows-Sandbox-Design.md`). If the Linux kernel is too old for Landlock,
-`sandbox-exec` is unavailable, or backend setup fails for any reason, enforcement
-degrades to a **no-op with a one-time warning** and the launch is never blocked.
+On **Windows 8+** the shortcut routes through `hina run`, which launches the app inside
+an AppContainer (see `docs/Windows-Sandbox-Design.md`). If the Linux kernel is too old for
+Landlock, `sandbox-exec` is unavailable, the session cannot honour AppContainer (a
+non-interactive/service context such as CI), or backend setup fails for any reason,
+enforcement degrades to a **no-op with a one-time warning** and the launch is never blocked.
 
 ### Install-Time Disclosure
 
 When a sandboxed app is installed, Hina discloses the declared scope. On a host
-where the sandbox cannot be enforced (Windows, or a Linux kernel too old for
-Landlock), it warns plainly that the app **runs with FULL user privileges (no
+where the sandbox cannot be enforced (a Linux kernel too old for Landlock, or a
+non-interactive Windows session that cannot honour AppContainer), it warns plainly
+that the app **runs with FULL user privileges (no
 isolation)** before listing the declared scope, so the user is never misled into
 thinking isolation is in effect.
 

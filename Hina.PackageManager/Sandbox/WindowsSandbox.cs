@@ -9,23 +9,16 @@ using Microsoft.Extensions.Logging;
 
 namespace Hina.PackageManager.Sandbox
 {
-    // EXPERIMENTAL — NOT WIRED IN. SandboxLauncherFactory deliberately does NOT select this
-    // backend; Windows uses NoOp. It is kept as a documented scaffold for whoever resumes the
-    // work on a real Windows box (the dev host is macOS, so AppContainer cannot be exercised
-    // or debugged locally — only via the windows-latest CI probe).
+    // Windows filesystem sandbox via AppContainer (lowbox). Wired in by SandboxLauncherFactory.
     //
-    // STATUS: the policy + ACL plumbing are correct — the windows-latest probe proved (via
-    // icacls) that every grant lands on disk: the container SID gets (RX,W) on the granted
-    // dir and FILE_TRAVERSE on each ancestor, with the user/Admin/SYSTEM ACEs preserved.
-    // The container also correctly DENIES an ungranted secret (isolation works). BUT the
-    // lowbox honored NO runtime grant for actual access: a granted dir was unreadable AND
-    // unwritable whether granted the specific package SID OR ALL APPLICATION PACKAGES (the
-    // group the token demonstrably has — it runs cmd.exe from System32 via it), with the
-    // object integrity lowered to Low or not, on a deep profile path OR a shallow C:\ path —
-    // all denied; only the System32 baseline was reachable. That points to an over-restricted
-    // token (likely the process integrity / lowbox restricting-SID set), which needs Process
-    // Explorer on a real Windows machine to pin down. Until then, shipping this would launch
-    // apps that cannot read their own install dir — strictly worse than the honest NoOp.
+    // STATUS: verified working on a real Windows 11 desktop (build 26200): the probe
+    // (scripts/windows-sandbox-probe.ps1) reports READ=0 WRITE=1 — the container is denied an
+    // ungranted secret dir (deny-by-default isolation) yet can write a dir granted the package
+    // SID. The earlier "all grants denied" symptom reproduced ONLY on the GitHub windows-latest
+    // runner (Windows Server 2025, non-interactive session): AppContainer runtime grants do not
+    // take effect in that headless/service context. It is an environment limitation of the CI
+    // runner, not a code bug — hence the probe SKIP-passes there and is run for real on a
+    // desktop. The pure policy (WindowsAppContainerPolicy) and the ACL plumbing below are correct.
     //
     // Design (for reference): an AppContainer process is denied every securable object unless
     // its DACL grants the per-app AppContainer SID (or a capability SID, or ALL APPLICATION
@@ -39,8 +32,9 @@ namespace Hina.PackageManager.Sandbox
     // Windows (gated by IsSupported + the OperatingSystem guard in Launch).
     //
     // Fail-soft, like the other backends: any setup failure logs a warning and runs the
-    // app directly (unsandboxed) — a sandbox problem never blocks a launch. Real isolation
-    // is proven by the windows-latest CI probe, which cannot run on the dev host.
+    // app directly (unsandboxed) — a sandbox problem never blocks a launch. Non-interactive
+    // sessions (where AppContainer grants are silently ignored) never reach this class —
+    // SandboxLauncherFactory gates on Environment.UserInteractive and returns NoOp there.
     //
     // System DLL dirs (System32, WinSxS, the GAC) already carry an ALL APPLICATION PACKAGES
     // ACE granting read+execute to every AppContainer, so we deliberately do NOT ACL them

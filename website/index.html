@@ -24,6 +24,17 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./Styles/hina.css" />
+    <script>
+      // Set theme before paint to avoid a flash. Saved choice wins, else OS preference.
+      (function () {
+        try {
+          var q = new URLSearchParams(location.search).get("theme");
+          var t = (q === "dark" || q === "light") ? q : localStorage.getItem("hina-theme");
+          if (!t) t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body data-bs-spy="scroll" data-bs-target="#navbar" data-bs-offset="120" tabindex="0">
     <!-- floating kawaii blobs -->
@@ -46,7 +57,10 @@
             <li class="nav-item"><a class="nav-link" href="#install">Install</a></li>
             <li class="nav-item"><a class="nav-link" href="#components">Components</a></li>
             <li class="nav-item"><a class="nav-link" href="#docs">Docs</a></li>
-            <li class="nav-item ms-lg-2">
+            <li class="nav-item ms-lg-2 d-flex align-items-center gap-2">
+              <button id="theme-toggle" class="theme-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
+                <span class="theme-icon-light">🌙</span><span class="theme-icon-dark">☀️</span>
+              </button>
               <a class="btn btn-star btn-sm" href="https://github.com/Arutosio/Hina" target="_blank" rel="noopener">★ GitHub</a>
             </li>
           </ul>

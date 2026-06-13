@@ -2,6 +2,17 @@
 (function () {
   "use strict";
 
+  // --- dark / light theme toggle (initial theme set inline in <head>) ---
+  var themeBtn = document.getElementById("theme-toggle");
+  if (themeBtn) {
+    themeBtn.addEventListener("click", function () {
+      var root = document.documentElement;
+      var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("hina-theme", next); } catch (e) {}
+    });
+  }
+
   // --- sticky nav shadow ---
   var nav = document.getElementById("navbar");
   var onScroll = function () { if (nav) nav.classList.toggle("scrolled", window.scrollY > 12); };

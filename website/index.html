@@ -3,20 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>Hina — chat with her ✨</title>
-    <meta name="description" content="Chat with Hina: an open-source rsync-like patcher for game clients & desktop apps, plus a cross-platform package manager with Flatpak-style sandboxing. Ask her to install, or explain delta patching." />
+    <title>Hina — your update spirit ✨</title>
+    <meta name="description" content="Meet Hina, a little spirit who guides you through her project: an open-source rsync-like patcher for game clients & desktop apps, plus a cross-platform package manager with Flatpak-style sandboxing." />
     <meta name="keywords" content="Hina, patcher, rsync, package manager, delta update, sandbox, AppContainer, Landlock, Ed25519, .NET, NativeAOT, open source" />
     <link rel="canonical" href="https://hina.arutosio.com/" />
     <link rel="icon" href="./Images/favicon.ico" sizes="any" />
 
-    <meta property="og:title" content="Hina — chat with her ✨" />
-    <meta property="og:description" content="Say hi to Hina, the rsync-style patcher & package manager. Ask her to install, explain delta patching, or show her docs." />
+    <meta property="og:title" content="Hina — your update spirit ✨" />
+    <meta property="og:description" content="A little spirit who walks you through delta patching, sandboxing and install — for game clients and desktop apps. Open source, .NET 10." />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://hina.arutosio.com/" />
     <meta property="og:image" content="https://hina.arutosio.com/Images/og-image.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Hina — chat with her ✨" />
-    <meta name="twitter:description" content="Chat with Hina, the rsync-style patcher & cross-platform package manager." />
+    <meta name="twitter:title" content="Hina — your update spirit ✨" />
+    <meta name="twitter:description" content="A guiding spirit for the rsync-style patcher & package manager." />
     <meta name="twitter:image" content="https://hina.arutosio.com/Images/og-image.png" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -24,7 +24,6 @@
     <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./Styles/hina.css" />
     <script>
-      // Theme before paint (no flash). ?theme= wins, then saved, then OS, default light (friendly chat).
       (function () {
         try {
           var q = new URLSearchParams(location.search).get("theme");
@@ -39,45 +38,218 @@
   <body>
     <div class="blobs" aria-hidden="true"><span></span><span></span><span></span></div>
 
-    <main class="chat" aria-label="Chat with Hina">
-      <header class="chat-head">
-        <img class="ch-avatar" src="./Images/hina-logo.png" alt="Hina" width="44" height="44" />
-        <div class="ch-id">
-          <div class="ch-name">Hina</div>
-          <div class="ch-status"><span class="online"></span> online · replies instantly</div>
+    <!-- top bar -->
+    <nav class="topbar">
+      <a class="brand" href="#hero"><img src="./Images/hina-logo.png" alt="" width="34" height="34" /> <span>Hina</span></a>
+      <div class="top-actions">
+        <a class="t-btn" href="#install">Install</a>
+        <a class="t-btn" href="https://github.com/Arutosio/Hina" target="_blank" rel="noopener">★ GitHub</a>
+        <button id="theme-toggle" class="t-btn icon" type="button" aria-label="Toggle light/dark" title="Theme">
+          <span class="theme-icon-light">🌙</span><span class="theme-icon-dark">☀️</span>
+        </button>
+      </div>
+    </nav>
+
+    <main>
+      <!-- HERO -->
+      <section id="hero" class="sec hero" data-expr="happy"
+        data-line="Hi! I'm Hina ✨ I'll guide you through everything — just keep scrolling!">
+        <div class="sec-inner">
+          <span class="pill"><span class="dot"></span> v1.6.0 · Apache-2.0 · .NET 10</span>
+          <h1>Patch only <span class="grad">what changed</span>.</h1>
+          <p class="lead">An open-source, <b>rsync-like patcher</b> for game clients &amp; desktop apps —
+            and a <b>cross-platform package manager</b> with Flatpak-style sandboxing. Let me show you around!</p>
+          <div class="cta">
+            <a href="#install" class="btn btn-primary">Get started</a>
+            <a href="#how" class="btn btn-ghost">How it works</a>
+          </div>
+          <div class="scroll-hint">scroll ↓</div>
         </div>
-        <div class="ch-actions">
-          <button id="theme-toggle" class="ch-btn" type="button" aria-label="Toggle light/dark" title="Toggle theme">
-            <span class="theme-icon-light">🌙</span><span class="theme-icon-dark">☀️</span>
-          </button>
-          <a class="ch-btn" href="https://github.com/Arutosio/Hina" target="_blank" rel="noopener" title="GitHub" aria-label="GitHub">★</a>
+      </section>
+
+      <!-- UPDATE / WHAT -->
+      <section id="update" class="sec" data-expr="point"
+        data-line="My favorite trick: I update apps by shipping only the chunks that changed. 📦">
+        <div class="sec-inner">
+          <h2>Tiny updates, every time</h2>
+          <p class="lead">I compare your local files with rolling checksums and download <b>only the blocks that differ</b>,
+            then rebuild &amp; verify each file in place. A 50&nbsp;GB game can update over a thin pipe.</p>
+          <div class="two">
+            <div class="card"><div class="ic">⟳</div><h3>Delta patcher</h3><p>Content-defined chunking keeps dedup high even when files shift.</p></div>
+            <div class="card"><div class="ic">📦</div><h3>Package manager</h3><p>Install, update &amp; remove apps from a signed descriptor.</p></div>
+          </div>
         </div>
-      </header>
+      </section>
 
-      <div class="chat-log" id="log" role="log" aria-live="polite" aria-atomic="false"></div>
+      <!-- FEATURES -->
+      <section id="features" class="sec" data-expr="normal"
+        data-line="Here's everything in my toolbox 🧰 — have a look!">
+        <div class="sec-inner">
+          <h2>What I can do</h2>
+          <div class="grid">
+            <div class="card sm"><h4>⚡ Delta patching</h4><p>Transfer only changed blocks.</p></div>
+            <div class="card sm"><h4>🧬 Content-defined chunking</h4><p>Dedup across inserts &amp; deletes.</p></div>
+            <div class="card sm"><h4>✍️ Ed25519 signing</h4><p>Manifests verified before patching.</p></div>
+            <div class="card sm"><h4>🔎 Hash verification</h4><p>Per-chunk &amp; per-file integrity.</p></div>
+            <div class="card sm"><h4>🗜️ Brotli storage</h4><p>Compressed, content-addressed chunks.</p></div>
+            <div class="card sm"><h4>🔁 Retry + backoff</h4><p>Recovers from transient errors.</p></div>
+            <div class="card sm"><h4>↩️ Backup &amp; rollback</h4><p>Instant rollback on failure.</p></div>
+            <div class="card sm"><h4>🧵 Concurrent downloads</h4><p>Configurable parallelism.</p></div>
+            <div class="card sm"><h4>🌐 Static hosting</h4><p>Bundled host, or any CDN/Nginx/S3.</p></div>
+          </div>
+        </div>
+      </section>
 
-      <div class="chat-quick" id="chips" aria-label="Quick replies"></div>
+      <!-- HOW -->
+      <section id="how" class="sec" data-expr="point"
+        data-line="Build once, ship chunks. Clients grab only what they're missing. 🚚">
+        <div class="sec-inner">
+          <h2>How it works</h2>
+          <div class="two">
+            <div class="card">
+              <h3 class="cyan">Build pipeline</h3>
+              <ol class="steps">
+                <li><b>hina-builder</b> scans &amp; chunks your build</li>
+                <li>writes <b>manifest.json</b> (hashes, chunk map, signature)</li>
+                <li>writes <b>chunks/</b> — Brotli blocks by content hash</li>
+                <li>upload to Hina.Host / Nginx / S3 / CDN</li>
+              </ol>
+            </div>
+            <div class="card">
+              <h3 class="cyan">Client patch</h3>
+              <ol class="steps">
+                <li>fetch manifest → verify Ed25519 signature</li>
+                <li>rolling-checksum scan of local files</li>
+                <li>download missing chunks (concurrent · retry)</li>
+                <li>rebuild → verify → swap (or rollback)</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </section>
 
-      <form class="chat-compose" id="form" autocomplete="off">
-        <input id="cmd" name="cmd" type="text" autocomplete="off" autocapitalize="sentences" spellcheck="false"
-               placeholder="Message Hina…  (try: install)" aria-label="Message Hina" />
-        <button class="send" type="submit" aria-label="Send">➤</button>
-      </form>
+      <!-- SANDBOX -->
+      <section id="sandbox" class="sec" data-expr="surprised"
+        data-line="And before an app runs, I lock it to just its own files. 🛡️">
+        <div class="sec-inner">
+          <h2>Sandboxed by default</h2>
+          <p class="lead">A sandboxed app gets only its declared files &amp; network — enforced <b>before it starts</b>.</p>
+          <div class="grid three">
+            <div class="card sm"><h4>🐧 Linux</h4><p>Landlock (unprivileged, no root).</p></div>
+            <div class="card sm"><h4>🍎 macOS</h4><p>Seatbelt (sandbox-exec).</p></div>
+            <div class="card sm"><h4>🪟 Windows</h4><p>AppContainer <span class="tag-new">new 1.6</span></p></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- INSTALL -->
+      <section id="install" class="sec" data-expr="happy"
+        data-line="Ready? Pop me on your machine in one line 👇">
+        <div class="sec-inner">
+          <h2>Install me</h2>
+          <div class="install">
+            <div class="os-tabs" role="tablist">
+              <button class="os-tab active" data-os="unix" role="tab">Linux / macOS</button>
+              <button class="os-tab" data-os="ps" role="tab">Windows · PowerShell</button>
+              <button class="os-tab" data-os="scoop" role="tab">Scoop</button>
+              <button class="os-tab" data-os="msi" role="tab">MSI</button>
+            </div>
+            <div class="os-panel active" data-os="unix">
+              <div class="code"><span class="c">$</span><code id="cmd-unix">curl -fsSL https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.sh | bash</code><button class="copy" data-copy="cmd-unix">copy</button></div>
+              <p class="note">Lands in <code>~/.local/bin/hina</code> · verifies SHA-256 first.</p>
+            </div>
+            <div class="os-panel" data-os="ps">
+              <div class="code"><span class="c">&gt;</span><code id="cmd-ps">iwr -useb https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.ps1 | iex</code><button class="copy" data-copy="cmd-ps">copy</button></div>
+              <p class="note">Installs to <code>%LOCALAPPDATA%\Hina\bin</code> · no admin.</p>
+            </div>
+            <div class="os-panel" data-os="scoop">
+              <div class="code"><span class="c">&gt;</span><code id="cmd-scoop">scoop install https://github.com/Arutosio/Hina/releases/latest/download/hina.json</code><button class="copy" data-copy="cmd-scoop">copy</button></div>
+              <p class="note">Auto-updates with <code>scoop update</code>.</p>
+            </div>
+            <div class="os-panel" data-os="msi">
+              <p class="note">Prefer a double-click installer? Grab the per-user MSI (x64/arm64):</p>
+              <a class="btn btn-primary" href="https://github.com/Arutosio/Hina/releases/latest" target="_blank" rel="noopener">Download from Releases ↗</a>
+            </div>
+            <p class="verify">Then run <code>hina --help</code> · verify with the published <code>.sha256</code> sums.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- COMPONENTS -->
+      <section id="components" class="sec" data-expr="normal"
+        data-line="I'm made of five neat little parts 🧩">
+        <div class="sec-inner">
+          <h2>Five parts</h2>
+          <div class="grid">
+            <div class="card sm"><h4 class="mono">hina (CLI)</h4><p>install · update · run · perms · host</p></div>
+            <div class="card sm"><h4 class="mono">Hina.PackageManager</h4><p>install engine, descriptors, signatures, sandboxes</p></div>
+            <div class="card sm"><h4 class="mono">Hina.Builder</h4><p>build dir → manifest + chunk store</p></div>
+            <div class="card sm"><h4 class="mono">Hina.Host</h4><p>ASP.NET Core static host (rate-limit, health)</p></div>
+            <div class="card sm"><h4 class="mono">Hina.Core</h4><p>chunking, checksum, verify, retry library</p></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- DOCS -->
+      <section id="docs" class="sec" data-expr="happy"
+        data-line="Want the deep dives? My docs have it all. 📚">
+        <div class="sec-inner">
+          <h2>Documentation</h2>
+          <div class="docs">
+            <a href="https://github.com/Arutosio/Hina/blob/master/docs/Architecture.md" target="_blank" rel="noopener">Architecture</a>
+            <a href="https://github.com/Arutosio/Hina/blob/master/docs/PackageManager-Guide.md" target="_blank" rel="noopener">Package Manager</a>
+            <a href="https://github.com/Arutosio/Hina/blob/master/docs/CLI-Guide.md" target="_blank" rel="noopener">CLI Guide</a>
+            <a href="https://github.com/Arutosio/Hina/blob/master/docs/Builder-Guide.md" target="_blank" rel="noopener">Builder Guide</a>
+            <a href="https://github.com/Arutosio/Hina/blob/master/docs/Host-Guide.md" target="_blank" rel="noopener">Host Guide</a>
+            <a href="https://github.com/Arutosio/Hina/blob/master/docs/Security.md" target="_blank" rel="noopener">Security</a>
+            <a href="https://github.com/Arutosio/Hina/blob/master/docs/Integration-Guide.md" target="_blank" rel="noopener">Integration</a>
+            <a href="https://github.com/Arutosio/Hina/blob/master/docs/Configuration.md" target="_blank" rel="noopener">Configuration</a>
+            <a href="https://github.com/Arutosio/Hina/blob/master/docs/Troubleshooting.md" target="_blank" rel="noopener">Troubleshooting</a>
+            <a href="https://github.com/Arutosio/Hina/blob/master/docs/Changelog.md" target="_blank" rel="noopener">Changelog</a>
+          </div>
+        </div>
+      </section>
+
+      <!-- FOOTER -->
+      <footer id="end" class="sec footer" data-expr="happy"
+        data-line="That's me! Give me a ⭐ if you like me — bye for now! 💖">
+        <div class="sec-inner">
+          <img src="./Images/hina-logo.png" alt="" width="64" height="64" class="foot-logo" />
+          <h2>Thanks for visiting!</h2>
+          <div class="cta">
+            <a href="#install" class="btn btn-primary">Install Hina</a>
+            <a href="https://github.com/Arutosio/Hina" target="_blank" rel="noopener" class="btn btn-ghost">★ Star on GitHub</a>
+          </div>
+          <p class="foot-meta">Apache-2.0 · .NET 10 · built by Arutosio ·
+            <a href="https://github.com/Arutosio/Hina/blob/master/LICENSE" target="_blank" rel="noopener">License</a></p>
+        </div>
+      </footer>
     </main>
 
+    <!-- COMPANION: Hina the spirit -->
+    <aside id="companion" class="companion" aria-live="polite">
+      <button id="hina-hide" class="hina-hide" type="button" aria-label="Hide Hina">×</button>
+      <div class="hina-bubble">
+        <span class="hina-name">Hina</span>
+        <span class="hina-text" id="hina-text"></span>
+      </div>
+      <div class="hina-stage">
+        <div class="aura"></div>
+        <div class="sparkles" aria-hidden="true"></div>
+        <img id="hina-sprite" class="hina-sprite" src="./Images/hina-happy.png" alt="Hina the spirit"
+             onerror="this.onerror=null;this.src='./Images/hina-logo.png';this.classList.add('is-logo');" />
+      </div>
+    </aside>
+    <button id="hina-show" class="hina-show" type="button" hidden>✨ Hina</button>
+
     <noscript>
-      <div style="max-width:760px;margin:2rem auto;padding:1rem;font-family:system-ui;color:#222">
+      <div style="max-width:760px;margin:2rem auto;padding:1rem;font-family:system-ui">
         <h1>Hina</h1>
-        <p>An open-source, rsync-like patcher for game clients and desktop applications, plus a
-           cross-platform package manager with Flatpak-style sandboxing (Linux Landlock, macOS
-           Seatbelt, Windows AppContainer). Delta updates via rolling checksums, Ed25519-signed
-           manifests, Brotli chunk storage.</p>
-        <h2>Install</h2>
-        <pre>Linux/macOS:  curl -fsSL https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.sh | bash
-Windows:      iwr -useb https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.ps1 | iex
-Scoop:        scoop install https://github.com/Arutosio/Hina/releases/latest/download/hina.json</pre>
-        <p><a href="https://github.com/Arutosio/Hina">GitHub</a> ·
-           <a href="https://github.com/Arutosio/Hina/blob/master/docs/Home.md">Docs</a></p>
+        <p>Open-source rsync-like patcher for game clients & desktop apps + cross-platform package
+           manager with sandboxing (Linux Landlock, macOS Seatbelt, Windows AppContainer).</p>
+        <pre>curl -fsSL https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.sh | bash
+iwr -useb https://raw.githubusercontent.com/Arutosio/Hina/master/scripts/install.ps1 | iex</pre>
+        <p><a href="https://github.com/Arutosio/Hina">GitHub</a> · <a href="https://github.com/Arutosio/Hina/blob/master/docs/Home.md">Docs</a></p>
       </div>
     </noscript>
 

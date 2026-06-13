@@ -372,3 +372,23 @@ jobs:
           name: Hina ${{ steps.version.outputs.tag }}
           generate_release_notes: true
           files: dist/*
+
+      # Retention: keep only the 3 newest stable releases (vMAJOR.MINOR.PATCH); delete
+      # every older stable release AND every pre-release (e.g. the v1.0.0-<hash> dev
+      # snapshots) so the releases page never accumulates stale executables. The just-
+      # created release is one of the 3 kept. `gh release delete` without --cleanup-tag
+      # removes the release + its assets but RETAINS the lightweight git tag, so commit
+      # history stays reachable and a version can be re-released later if needed.
+      - name: Prune old releases (keep latest 3 stable, retain tags)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          mapfile -t all < <(gh release list --limit 200 --json tagName -q '.[].tagName')
+          keep=$(printf '%s\n' "${all[@]}" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V -r | head -3)
+          echo "Keeping latest 3 stable:"; printf '  %s\n' $keep
+          for tag in "${all[@]}"; do
+            if printf '%s\n' "$keep" | grep -qx "$tag"; then continue; fi
+            echo "Deleting release $tag (git tag retained)"
+            gh release delete "$tag" --yes
+          done

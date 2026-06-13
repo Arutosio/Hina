@@ -25,39 +25,47 @@
   function elFrom(html) { var d = document.createElement("div"); d.innerHTML = html; return d.firstElementChild; }
 
   function printUser(cmd) {
-    var row = document.createElement("div");
-    row.className = "row user";
-    row.innerHTML = '<span class="ps"><span class="who">you</span>@local <span style="color:var(--amber)">~</span> <span style="color:var(--pink)">$</span></span> ' + esc(cmd);
-    log.appendChild(row); scroll();
+    var m = document.createElement("div");
+    m.className = "msg user";
+    var b = document.createElement("div");
+    b.className = "bubble"; b.textContent = cmd;
+    m.appendChild(b); log.appendChild(m); scroll();
   }
 
-  function newHinaBubble() {
-    var wrap = document.createElement("div");
-    wrap.className = "hina";
-    var img = document.createElement("img");
-    img.className = "avatar"; img.src = AVATAR; img.alt = "Hina"; img.width = 30; img.height = 30;
+  function typingBubble() {
+    var m = document.createElement("div");
+    m.className = "msg hina";
+    m.innerHTML = '<img class="av" src="' + AVATAR + '" alt="Hina" width="34" height="34">' +
+      '<div class="bubble"><div class="typing"><span></span><span></span><span></span></div></div>';
+    log.appendChild(m); scroll();
+    return m;
+  }
+
+  function hinaBubble() {
+    var m = document.createElement("div");
+    m.className = "msg hina";
+    var av = document.createElement("img");
+    av.className = "av"; av.src = AVATAR; av.alt = "Hina"; av.width = 34; av.height = 34;
     var bubble = document.createElement("div");
     bubble.className = "bubble";
-    var name = document.createElement("div");
-    name.className = "name"; name.textContent = "hina";
-    bubble.appendChild(name);
-    wrap.appendChild(img); wrap.appendChild(bubble);
-    log.appendChild(wrap); scroll();
-    return bubble;
+    var sn = document.createElement("div");
+    sn.className = "sender"; sn.textContent = "Hina";
+    bubble.appendChild(sn);
+    m.appendChild(av); m.appendChild(bubble);
+    return { msg: m, bubble: bubble };
   }
 
   function typeInto(parent, text, done) {
     var p = document.createElement("div");
     p.className = "say"; parent.appendChild(p);
     if (reduce) { p.textContent = text; scroll(); return done(); }
-    var cur = document.createElement("span"); cur.className = "cursor"; p.appendChild(cur);
     var i = 0;
     (function tick() {
       if (i < text.length) {
-        cur.insertAdjacentText("beforebegin", text.charAt(i++));
+        p.textContent += text.charAt(i++);
         scroll();
-        setTimeout(tick, text.charAt(i - 1) === " " ? 10 : 16);
-      } else { cur.remove(); done(); }
+        setTimeout(tick, text.charAt(i - 1) === " " ? 8 : 14);
+      } else { done(); }
     })();
   }
 
@@ -100,17 +108,22 @@
     function fb() { var ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); done(); } catch (e) {} document.body.removeChild(ta); }
   }
 
-  // Run a list of steps as one Hina turn (typed lines + instant rich blocks).
+  // Run a list of steps as one Hina turn: show a typing indicator, then her bubble
+  // (typed lines + instant rich blocks).
   function say(steps, after) {
     busy = true; input.setAttribute("disabled", "");
-    var bubble = newHinaBubble();
-    var i = 0;
-    (function next() {
-      if (i >= steps.length) { busy = false; input.removeAttribute("disabled"); input.focus(); if (after) after(); return; }
-      var s = steps[i++];
-      if (typeof s === "string") { typeInto(bubble, s, next); }
-      else { renderRich(bubble, s); next(); }
-    })();
+    var typer = typingBubble();
+    setTimeout(function () {
+      var hb = hinaBubble();
+      log.replaceChild(hb.msg, typer); scroll();
+      var bubble = hb.bubble, i = 0;
+      (function next() {
+        if (i >= steps.length) { busy = false; input.removeAttribute("disabled"); input.focus(); if (after) after(); return; }
+        var s = steps[i++];
+        if (typeof s === "string") { typeInto(bubble, s, next); }
+        else { renderRich(bubble, s); next(); }
+      })();
+    }, reduce ? 120 : 520);
   }
 
   // ---------- command content ----------
@@ -305,13 +318,10 @@
 
   // ---------- boot ----------
   function boot() {
-    var b = document.createElement("div"); b.className = "row muted";
-    b.innerHTML = "hina v" + VERSION + " · type <span class='cy'>help</span> or tap a command below ✨";
-    log.appendChild(b);
     say([
       "Hi! I'm Hina — your delivery girl for updates. 📦✨",
       "I ship only the chunks that changed, and I sandbox apps before they run.",
-      { html: "<span class='muted'>Ask me things like </span><span class='cy'>install</span><span class='muted'>, </span><span class='cy'>features</span><span class='muted'>, or </span><span class='cy'>how</span><span class='muted'> — or type </span><span class='cy'>help</span><span class='muted'>.</span>" }
+      { html: "<span class='muted'>Ask me anything — tap a quick reply below, or try </span><span class='cy'>install</span><span class='muted'>, </span><span class='cy'>features</span><span class='muted'>, </span><span class='cy'>how</span><span class='muted'>.</span>" }
     ]);
   }
   boot();

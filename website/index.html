@@ -3,67 +3,68 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>Hina — talk to her in the terminal ✨</title>
-    <meta name="description" content="Chat with Hina in a terminal: an open-source rsync-like patcher for game clients & desktop apps, plus a cross-platform package manager with Flatpak-style sandboxing. Type `install`, `features`, `how`." />
-    <meta name="keywords" content="Hina, terminal, patcher, rsync, package manager, delta update, sandbox, AppContainer, Landlock, Ed25519, .NET, NativeAOT, open source" />
+    <title>Hina — chat with her ✨</title>
+    <meta name="description" content="Chat with Hina: an open-source rsync-like patcher for game clients & desktop apps, plus a cross-platform package manager with Flatpak-style sandboxing. Ask her to install, or explain delta patching." />
+    <meta name="keywords" content="Hina, patcher, rsync, package manager, delta update, sandbox, AppContainer, Landlock, Ed25519, .NET, NativeAOT, open source" />
     <link rel="canonical" href="https://hina.arutosio.com/" />
     <link rel="icon" href="./Images/favicon.ico" sizes="any" />
 
-    <meta property="og:title" content="Hina — talk to her in the terminal ✨" />
-    <meta property="og:description" content="A conversational CLI: ask Hina to install herself, explain delta patching, or show her docs. Open source, .NET 10." />
+    <meta property="og:title" content="Hina — chat with her ✨" />
+    <meta property="og:description" content="Say hi to Hina, the rsync-style patcher & package manager. Ask her to install, explain delta patching, or show her docs." />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://hina.arutosio.com/" />
     <meta property="og:image" content="https://hina.arutosio.com/Images/og-image.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Hina — talk to her in the terminal ✨" />
-    <meta name="twitter:description" content="Chat with Hina, the rsync-style patcher & package manager, right in your browser terminal." />
+    <meta name="twitter:title" content="Hina — chat with her ✨" />
+    <meta name="twitter:description" content="Chat with Hina, the rsync-style patcher & cross-platform package manager." />
     <meta name="twitter:image" content="https://hina.arutosio.com/Images/og-image.png" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./Styles/hina.css" />
     <script>
-      // Set theme before paint (no flash). ?theme= wins, then saved, then OS, default dark (it's a terminal).
+      // Theme before paint (no flash). ?theme= wins, then saved, then OS, default light (friendly chat).
       (function () {
         try {
           var q = new URLSearchParams(location.search).get("theme");
           var t = (q === "dark" || q === "light") ? q
                 : localStorage.getItem("hina-theme")
-                || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+                || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
           document.documentElement.setAttribute("data-theme", t);
-        } catch (e) { document.documentElement.setAttribute("data-theme", "dark"); }
+        } catch (e) { document.documentElement.setAttribute("data-theme", "light"); }
       })();
     </script>
   </head>
   <body>
-    <main class="term-app" aria-label="Hina interactive terminal">
-      <header class="term-bar">
-        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-        <span class="term-title">
-          <img src="./Images/hina-logo.png" alt="" width="18" height="18" />
-          hina@arutosio: ~ — talking with Hina
-        </span>
-        <span class="bar-actions">
-          <button id="theme-toggle" class="bar-btn" type="button" aria-label="Toggle light/dark" title="Toggle theme">
+    <div class="blobs" aria-hidden="true"><span></span><span></span><span></span></div>
+
+    <main class="chat" aria-label="Chat with Hina">
+      <header class="chat-head">
+        <img class="ch-avatar" src="./Images/hina-logo.png" alt="Hina" width="44" height="44" />
+        <div class="ch-id">
+          <div class="ch-name">Hina</div>
+          <div class="ch-status"><span class="online"></span> online · replies instantly</div>
+        </div>
+        <div class="ch-actions">
+          <button id="theme-toggle" class="ch-btn" type="button" aria-label="Toggle light/dark" title="Toggle theme">
             <span class="theme-icon-light">🌙</span><span class="theme-icon-dark">☀️</span>
           </button>
-          <a class="bar-btn" href="https://github.com/Arutosio/Hina" target="_blank" rel="noopener" title="GitHub">★</a>
-        </span>
+          <a class="ch-btn" href="https://github.com/Arutosio/Hina" target="_blank" rel="noopener" title="GitHub" aria-label="GitHub">★</a>
+        </div>
       </header>
 
-      <div class="term-log" id="log" role="log" aria-live="polite" aria-atomic="false"></div>
+      <div class="chat-log" id="log" role="log" aria-live="polite" aria-atomic="false"></div>
 
-      <div class="term-chips" id="chips" aria-label="Quick commands"></div>
+      <div class="chat-quick" id="chips" aria-label="Quick replies"></div>
 
-      <form class="term-input" id="form" autocomplete="off">
-        <label for="cmd" class="ps1"><span class="who">you</span>@local <span class="tilde">~</span> <span class="sigil">$</span></label>
-        <input id="cmd" name="cmd" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
-               placeholder="type a command — try: help" aria-label="Command input" />
+      <form class="chat-compose" id="form" autocomplete="off">
+        <input id="cmd" name="cmd" type="text" autocomplete="off" autocapitalize="sentences" spellcheck="false"
+               placeholder="Message Hina…  (try: install)" aria-label="Message Hina" />
+        <button class="send" type="submit" aria-label="Send">➤</button>
       </form>
     </main>
 
-    <!-- SEO / no-JS fallback -->
     <noscript>
       <div style="max-width:760px;margin:2rem auto;padding:1rem;font-family:system-ui;color:#222">
         <h1>Hina</h1>

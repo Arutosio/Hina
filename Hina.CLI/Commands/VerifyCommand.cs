@@ -186,7 +186,8 @@ namespace Hina.CLI.Commands
             {
                 PatcherConfig cfg = NetworkArgs.FromArgs(args)
                     .ToPatchConfig(app.BaseUrl, app.Channel, app.PublicKey, backup: false);
-                VerifyResult res = await new PatchClient(cfg).VerifyAsync(app.InstallPath, ctx.Ct);
+                using PatchClient client = new PatchClient(cfg);
+                VerifyResult res = await client.VerifyAsync(app.InstallPath, ctx.Ct);
                 return res.Success ? 0 : res.BrokenFiles.Count;
             }
             catch

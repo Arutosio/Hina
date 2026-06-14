@@ -39,5 +39,7 @@ namespace Hina.PackageManager.Tests
             Task.FromResult(new VerifyResult { Success = true });
 
         public Task RollbackAsync(string rootDir, CancellationToken ct) => Task.CompletedTask;
+
+        public void Dispose() { }
     }
 }

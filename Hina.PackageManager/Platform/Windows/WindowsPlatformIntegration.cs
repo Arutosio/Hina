@@ -58,7 +58,13 @@ namespace Hina.PackageManager.Platform.Windows
         {
             Directory.CreateDirectory(_startMenuDir);
 
-            string linkPath = Path.Combine(_startMenuDir, SanitizeFileName(entry.Name) + ".lnk");
+            // BUG-015: key the .lnk filename on both Name (for readability) and Id (for
+            // uniqueness). entry.Id is validated as unique by DescriptorValidator; entry.Name is
+            // not, so two entries sharing the same Name would otherwise collide and clobber each
+            // other's shortcut. Option B from the bug report: "<Name>-<Id>.lnk" preserves the
+            // human-readable Start-menu label (stem = display name) while the Id suffix makes
+            // the file path unique. Mirrors the Linux per-Id desktop file naming convention.
+            string linkPath = Path.Combine(_startMenuDir, SanitizeFileName(entry.Name) + "-" + SanitizeId(entry.Id) + ".lnk");
             string? iconPath = entry.Icon != null ? Path.Combine(appDir, entry.Icon) : null;
 
             string targetPath;
@@ -98,9 +104,33 @@ namespace Hina.PackageManager.Platform.Windows
 
             string cmdPath = Path.Combine(_userBinDir, name + ".cmd");
             // %* forwards all arguments verbatim.
-            string content = $"@echo off\r\n\"{targetExec}\" %*\r\n";
+            // EscapeCmdPath ensures the path is safe inside a batch double-quoted token:
+            //   " → "" (batch quote-doubling; does NOT close the surrounding quotes)
+            //   % → %% (prevents variable expansion even inside double-quotes)
+            // No other metachar (^, &, |, <, >) needs escaping when the value is
+            // already enclosed in double-quotes; they are treated as literals there.
+            string content = $"@echo off\r\n\"{EscapeCmdPath(targetExec)}\" %*\r\n";
             File.WriteAllText(cmdPath, content);
             return Task.FromResult(cmdPath);
+        }
+
+        // Escape a filesystem path for embedding inside a CMD double-quoted token.
+        // Batch double-quoting rules: " is represented as "" (not \"); % must be
+        // doubled to prevent variable expansion which happens even inside quotes.
+        private static string EscapeCmdPath(string path)
+        {
+            // Fast-path: no characters that need escaping.
+            if (path.IndexOf('"') < 0 && path.IndexOf('%') < 0)
+                return path;
+
+            StringBuilder sb = new StringBuilder(path.Length + 4);
+            foreach (char c in path)
+            {
+                if (c == '"') { sb.Append('"'); sb.Append('"'); }
+                else if (c == '%') { sb.Append('%'); sb.Append('%'); }
+                else sb.Append(c);
+            }
+            return sb.ToString();
         }
 
         public Task RemoveFromPath(string evidencePath, CancellationToken ct)

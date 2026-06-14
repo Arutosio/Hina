@@ -48,20 +48,72 @@ namespace Hina.PackageManager.Sandbox
         private const int MaxContainerNameLength = 64;
         private const string ContainerPrefix = "Hina.";
 
-        // Stable per-app container name, e.g. "Hina.signal". Deterministic so re-launches
-        // derive the same SID (the profile is created once, then reused). Sanitized to the
-        // AppContainer charset and capped at 64 chars.
-        public static string ContainerName(string appName)
+        // Length of the hex hash suffix appended to every moniker (8 hex digits = 32-bit FNV-1a).
+        // Reserved BEFORE consuming the budget with the basename so the discriminant is never
+        // truncated even for very long app names.
+        private const int HashSuffixLength = 9; // '.' + 8 hex chars
+
+        // Stable per-app container name that is UNIQUE per install path.
+        //
+        // Format: "Hina.<sanitized-basename>.<hex8>"
+        //   <hex8>  — lower-hex FNV-1a 32-bit hash of the canonicalized anchorPath
+        //             (Path.GetFullPath + lower-invariant + trailing-separator stripped).
+        //             Deterministic and cross-process-stable (unlike String.GetHashCode,
+        //             which is randomised per process in .NET 5+).
+        //
+        // Two apps with the same exe basename but different install paths produce different
+        // monikers → different AppContainer SIDs → their additive DACL grants never overlap
+        // (BUG-009 fix). Same (basename, anchorPath) always yields the same moniker, so the
+        // profile created at first launch is transparently reused on subsequent launches.
+        //
+        // anchorPath should be the unique install directory of the app (rules[0].Path in the
+        // SandboxPlan; see WindowsSandbox.DeriveAnchorPath for the fallback chain).
+        public static string ContainerName(string appName, string anchorPath)
         {
+            // Canonicalize the anchor: full path, lower-invariant (Windows paths are
+            // case-insensitive), no trailing directory separator — ensures the same
+            // physical directory always hashes identically regardless of how the caller
+            // spells it.
+            string canon = anchorPath.TrimEnd(
+                System.IO.Path.DirectorySeparatorChar,
+                System.IO.Path.AltDirectorySeparatorChar)
+                .ToLowerInvariant();
+
+            uint hash = Fnv1a32(canon);
+            string hashSuffix = "." + hash.ToString("x8"); // e.g. ".a1b2c3d4"
+
+            // Budget: MaxContainerNameLength minus prefix minus hash suffix.
+            int basenameBudget = MaxContainerNameLength - ContainerPrefix.Length - HashSuffixLength;
+
             StringBuilder sb = new StringBuilder(MaxContainerNameLength);
             sb.Append(ContainerPrefix);
+            int used = 0;
             foreach (char c in appName)
             {
-                if (sb.Length >= MaxContainerNameLength) break;
-                if (char.IsLetterOrDigit(c) || c == '.' || c == '-' || c == '_') sb.Append(c);
-                else sb.Append('_');
+                if (used >= basenameBudget) break;
+                if (char.IsLetterOrDigit(c) || c == '.' || c == '-' || c == '_')
+                    sb.Append(c);
+                else
+                    sb.Append('_');
+                used++;
             }
+            sb.Append(hashSuffix);
             return sb.ToString();
+        }
+
+        // FNV-1a 32-bit — deterministic, cross-process-stable, no runtime randomisation.
+        // https://datatracker.ietf.org/doc/html/draft-eastlake-fnv
+        private static uint Fnv1a32(string s)
+        {
+            uint hash = 2166136261u; // FNV offset basis
+            foreach (char c in s)
+            {
+                // Process each UTF-16 code unit as two bytes (little-endian) so that the
+                // hash covers all characters, including non-ASCII in paths.
+                hash = (hash ^ (byte)(c & 0xFF)) * 16777619u;
+                hash = (hash ^ (byte)(c >> 8)) * 16777619u;
+            }
+            return hash;
         }
 
         // One ACE per plan rule, in order (rules[0] is conventionally the app dir, which

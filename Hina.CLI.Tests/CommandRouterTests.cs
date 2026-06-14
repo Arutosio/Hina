@@ -182,6 +182,71 @@ namespace Hina.CLI.Tests
             Assert.Equal(2, await Dispatch("perms", "demo", "--grant"));
         }
 
+        // BUG-005: `--grant` / `--revoke` without a value swallowed the next flag as a path.
+        // e.g. `hina perms demo --grant --revoke /p` handed "--revoke" to ParseGrant as a path
+        // instead of rejecting the missing --grant value.
+        //
+        // Test strategy: the "next flag" used in these tests must itself be a known perms flag
+        // (--revoke / --grant) so that FirstUnknownFlag does not short-circuit before the
+        // BUG-005 guard runs. An unknown flag like --json would be caught by FirstUnknownFlag
+        // first and produce "Unknown flag '--json'", not a --grant/--revoke error.
+
+        [Fact]
+        public async Task Perms_GrantFollowedByAnotherFlag_ReturnsUsageError()
+        {
+            // `hina perms demo --grant --revoke /p` — "--revoke" is a known flag but starts
+            // with '-', so it must be rejected as the missing --grant value.
+            await SeedApp("demo");
+            Assert.Equal(2, await Dispatch("perms", "demo", "--grant", "--revoke", "/tmp/p"));
+        }
+
+        [Fact]
+        public async Task Perms_RevokeFollowedByAnotherFlag_ReturnsUsageError()
+        {
+            // `hina perms demo --revoke --grant /p` — "--grant" is a known flag but starts
+            // with '-', so it must be rejected as the missing --revoke value.
+            await SeedApp("demo");
+            Assert.Equal(2, await Dispatch("perms", "demo", "--revoke", "--grant", "/tmp/p"));
+        }
+
+        [Fact]
+        public async Task Perms_GrantFollowedByFlag_ErrorMessageNamesGrantFlag()
+        {
+            // The error message must name '--grant' so the user knows which flag is wrong.
+            await SeedApp("demo");
+            var log = new CapturingLogger();
+            var ctx = new CommandContext(InstallPaths.ForRoot(_root), log, NullLoggerFactory.Instance, CancellationToken.None);
+
+            int exit = await CommandRouter.DispatchAsync(ctx, new[] { "perms", "demo", "--grant", "--revoke", "/tmp/p" });
+
+            Assert.Equal(2, exit);
+            Assert.Contains(log.Messages, m => m.Contains("--grant"));
+        }
+
+        [Fact]
+        public async Task Perms_RevokeFollowedByFlag_ErrorMessageNamesRevokeFlag()
+        {
+            // The error message must name '--revoke'.
+            await SeedApp("demo");
+            var log = new CapturingLogger();
+            var ctx = new CommandContext(InstallPaths.ForRoot(_root), log, NullLoggerFactory.Instance, CancellationToken.None);
+
+            int exit = await CommandRouter.DispatchAsync(ctx, new[] { "perms", "demo", "--revoke", "--grant", "/tmp/p" });
+
+            Assert.Equal(2, exit);
+            Assert.Contains(log.Messages, m => m.Contains("--revoke"));
+        }
+
+        [Fact]
+        public async Task Perms_GrantWithRealPath_DoesNotTreatNextFlagAsPath()
+        {
+            // Positive case: a real path value is accepted; the flag after it is NOT consumed.
+            // `--grant /tmp/x --revoke` still has --revoke with no value → usage error (not a
+            // successful grant that consumed "--revoke" as the path).
+            await SeedApp("demo");
+            Assert.Equal(2, await Dispatch("perms", "demo", "--grant", "/tmp/x", "--revoke"));
+        }
+
         [Fact]
         public async Task Perms_GrantOnlyAccessSuffix_ReturnsUsageErrorNamingTheFlag()
         {
@@ -239,6 +304,22 @@ namespace Hina.CLI.Tests
             var ctx = new CommandContext(InstallPaths.ForRoot(_root), NullLogger.Instance, NullLoggerFactory.Instance, cts.Token);
 
             Assert.Equal(1, await CommandRouter.DispatchAsync(ctx, new[] { verb, "demo" }));
+        }
+
+        [Theory]
+        [InlineData("check-update")]
+        [InlineData("check", "update")]
+        public async Task CheckUpdate_Cancelled_ReturnsCancelledExitCode(params string[] args)
+        {
+            // BUG-023: SelfUpdate.CheckAsync swallows OperationCanceledException and returns
+            // Unknown, causing CheckUpdateCommand to report exit 2 ("Could not check for
+            // updates") instead of reaching CommandRouter's "Cancelled." path (exit 1).
+            // ThrowIfCancellationRequested() after CheckAsync re-surfaces the cancellation.
+            using var cts = new CancellationTokenSource();
+            cts.Cancel();
+            var ctx = new CommandContext(InstallPaths.ForRoot(_root), NullLogger.Instance, NullLoggerFactory.Instance, cts.Token);
+
+            Assert.Equal(1, await CommandRouter.DispatchAsync(ctx, args));
         }
 
         [Theory]
@@ -329,6 +410,128 @@ namespace Hina.CLI.Tests
             Assert.Equal(0, await Dispatch("info", "demo"));
             Assert.Equal(0, await Dispatch("which", "demo"));
             Assert.Equal(0, await Dispatch("list"));
+        }
+    }
+
+    // BUG-012 / BUG-026: Program.TryGlobalShortCircuit must detect help/version only
+    // when the relevant token is args[0], not when it appears as a positional value of a
+    // subcommand (e.g. `hina uninstall help`, `hina run --version`).
+    //
+    // TryGlobalShortCircuit is internal and exposed to this test assembly via
+    // [InternalsVisibleTo("Hina.CLI.Tests")] in Hina.CLI.csproj.
+    public sealed class ProgramShortCircuitTests
+    {
+        // ---- cases that MUST trigger the short-circuit ----
+
+        [Fact]
+        public void NoArgs_TriggersHelp()
+        {
+            // `hina` with no args -> help, exit 0.
+            Assert.True(Program.TryGlobalShortCircuit(Array.Empty<string>(), out int code));
+            Assert.NotEqual(1, code); // not the version sentinel
+        }
+
+        [Theory]
+        [InlineData("help")]
+        [InlineData("Help")]
+        [InlineData("HELP")]
+        [InlineData("--help")]
+        [InlineData("--Help")]
+        [InlineData("-h")]
+        public void HelpToken_AtPosition0_TriggersHelp(string token)
+        {
+            // `hina help`, `hina --help`, `hina -h` -> short-circuit with help outcome.
+            Assert.True(Program.TryGlobalShortCircuit(new[] { token }, out int code));
+            Assert.NotEqual(1, code); // not the version sentinel
+        }
+
+        [Theory]
+        [InlineData("--version")]
+        [InlineData("-V")]
+        public void VersionToken_AtPosition0_TriggersVersion(string token)
+        {
+            // `hina --version`, `hina -V` -> short-circuit with version sentinel.
+            Assert.True(Program.TryGlobalShortCircuit(new[] { token }, out int code));
+            Assert.Equal(1, code); // version sentinel
+        }
+
+        // ---- cases that must NOT trigger the short-circuit (BUG-012 / BUG-026 regressions) ----
+
+        [Theory]
+        [InlineData("uninstall", "help")]
+        [InlineData("which",     "help")]
+        [InlineData("info",      "help")]
+        [InlineData("run",       "help")]
+        [InlineData("update",    "help")]
+        [InlineData("reinstall", "help")]
+        [InlineData("perms",     "help")]
+        public void HelpAsPositionalValue_DoesNotTriggerGlobalHelp(string verb, string positional)
+        {
+            // BUG-026: `hina <cmd> help` — "help" is the name of an app, not a help request.
+            // The global short-circuit must NOT fire; CommandRouter handles it instead.
+            Assert.False(Program.TryGlobalShortCircuit(new[] { verb, positional }, out _));
+        }
+
+        [Theory]
+        [InlineData("run",        "--version")]
+        [InlineData("perms",      "--version")]
+        [InlineData("uninstall",  "--version")]
+        [InlineData("install",    "--version")]
+        [InlineData("run",        "-V")]
+        [InlineData("perms",      "-V")]
+        public void VersionFlagAsSubcommandArg_DoesNotTriggerGlobalVersion(string verb, string flag)
+        {
+            // BUG-012: `hina <cmd> --version` / `hina <cmd> -V` — the flag is an argument
+            // to the subcommand, not a global version request. Must NOT short-circuit.
+            Assert.False(Program.TryGlobalShortCircuit(new[] { verb, flag }, out _));
+        }
+
+        [Theory]
+        [InlineData("run",       "--help")]
+        [InlineData("install",   "--help")]
+        [InlineData("uninstall", "-h")]
+        public void HelpFlagDeepInArgs_DoesNotTriggerGlobalHelp(string verb, string flag)
+        {
+            // BUG-012: `hina <cmd> --help` / `hina <cmd> -h` after position 0 must NOT
+            // short-circuit at the Program level.
+            Assert.False(Program.TryGlobalShortCircuit(new[] { verb, flag }, out _));
+        }
+
+        [Fact]
+        public void HelpTokenAfterDoubleDash_DoesNotTriggerGlobalHelp()
+        {
+            // BUG-026: `hina run myapp -- help` — "help" is an application argument after
+            // the `--` separator; must not hijack the global short-circuit.
+            Assert.False(Program.TryGlobalShortCircuit(new[] { "run", "myapp", "--", "help" }, out _));
+        }
+
+        // ---- -v (verbose) is a global modifier and must never be mistaken for -V (version) ----
+
+        [Fact]
+        public void LowercaseV_IsNotVersion()
+        {
+            // `-v` is verbose, not version. Must not trigger the short-circuit.
+            Assert.False(Program.TryGlobalShortCircuit(new[] { "-v" }, out _));
+        }
+
+        [Fact]
+        public void VerboseFlag_AfterVerb_DoesNotTrigger()
+        {
+            // `hina install <url> --verbose` — --verbose is a modifier anywhere; the global
+            // short-circuit must not fire (routing is left to CommandRouter).
+            Assert.False(Program.TryGlobalShortCircuit(new[] { "install", "https://example.com/a.json", "--verbose" }, out _));
+        }
+
+        // ---- ordinary verbs must not trigger ----
+
+        [Theory]
+        [InlineData("install")]
+        [InlineData("list")]
+        [InlineData("version")]
+        [InlineData("update")]
+        public void NormalVerb_DoesNotTrigger(string verb)
+        {
+            Assert.False(Program.TryGlobalShortCircuit(new[] { verb }, out _));
         }
     }
 }

@@ -84,5 +84,39 @@ namespace Hina.Host.Tests
             File.WriteAllText(p, """{ "urls": "http://127.0.0.1:5000" }""");
             Assert.False(SetupWizard.IsConfigMissingOrEmpty(p));
         }
+
+        // --- Atomic write tests (BUG-028) ---
+
+        // After WriteAtomic completes the target file must contain exactly the written
+        // content and no sibling .tmp file must remain on disk.
+        [Fact]
+        public void WriteAtomic_ProducesCompleteFile_AndLeavesNoTmpSibling()
+        {
+            string target = PathFor("config.json");
+            string content = """{ "urls": "http://0.0.0.0:49876" }""";
+
+            SetupWizard.WriteAtomic(target, content);
+
+            Assert.Equal(content, File.ReadAllText(target));
+            Assert.False(File.Exists(target + ".tmp"), "temp file must be renamed away after a successful write");
+        }
+
+        // A truncated/corrupt pre-existing config (simulating a crash mid-write) must be
+        // fully overwritten by a subsequent WriteAtomic so the host does not stay stuck on
+        // an unreadable config.
+        [Fact]
+        public void WriteAtomic_OverwritesTruncatedConfig_ResultIsComplete()
+        {
+            string target = PathFor("config_truncated.json");
+            // Simulate a previous crash that left a corrupt half-written file.
+            File.WriteAllText(target, """{ "urls": "http://0.0.0.""");
+
+            string good = """{ "urls": "http://0.0.0.0:49876" }""";
+            SetupWizard.WriteAtomic(target, good);
+
+            Assert.Equal(good, File.ReadAllText(target));
+            // The overwrite must not leave the old corrupt bytes anywhere.
+            Assert.False(SetupWizard.IsConfigMissingOrEmpty(target));
+        }
     }
 }

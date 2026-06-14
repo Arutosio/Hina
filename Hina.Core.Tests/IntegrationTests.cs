@@ -186,35 +186,72 @@ namespace Hina.Core.Tests
         }
 
         [Fact]
-        public async Task RollbackAsync_AfterPatch_RestoresOriginalFiles()
+        public async Task RollbackAsync_AfterSuccessfulPatch_IsNoOp()
         {
-            // Arrange: create an "original" file in the target dir before patching.
+            // A successful patch self-cleans the journal and backups (BUG-004 fix).
+            // RollbackAsync after a successful patch should be a no-op: no journal to read,
+            // so the file stays at the new (patched) version.
             Directory.CreateDirectory(Path.Combine(_targetDir, "data"));
-            string originalContent = "original config content";
-            File.WriteAllText(Path.Combine(_targetDir, "data", "config.txt"), originalContent);
+            File.WriteAllText(Path.Combine(_targetDir, "data", "config.txt"), "original config content");
 
-            // Build source with different content.
             CreateSourceFile("data/config.txt", "new updated config content");
             await RunBuildAsync();
 
-            // Patch with backup enabled.
             PatchClient client = CreatePatchClient(backup: true, verify: true);
             PatchResult patchResult = await client.PatchAsync(_targetDir, CancellationToken.None);
             Assert.True(patchResult.Success, $"Patch failed: {patchResult.Message}");
 
-            // Verify the file was updated.
             string targetConfig = Path.Combine(_targetDir, "data", "config.txt");
             Assert.Equal("new updated config content", File.ReadAllText(targetConfig));
 
-            // Act: rollback.
+            // Journal and backups should already be gone after successful patch.
+            string journalPath = PatchJournal.GetJournalPath(_targetDir);
+            Assert.False(File.Exists(journalPath), "Journal must be cleaned up on success.");
+
+            // Rollback is a no-op (no journal → nothing to restore).
             await client.RollbackAsync(_targetDir, CancellationToken.None);
 
-            // Assert: file is restored to original content.
-            Assert.Equal(originalContent, File.ReadAllText(targetConfig));
+            // File stays at patched version — rollback had nothing to act on.
+            Assert.Equal("new updated config content", File.ReadAllText(targetConfig));
+        }
 
-            // Journal should be cleaned up.
+        [Fact]
+        public async Task RollbackAsync_InterruptedPatch_RestoresOriginalFiles()
+        {
+            // Simulate an interrupted patch by pre-seeding an InProgress journal + backup,
+            // then call RollbackAsync directly and assert the original file is restored.
+            Directory.CreateDirectory(Path.Combine(_targetDir, "data"));
+            string originalContent = "original config content";
+            string targetConfig = Path.Combine(_targetDir, "data", "config.txt");
+            string backupPath = targetConfig + ".hina.bak";
+
+            // "Patched" version is on disk; backup holds the original.
+            File.WriteAllText(targetConfig, "half-patched content");
+            File.WriteAllText(backupPath, originalContent);
+
+            // Write an InProgress journal that records the backup.
             string journalPath = PatchJournal.GetJournalPath(_targetDir);
-            Assert.False(File.Exists(journalPath));
+            PatchJournal staleJournal = new PatchJournal
+            {
+                Status = PatchJournal.StatusInProgress,
+                Entries = new List<PatchJournalEntry>
+                {
+                    new PatchJournalEntry { TargetPath = targetConfig, BackupPath = backupPath }
+                }
+            };
+            await staleJournal.SaveAsync(journalPath);
+
+            // Build something (needed to create a valid patch client, even though we only call Rollback).
+            CreateSourceFile("data/config.txt", "irrelevant — rollback only");
+            await RunBuildAsync();
+
+            PatchClient client = CreatePatchClient(backup: true, verify: false);
+
+            // Act: explicit rollback restores original.
+            await client.RollbackAsync(_targetDir, CancellationToken.None);
+
+            Assert.Equal(originalContent, File.ReadAllText(targetConfig));
+            Assert.False(File.Exists(journalPath), "Journal should be deleted after rollback.");
         }
 
         [Fact]

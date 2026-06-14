@@ -423,6 +423,142 @@ namespace Hina.PackageManager.Tests
             Assert.Equal(UpdateStatus.Updated, result.Status);
         }
 
+        // BUG-006: when the cached previous descriptor is missing (e.g. deleted by the user),
+        // the sandbox gate must NOT fail-open for the dangerous case: new version declares no
+        // active sandbox (sandbox dropped or never declared). Without a baseline we cannot tell
+        // whether a previously-sandboxed install is losing its isolation, so consent is required.
+        [Fact]
+        public async Task Update_DroppedSandbox_NoCachedDescriptor_WithoutConsent_IsRefused()
+        {
+            // Install with sandbox enabled so v1 was sandboxed; delete the cache to simulate
+            // a missing/corrupt baseline before running the update.
+            await InstallSandboxedV1(Sandbox("home", "ro"));
+            string cachePath = _paths.DescriptorCache("demo");
+            if (File.Exists(cachePath)) File.Delete(cachePath);
+
+            // v2 has no sandbox (null) — without a baseline, the gate cannot confirm old was
+            // also unsandboxed, so it must block (fail-closed).
+            UpdateResult result = await UpdateToSandboxed(sandbox: null, acceptNewPerms: false);
+
+            Assert.Equal(UpdateStatus.Failed, result.Status);
+            Assert.Contains("missing or unreadable", result.Message, StringComparison.OrdinalIgnoreCase);
+
+            // Registry must remain at v1.
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        // BUG-006: same scenario but with --accept-new-permissions: the update must proceed
+        // even when the cache is absent, because the user has explicitly consented.
+        [Fact]
+        public async Task Update_DroppedSandbox_NoCachedDescriptor_WithConsent_Proceeds()
+        {
+            await InstallSandboxedV1(Sandbox("home", "ro"));
+            string cachePath = _paths.DescriptorCache("demo");
+            if (File.Exists(cachePath)) File.Delete(cachePath);
+
+            // v2 drops the sandbox — user has consented, so it must proceed.
+            UpdateResult result = await UpdateToSandboxed(sandbox: null, acceptNewPerms: true);
+
+            Assert.Equal(UpdateStatus.Updated, result.Status);
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("1.1.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        // Residual BUG-006 hole (found verifying the "DA CONFERMARE" list): the earlier fix
+        // only failed closed when the NEW version had no sandbox, assuming "sandbox on = always
+        // narrowing". That is false: a narrow sandbox can be replaced by a broader one. With the
+        // baseline cache missing, SandboxDiff.Compute(null, broadSpec) treats old as unsandboxed
+        // and reports Broadened=false, so a real broadening (home/ro -> home/rw) slipped through
+        // without consent. The gate now fails closed for ANY missing baseline.
+        [Fact]
+        public async Task Update_BroadenedSandbox_NoCachedDescriptor_WithoutConsent_IsRefused()
+        {
+            await InstallSandboxedV1(Sandbox("home", "ro"));
+            string cachePath = _paths.DescriptorCache("demo");
+            if (File.Exists(cachePath)) File.Delete(cachePath);
+
+            // v2 keeps a sandbox but widens it (ro -> rw). Without the baseline the diff cannot
+            // see the broadening, so the gate must block rather than fail open.
+            UpdateResult result = await UpdateToSandboxed(Sandbox("home", "rw"), acceptNewPerms: false);
+
+            Assert.Equal(UpdateStatus.Failed, result.Status);
+            Assert.Contains("missing or unreadable", result.Message, StringComparison.OrdinalIgnoreCase);
+
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        // Same scenario but with explicit consent: the update must proceed.
+        [Fact]
+        public async Task Update_BroadenedSandbox_NoCachedDescriptor_WithConsent_Proceeds()
+        {
+            await InstallSandboxedV1(Sandbox("home", "ro"));
+            string cachePath = _paths.DescriptorCache("demo");
+            if (File.Exists(cachePath)) File.Delete(cachePath);
+
+            UpdateResult result = await UpdateToSandboxed(Sandbox("home", "rw"), acceptNewPerms: true);
+
+            Assert.Equal(UpdateStatus.Updated, result.Status);
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("1.1.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        // BUG-014: when store.Load() throws inside the final registry-write try block,
+        // the recovery snapshot must still contain the v2 (updated) row — not the stale
+        // pre-update registry that was in scope before Load() was called.
+        [Fact]
+        public async Task Update_RegistrySaveFails_RecoverySnapshotContainsUpdatedRow()
+        {
+            await InstallV1();
+
+            AppDescriptor v2 = BuildDescriptor(_pubKey, version: "1.1.0");
+            DescriptorSigner.AttachSignature(v2, Convert.FromBase64String(_privKey));
+
+            string registryPath = _paths.RegistryFile;
+            string recoveryPath = registryPath + ".recovery.json";
+
+            // Strategy: after the patch succeeds, corrupt registry.json with invalid JSON
+            // so that store.Load() inside the commit try throws RegistryCorruptException.
+            // Also block SaveAsync by creating a directory at the .tmp path it writes to
+            // (FileStream(FileMode.Create) on a directory path fails with IOException on
+            // both Windows and Linux) — ensuring we reach the catch(saveEx) branch and a
+            // recovery snapshot is written to the separate .recovery.json path.
+            bool patchRan = false;
+            string tmpPath = registryPath + ".tmp";
+
+            Hina.Core.Patching.IPatchClient CorruptingPatcher(Hina.Core.Configuration.PatcherConfig cfg) =>
+                new CorruptThenSucceedPatchClient(cfg, () =>
+                {
+                    patchRan = true;
+                    // Corrupt registry.json so Load() throws RegistryCorruptException.
+                    File.WriteAllText(registryPath, "{ NOT VALID JSON !!!");
+                    // Create a directory at the .tmp path: opening it as a file for write fails
+                    // cross-platform, so SaveAsync cannot write and throws IOException.
+                    if (File.Exists(tmpPath)) File.Delete(tmpPath);
+                    Directory.CreateDirectory(tmpPath);
+                });
+
+            UpdateService svc = new UpdateService(
+                _paths, _platform,
+                fetcher: new StubFetcher(v2),
+                patchClientFactory: CorruptingPatcher);
+
+            UpdateResult result = await svc.UpdateAsync("demo", null, CancellationToken.None);
+
+            Assert.True(patchRan, "Patch did not run — test setup is wrong.");
+            Assert.Equal(UpdateStatus.Failed, result.Status);
+
+            // Clean up the blocking directory so temp-dir cleanup can remove it.
+            if (Directory.Exists(tmpPath)) Directory.Delete(tmpPath);
+
+            // The recovery snapshot must exist and must contain the v2 row, not the stale v1.
+            Assert.True(File.Exists(recoveryPath), "Recovery snapshot was not written.");
+            Registry.Registry recovered = new RegistryStore(recoveryPath).Load();
+            Assert.True(recovered.Apps.ContainsKey("demo"), "Recovery snapshot missing 'demo' row.");
+            Assert.Equal("1.1.0", recovered.Apps["demo"].InstalledVersion);
+        }
+
         [Fact]
         public async Task Update_CancelledDuringFetch_PropagatesCancellation()
         {
@@ -596,6 +732,7 @@ namespace Hina.PackageManager.Tests
         public Task<Hina.Core.Patching.VerifyResult> VerifyAsync(string rootDir, CancellationToken ct)
             => Task.FromResult(new Hina.Core.Patching.VerifyResult { Success = true });
         public Task RollbackAsync(string rootDir, CancellationToken ct) => Task.CompletedTask;
+        public void Dispose() { }
     }
 
     // Simulates Ctrl+C arriving while the descriptor fetch is in flight.
@@ -632,6 +769,7 @@ namespace Hina.PackageManager.Tests
         public Task<Hina.Core.Patching.VerifyResult> VerifyAsync(string rootDir, CancellationToken ct)
             => Task.FromResult(new Hina.Core.Patching.VerifyResult { Success = true });
         public Task RollbackAsync(string rootDir, CancellationToken ct) => Task.CompletedTask;
+        public void Dispose() { }
     }
 
     // Multi-URL stub fetcher so UpdateAllAsync can map descriptorUrl → descriptor.
@@ -641,5 +779,30 @@ namespace Hina.PackageManager.Tests
         public MultiStubFetcher(Dictionary<string, AppDescriptor> byUrl) : base() => _byUrl = byUrl;
         public override Task<AppDescriptor> FetchAsync(Uri url, CancellationToken ct)
             => Task.FromResult(_byUrl[url.ToString()]);
+    }
+
+    // Runs a side-effect (e.g. corrupting the registry file) then reports patch SUCCESS.
+    // Used by BUG-014 test to corrupt the registry after the patch so that the subsequent
+    // store.Load() inside the final commit try throws, exercising the recovery snapshot path.
+    internal sealed class CorruptThenSucceedPatchClient : Hina.Core.Patching.IPatchClient
+    {
+        private readonly System.Action _onPatch;
+        public CorruptThenSucceedPatchClient(Hina.Core.Configuration.PatcherConfig config, System.Action onPatch)
+        {
+            Config = config;
+            _onPatch = onPatch;
+        }
+        public Hina.Core.Configuration.PatcherConfig Config { get; }
+        public Task<Hina.Core.Patching.CheckResult> CheckAsync(string rootDir, CancellationToken ct)
+            => Task.FromResult(new Hina.Core.Patching.CheckResult { IsUpdateAvailable = true });
+        public Task<Hina.Core.Patching.PatchResult> PatchAsync(string rootDir, CancellationToken ct)
+        {
+            _onPatch();
+            return Task.FromResult(new Hina.Core.Patching.PatchResult { Success = true });
+        }
+        public Task<Hina.Core.Patching.VerifyResult> VerifyAsync(string rootDir, CancellationToken ct)
+            => Task.FromResult(new Hina.Core.Patching.VerifyResult { Success = true });
+        public Task RollbackAsync(string rootDir, CancellationToken ct) => Task.CompletedTask;
+        public void Dispose() { }
     }
 }

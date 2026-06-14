@@ -263,5 +263,172 @@ namespace Hina.Builder.Tests
             Assert.Equal("Acme", d.Publisher);
             Assert.Equal("https://patch.example.com/", d.BaseUrl);
         }
+
+        // ---- BUG-013: CollectVariants must not propose a wrong-OS executable as default ----
+
+        // When a variant folder (e.g. "linux") contains only a Windows PE binary that the
+        // detector misidentifies or that got cross-copied, the wizard must NOT auto-confirm it
+        // as the linux default. After the fix the OS-matched candidate is null and the wizard
+        // drops to the manual-ask path; because the scripted prompt answers that ask with "",
+        // the variant is skipped and the returned platforms list is empty → RunAsync returns 1.
+        [Fact]
+        public async Task Init_VariantLinux_DoesNotProposeWindowsExeAsDefault()
+        {
+            // Place a Windows PE binary inside the "linux" variant folder.
+            // ExecutableDetector will detect it as Windows (TargetOs.Windows), not Linux.
+            byte[] peMagic = { 0x4D, 0x5A, 0x90, 0x00 };
+            WriteBin("linux", "Game.exe", peMagic);
+
+            ScriptedPrompt script = new ScriptedPrompt(
+                asks: new[]
+                {
+                    "mygame", "My Game", "1.2.3", "Acme", "A fun game", "",
+                    "https://patch.example.com/",
+                    // [linux] manual exec ask → blank means skip this variant
+                    "",
+                    _out
+                },
+                confirms: new[]
+                {
+                    // No Confirm for the variant (best == null after OS filter, so no auto-confirm prompt)
+                    true,   // sandbox
+                    true,   // internet
+                    true    // generate key
+                },
+                chooses: new[] { 1 });
+
+            int code = await InitCommand.RunAsync(
+                new[] { "init", "--input", _payload }, script, NullLogger.Instance, CancellationToken.None);
+
+            // No OS-matched executable found and user skipped manual entry → no variants → error exit.
+            Assert.Equal(1, code);
+        }
+
+        // When the linux variant folder has the right ELF binary, CollectVariants must
+        // propose it (OS matches) and the descriptor must record it under "linux", not "windows".
+        [Fact]
+        public async Task Init_VariantLinux_ProposesSameOsExecutableAsDefault()
+        {
+            WriteBin("linux", "game", new byte[] { 0x7F, 0x45, 0x4C, 0x46 });   // ELF
+
+            ScriptedPrompt script = new ScriptedPrompt(
+                asks: new[]
+                {
+                    "mygame", "My Game", "1.2.3", "Acme", "A fun game", "",
+                    "https://patch.example.com/",
+                    _out
+                },
+                confirms: new[]
+                {
+                    true,   // [linux] use 'game' as executable (OS-matched → auto-confirm offered)
+                    true,   // sandbox
+                    true,   // internet
+                    true    // generate key
+                },
+                chooses: new[] { 1 });
+
+            int code = await InitCommand.RunAsync(
+                new[] { "init", "--input", _payload }, script, NullLogger.Instance, CancellationToken.None);
+
+            Assert.Equal(0, code);
+
+            AppDescriptor d = DescriptorParser.Parse(
+                await File.ReadAllTextAsync(Path.Combine(_payload, "hina.app.json")));
+
+            Assert.Single(d.Platforms);
+            Assert.Equal("linux", d.Platforms[0].Os);
+            Assert.Equal("game", d.Platforms[0].Exec);
+            // No Windows executable must have leaked into the linux variant.
+            Assert.DoesNotContain(d.Platforms, p => p.Os == "windows");
+        }
+
+        // ---- BUG-027: BaseUrl in descriptor must always have a trailing slash ----
+
+        [Theory]
+        [InlineData("https://cdn.example.com/game")]    // no trailing slash → must gain one
+        [InlineData("https://cdn.example.com/game/")]   // already has slash → idempotent
+        public async Task Init_BaseUrl_NormalizedWithTrailingSlashInDescriptor(string rawUrl)
+        {
+            WriteElf("game");
+
+            ScriptedPrompt script = new ScriptedPrompt(
+                asks: new[]
+                {
+                    "mygame", "My Game", "1.2.3", "Acme", "A fun game", "",
+                    rawUrl,
+                    "",          // windows exec (none)
+                    "",          // macos exec (none)
+                    "",          // launcher name (→ default)
+                    "",          // icon (none)
+                    _out
+                },
+                confirms: new[]
+                {
+                    true,   // use 'game' as linux executable
+                    true,   // create launcher
+                    true,   // sandbox
+                    true,   // internet
+                    true    // generate key
+                },
+                chooses: new[] { 1 });
+
+            int code = await InitCommand.RunAsync(
+                new[] { "init", "--input", _payload }, script, NullLogger.Instance, CancellationToken.None);
+
+            Assert.Equal(0, code);
+
+            AppDescriptor d = DescriptorParser.Parse(
+                await File.ReadAllTextAsync(Path.Combine(_payload, "hina.app.json")));
+
+            // Descriptor BaseUrl must always end with exactly one slash.
+            Assert.EndsWith("/", d.BaseUrl, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task Init_BaseUrl_WithoutSlash_DescriptorAndManifestBaseUrlConsistent()
+        {
+            // Verifies that a URL typed without trailing slash produces a descriptor whose
+            // BaseUrl matches what BuildCommand writes into the manifest (both end with "/").
+            WriteElf("game");
+
+            const string rawUrl = "https://patch.example.com/mygame";
+
+            ScriptedPrompt script = new ScriptedPrompt(
+                asks: new[]
+                {
+                    "mygame", "My Game", "1.2.3", "Acme", "A fun game", "",
+                    rawUrl,
+                    "",          // windows exec (none)
+                    "",          // macos exec (none)
+                    "",          // launcher name (→ default)
+                    "",          // icon (none)
+                    _out
+                },
+                confirms: new[]
+                {
+                    true,   // use 'game' as linux executable
+                    true,   // create launcher
+                    true,   // sandbox
+                    true,   // internet
+                    true    // generate key
+                },
+                chooses: new[] { 1 });
+
+            int code = await InitCommand.RunAsync(
+                new[] { "init", "--input", _payload }, script, NullLogger.Instance, CancellationToken.None);
+
+            Assert.Equal(0, code);
+
+            AppDescriptor d = DescriptorParser.Parse(
+                await File.ReadAllTextAsync(Path.Combine(_payload, "hina.app.json")));
+
+            var manifest = await Hina.Core.Manifest.ManifestSerializer.ReadAsync(
+                Path.Combine(_out, "patch", "manifest.json"), CancellationToken.None);
+
+            // Both descriptor and manifest must carry the normalized URL (with slash).
+            string expectedUrl = rawUrl + "/";
+            Assert.Equal(expectedUrl, d.BaseUrl);
+            Assert.Equal(expectedUrl, manifest.BaseUrl);
+        }
     }
 }

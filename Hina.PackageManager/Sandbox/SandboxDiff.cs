@@ -45,6 +45,36 @@ namespace Hina.PackageManager.Sandbox
             Dictionary<string, string> oldFs = ToMap(oldSpec!);
             Dictionary<string, string> newFs = ToMap(newSpec!);
 
+            bool oldHasHost = oldFs.ContainsKey(SandboxTokens.Host);
+            bool newHasHost = newFs.ContainsKey(SandboxTokens.Host);
+
+            // 'host' means no filesystem restriction — it is the maximal set.
+            // old=host → new=specific paths : strictly narrowing (not a broadening).
+            // old=specific paths → new=host  : strictly broadening.
+            if (oldHasHost && !newHasHost)
+            {
+                // Every specific path in the new spec is a restriction compared to host.
+                foreach (KeyValuePair<string, string> kv in newFs)
+                    diff.Removed.Add($"{kv.Key} ({kv.Value})");
+                diff.Removed.Add("host (replaced by restricted path list)");
+                // Skip the per-key comparison below; capabilities still need checking.
+                CompareCapabilities(oldSpec!.Capabilities, newSpec!.Capabilities, diff);
+                return diff;
+            }
+
+            if (!oldHasHost && newHasHost)
+            {
+                // Gaining host means the app now requests unrestricted filesystem access.
+                diff.Added.Add($"{SandboxTokens.Host} (unrestricted filesystem access)");
+                // Any previously granted specific paths are superseded — list them as removed
+                // for completeness, but the broadening is driven by host being added.
+                foreach (KeyValuePair<string, string> kv in oldFs)
+                    diff.Removed.Add($"{kv.Key} ({kv.Value}) (superseded by host)");
+                CompareCapabilities(oldSpec!.Capabilities, newSpec!.Capabilities, diff);
+                return diff;
+            }
+
+            // Neither side uses 'host' (or both do — treated as no change on the host axis).
             foreach (KeyValuePair<string, string> kv in newFs)
             {
                 if (!oldFs.TryGetValue(kv.Key, out string? oldAccess))

@@ -60,5 +60,39 @@ namespace Hina.Host.Tests
             Assert.False(stats.ShouldLogAbuse("9.9.9.9", "nope", threshold: 1, out long count));
             Assert.Equal(0, count);
         }
+
+        // BUG-029: threshold == 0 must disable abuse detection entirely (no alarm on every
+        // request). Semantics: 0 = feature off, mirrors requestsPerMinutePerIp == 0.
+        [Fact]
+        public void ShouldLogAbuse_ThresholdZero_NeverLogs()
+        {
+            var stats = new AccessStats();
+            for (int i = 0; i < 1000; i++) stats.RecordRequest("1.2.3.4", "gameA", "/x");
+
+            // Even with 1 000 hits in the last minute, threshold=0 must return false.
+            Assert.False(stats.ShouldLogAbuse("1.2.3.4", "gameA", threshold: 0, out long count));
+            // count is undefined when disabled; just confirm no exception and false return.
+            _ = count;
+        }
+
+        [Fact]
+        public void ShouldLogAbuse_ThresholdZero_UnknownKey_NeverLogs()
+        {
+            var stats = new AccessStats();
+            // Sanity: threshold=0 with an IP that has no bucket at all also returns false.
+            Assert.False(stats.ShouldLogAbuse("9.9.9.9", "nope", threshold: 0, out long count));
+            _ = count;
+        }
+
+        [Fact]
+        public void ShouldLogAbuse_ThresholdPositive_StillLogs()
+        {
+            // Regression guard: a positive threshold must still trigger once the count meets it.
+            var stats = new AccessStats();
+            for (int i = 0; i < 3; i++) stats.RecordRequest("1.2.3.4", "gameA", "/x");
+
+            Assert.True(stats.ShouldLogAbuse("1.2.3.4", "gameA", threshold: 3, out long count));
+            Assert.Equal(3, count);
+        }
     }
 }

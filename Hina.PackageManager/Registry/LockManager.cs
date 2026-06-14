@@ -30,13 +30,20 @@ namespace Hina.PackageManager.Registry
             {
                 try
                 {
+                    // NOTE: we deliberately do NOT use FileOptions.DeleteOnClose. On POSIX,
+                    // FileShare.None maps to a lock on the open inode while DeleteOnClose unlinks
+                    // the file by name on release; a retrying acquirer could then create a fresh
+                    // inode while another is mid-open on the old one, leaving two processes each
+                    // holding an exclusive lock on a different inode (the classic name-based-lock
+                    // unlink hole). Leaving the lock file on disk is harmless — exclusion comes
+                    // from holding the stream open with FileShare.None, not from the file existing.
                     FileStream stream = new FileStream(
                         _lockFilePath,
                         FileMode.OpenOrCreate,
                         FileAccess.ReadWrite,
                         FileShare.None,
                         bufferSize: 1,
-                        FileOptions.DeleteOnClose);
+                        FileOptions.None);
                     return new RegistryLock(stream);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

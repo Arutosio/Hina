@@ -15,6 +15,13 @@ namespace Hina.Core.Net
     {
         public const int DefaultMaxDelayMs = 30_000;
 
+        /// <summary>
+        /// Key used in <see cref="Exception.Data"/> to carry a server-requested retry delay
+        /// in milliseconds (from a Retry-After header). Set by callers before throwing so that
+        /// <see cref="ExecuteAsync{T}"/> can honour the server hint instead of the exponential backoff.
+        /// </summary>
+        public const string RetryAfterMsDataKey = "RetryAfterMs";
+
         private readonly int _maxRetries;
         private readonly int _baseDelayMs;
         private readonly int _maxDelayMs;
@@ -48,7 +55,12 @@ namespace Hina.Core.Net
                 catch (Exception ex) when (attempt < _maxRetries && IsTransient(ex) && !ct.IsCancellationRequested)
                 {
                     attempt++;
-                    int delayMs = CalculateDelay(attempt);
+                    // Honour a server-supplied Retry-After hint (stored in ex.Data by the caller,
+                    // e.g. HttpChunkClient on 429) but always cap it at maxDelay so a misbehaving
+                    // server can't stall the client indefinitely.
+                    int delayMs = TryGetRetryAfterMs(ex, out int retryAfterMs)
+                        ? Math.Min(retryAfterMs, _maxDelayMs)
+                        : CalculateDelay(attempt);
                     _logger.LogWarning(ex, "Transient error on attempt {Attempt}/{MaxRetries}, retrying in {DelayMs}ms",
                         attempt, _maxRetries, delayMs);
                     await Task.Delay(delayMs, ct);
@@ -91,17 +103,35 @@ namespace Hina.Core.Net
 
             if (ex is HttpRequestException httpEx)
             {
-                // 5xx server errors are transient; 4xx are not
+                // 429 (Too Many Requests) and 408 (Request Timeout) are explicit server signals
+                // to retry later; treat them as transient alongside 5xx server errors.
+                // Other 4xx errors are client errors (wrong URL, auth) and are not retryable.
                 if (httpEx.StatusCode.HasValue)
                 {
                     int code = (int)httpEx.StatusCode.Value;
-                    return code >= 500;
+                    return code == 429 || code == 408 || code >= 500;
                 }
 
                 // No status code means network-level failure (DNS, connection reset, etc.) - transient
                 return true;
             }
 
+            return false;
+        }
+
+        /// <summary>
+        /// Tries to read a caller-supplied Retry-After delay (in ms) from <see cref="Exception.Data"/>.
+        /// Returns <see langword="true"/> and sets <paramref name="retryAfterMs"/> when the key is present
+        /// and positive; otherwise returns <see langword="false"/>.
+        /// </summary>
+        private static bool TryGetRetryAfterMs(Exception ex, out int retryAfterMs)
+        {
+            if (ex.Data[RetryAfterMsDataKey] is int ms && ms > 0)
+            {
+                retryAfterMs = ms;
+                return true;
+            }
+            retryAfterMs = 0;
             return false;
         }
     }

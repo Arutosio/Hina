@@ -97,8 +97,18 @@ namespace Hina.Core.Patching
             PatchJournal? existing = PatchJournal.Load(journalPath);
             if (existing != null)
             {
-                _logger.LogWarning("Incomplete journal found, rolling back previous patch");
-                await RollbackAsync(rootDir, ct);
+                if (existing.Status == PatchJournal.StatusCompleted)
+                {
+                    // Leftover from a prior successful patch — no rollback needed, just clean up.
+                    _logger.LogDebug("Found completed journal from a prior patch; cleaning up leftovers.");
+                    PatchCleanup.Cleanup(rootDir);
+                }
+                else
+                {
+                    // Status is InProgress (or unknown/corrupt value) — treat as interrupted, roll back.
+                    _logger.LogWarning("Incomplete journal found, rolling back previous patch");
+                    await RollbackAsync(rootDir, ct);
+                }
             }
 
             PatchJournal journal = new PatchJournal();
@@ -169,6 +179,19 @@ namespace Hina.Core.Patching
                         // swap is unchanged), but network latency overlaps instead of summing.
                         // The sliding window also caps memory to ~Concurrency chunks rather than
                         // buffering the whole file.
+                        // Validate manifest chunk sizes up front so a hostile/corrupt manifest
+                        // (Size <= 0 or absurdly large) fails the patch instead of silently writing
+                        // a truncated file (download path) or hitting ArrayPool.Rent with a bad
+                        // length (local copy path). (BUG-011)
+                        foreach (ManifestChunk mc in file.Chunks)
+                        {
+                            if (mc.Size <= 0 || mc.Size > MaxChunkSize)
+                            {
+                                throw new InvalidDataException(
+                                    $"Manifest chunk size {mc.Size} is out of the valid range (1–{MaxChunkSize} bytes).");
+                            }
+                        }
+
                         int window = Math.Max(1, Config.Concurrency);
                         Dictionary<int, Task<byte[]>> inflight = new Dictionary<int, Task<byte[]>>();
                         int nextToStart = 0;
@@ -302,8 +325,13 @@ namespace Hina.Core.Patching
             if (result.Success)
             {
                 _logger.LogInformation("Patch completed successfully, {FileCount} files applied", result.AppliedFiles.Count);
-                journal.Status = "Completed";
+                journal.Status = PatchJournal.StatusCompleted;
                 await journal.SaveAsync(journalPath);
+                // Best-effort cleanup: remove the now-obsolete journal and .hina.bak files.
+                // A failure here must not turn a successful patch into an error — leftovers are
+                // harmless and will be cleaned up at the start of the next PatchAsync call.
+                try { PatchCleanup.Cleanup(rootDir); }
+                catch (Exception cleanEx) { _logger.LogDebug(cleanEx, "Post-patch cleanup failed; leftovers will be removed on next patch."); }
             }
             else
             {
@@ -388,8 +416,18 @@ namespace Hina.Core.Patching
             return Task.CompletedTask;
         }
 
+        // Maximum chunk size accepted on the local-copy path (256 MiB).
+        // Protects ArrayPool.Rent from a hostile/corrupt manifest with an extreme Size value.
+        private const int MaxChunkSize = 256 * 1024 * 1024;
+
         private static void CopyChunk(FileStream src, long offset, int size, FileStream output, IncrementalHash? verifyHash)
         {
+            if (size <= 0 || size > MaxChunkSize)
+            {
+                throw new InvalidDataException(
+                    $"Manifest chunk size {size} is out of the valid range (1–{MaxChunkSize} bytes).");
+            }
+
             byte[] buffer = ArrayPool<byte>.Shared.Rent(size);
             try
             {
@@ -410,12 +448,32 @@ namespace Hina.Core.Patching
 
         private async Task<Dictionary<int, long>> RsyncMatchLocalAsync(string localPath, ManifestFile file, CancellationToken ct)
         {
-            // Build weak checksum lookup for quick candidate matching. Pre-decode each chunk's
-            // strong hash to raw bytes once here, so the per-offset hot path can compare 32 bytes
-            // directly (SequenceEqual) instead of formatting a hex string and doing a string compare.
-            Dictionary<uint, List<WeakEntry>> weakMap = new Dictionary<uint, List<WeakEntry>>();
+            // Collect distinct chunk sizes present in this manifest file.
+            // Fixed-size chunking → one size (or two if the last chunk is shorter).
+            // CDC chunking → many sizes between min and max.
+            // We run one independent rolling-window pass per distinct size so that every chunk,
+            // regardless of its actual byte count, gets a chance to be found in the local file.
+            // This fixes BUG-002 (CDC matcher used file.ChunkSize as the sole window size, which
+            // mismatched all variable-size CDC chunks) and BUG-010 (the last, shorter chunk of a
+            // fixed-size run was also missed because its size differed from file.ChunkSize).
+            Dictionary<int, Dictionary<uint, List<WeakEntry>>> perSizeWeakMaps =
+                new Dictionary<int, Dictionary<uint, List<WeakEntry>>>();
+
             foreach (ManifestChunk chunk in file.Chunks)
             {
+                int sz = chunk.Size;
+                if (sz <= 0 || sz > MaxChunkSize)
+                {
+                    // Skip corrupt/oversized chunk entries; they can't be matched anyway.
+                    continue;
+                }
+
+                if (!perSizeWeakMaps.TryGetValue(sz, out Dictionary<uint, List<WeakEntry>>? weakMap))
+                {
+                    weakMap = new Dictionary<uint, List<WeakEntry>>();
+                    perSizeWeakMaps[sz] = weakMap;
+                }
+
                 if (!weakMap.TryGetValue(chunk.Weak, out List<WeakEntry>? list))
                 {
                     list = new List<WeakEntry>();
@@ -425,55 +483,65 @@ namespace Hina.Core.Patching
             }
 
             Dictionary<int, long> matches = new Dictionary<int, long>();
-            int chunkSize = file.ChunkSize;
-            // A hostile/corrupt manifest could carry chunkSize <= 0; the sliding window uses it as a
-            // modulo divisor (% chunkSize) and a buffer size, so guard against a DivideByZeroException.
-            // Returning no matches just means every chunk is downloaded.
-            if (chunkSize <= 0)
+
+            if (perSizeWeakMaps.Count == 0)
             {
                 return matches;
             }
 
-            using (FileStream fs = File.OpenRead(localPath))
+            long fileLength;
+            using (FileStream probe = File.OpenRead(localPath))
             {
-                if (fs.Length < chunkSize)
+                fileLength = probe.Length;
+            }
+
+            // One rolling-window pass per distinct chunk size.
+            foreach (KeyValuePair<int, Dictionary<uint, List<WeakEntry>>> entry in perSizeWeakMaps)
+            {
+                int windowSize = entry.Key;
+                Dictionary<uint, List<WeakEntry>> weakMap = entry.Value;
+
+                // Skip this window size if the local file is shorter than one window.
+                if (fileLength < windowSize)
                 {
-                    return matches;
+                    continue;
                 }
 
-                byte[] window = new byte[chunkSize];
-                int read = await fs.ReadAsync(window.AsMemory(0, chunkSize), ct);
-                if (read < chunkSize)
+                using (FileStream fs = File.OpenRead(localPath))
                 {
-                    return matches;
-                }
-
-                // Reusable scratch for the linearized window — avoids an allocation per weak hit.
-                byte[] linear = new byte[chunkSize];
-
-                long offset = 0;
-                // Start with the first full window.
-                uint weak = RollingChecksum.Compute(window);
-                TryMatchWindow(window, 0, weak, offset, weakMap, matches, linear);
-
-                int ringIndex = 0;
-                byte[] buffer = new byte[64 * 1024];
-                int bufferRead;
-
-                // Slide one byte at a time using a ring buffer and rolling checksum.
-                while ((bufferRead = await fs.ReadAsync(buffer.AsMemory(0, buffer.Length), ct)) > 0)
-                {
-                    for (int i = 0; i < bufferRead; i++)
+                    byte[] window = new byte[windowSize];
+                    int read = await fs.ReadAsync(window.AsMemory(0, windowSize), ct);
+                    if (read < windowSize)
                     {
-                        byte remove = window[ringIndex];
-                        byte add = buffer[i];
-                        window[ringIndex] = add;
-                        ringIndex = (ringIndex + 1) % chunkSize;
+                        continue;
+                    }
 
-                        weak = RollingChecksum.Roll(weak, remove, add, chunkSize);
-                        offset++;
+                    // Reusable scratch for the linearized ring buffer — avoids per-weak-hit allocation.
+                    byte[] linear = new byte[windowSize];
 
-                        TryMatchWindow(window, ringIndex, weak, offset, weakMap, matches, linear);
+                    long offset = 0;
+                    uint weak = RollingChecksum.Compute(window);
+                    TryMatchWindow(window, 0, weak, offset, weakMap, matches, linear);
+
+                    int ringIndex = 0;
+                    byte[] buffer = new byte[64 * 1024];
+                    int bufferRead;
+
+                    // Slide one byte at a time using a ring buffer and rolling checksum.
+                    while ((bufferRead = await fs.ReadAsync(buffer.AsMemory(0, buffer.Length), ct)) > 0)
+                    {
+                        for (int i = 0; i < bufferRead; i++)
+                        {
+                            byte remove = window[ringIndex];
+                            byte add = buffer[i];
+                            window[ringIndex] = add;
+                            ringIndex = (ringIndex + 1) % windowSize;
+
+                            weak = RollingChecksum.Roll(weak, remove, add, windowSize);
+                            offset++;
+
+                            TryMatchWindow(window, ringIndex, weak, offset, weakMap, matches, linear);
+                        }
                     }
                 }
             }
@@ -565,5 +633,7 @@ namespace Hina.Core.Patching
                 throw new InvalidDataException("Manifest signature is invalid.");
             }
         }
+
+        public void Dispose() => _http.Dispose();
     }
 }

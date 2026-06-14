@@ -194,11 +194,40 @@ namespace Hina.PackageManager.Install
             // so a rollback can re-create the entries/hooks it removed — the new descriptor no
             // longer lists them, so it can't be the restore source.
             InstalledApp previousSnapshot = CloneInstalledApp(app);
-            AppDescriptor? previousDescriptor = TryLoadCachedDescriptor(name);
+            AppDescriptor? previousDescriptor = TryLoadCachedDescriptor(name, out bool previousDescriptorAvailable);
 
             // [5a] Sandbox permission diff. A new version that BROADENS the app's access
             // (new paths, host, ro→rw, new capabilities, or dropping the sandbox) must be
             // consented to — refuse BEFORE touching disk so nothing is half-applied.
+            //
+            // BUG-006 fix (fail-closed): when the previous descriptor cache is absent or
+            // unparseable we cannot establish the baseline sandbox scope at all. Without a
+            // baseline, SandboxDiff.Compute(null, new) treats the old side as "unsandboxed",
+            // so EVERY transition looks like a narrowing and Broadened is never set — even a
+            // genuine broadening. This is true regardless of whether the new version enables
+            // a sandbox: old could have been a narrow sandbox (e.g. home/ro) while new is a
+            // broad one (host/rw + network), and the null baseline would hide it. Likewise a
+            // sandboxed→unsandboxed drop would pass silently. Since no baseline means no
+            // diff can be trusted, the gate fails closed for any missing/unreadable baseline
+            // and requires explicit --accept-new-permissions to proceed.
+            if (!previousDescriptorAvailable && !options.AcceptNewPermissions)
+            {
+                _logger.LogWarning(
+                    "Update of {Name}: previous descriptor cache is missing or unreadable, so the " +
+                    "sandbox permission baseline cannot be established and a broadening cannot be " +
+                    "ruled out. Re-run with `--accept-new-permissions` to proceed.",
+                    name);
+                return new UpdateResult
+                {
+                    Name = name,
+                    FromVersion = app.InstalledVersion,
+                    ToVersion = descriptor.Version,
+                    Status = UpdateStatus.Failed,
+                    Message = $"Cannot verify sandbox scope for '{name}' {descriptor.Version}: previous descriptor cache is missing or unreadable. " +
+                              "Re-run with `--accept-new-permissions` to allow the update."
+                };
+            }
+
             SandboxDiff permDiff = SandboxDiff.Compute(previousDescriptor?.Sandbox, descriptor.Sandbox);
             if (permDiff.Broadened && !options.AcceptNewPermissions)
             {
@@ -380,10 +409,23 @@ namespace Hina.PackageManager.Install
                 string recoveryPath = _paths.RegistryFile + ".recovery.json";
                 try
                 {
+                    // BUG-014 fix: `registry` may be the stale pre-update snapshot if
+                    // AcquireAsync or store.Load() above threw before we could assign
+                    // `registry.Apps[name] = updated`. Rebuild the recovery object here
+                    // so it always contains the v2 row (`updated`), regardless of which
+                    // step inside the try failed. We re-attempt Load() (best-effort) to
+                    // also capture sibling-app rows written by concurrent workers; if that
+                    // fails too we fall back to the pre-update registry. Either way we
+                    // unconditionally inject the v2 row so the snapshot is never stale.
+                    Registry.Registry recoveryRegistry;
+                    try { recoveryRegistry = store.Load(); }
+                    catch { recoveryRegistry = registry; }
+                    recoveryRegistry.Apps[name] = updated;
+
                     await File.WriteAllTextAsync(
                         recoveryPath,
                         System.Text.Json.JsonSerializer.Serialize(
-                            registry,
+                            recoveryRegistry,
                             Hina.PackageManager.Json.PackageManagerIndentedJsonContext.Default.Registry),
                         CancellationToken.None);
                 }
@@ -556,16 +598,26 @@ namespace Hina.PackageManager.Install
 
         // Loads the descriptor cached at install/last-update time (the pre-update version).
         // Returns null if absent or unparseable — callers treat that as "no restore source".
-        private AppDescriptor? TryLoadCachedDescriptor(string name)
+        // `available` is set to false when the file is absent or unreadable/unparseable,
+        // and to true only when a descriptor was successfully loaded. Callers that need to
+        // distinguish "no sandbox declared" from "cache missing" (BUG-006) use this flag.
+        private AppDescriptor? TryLoadCachedDescriptor(string name, out bool available)
         {
             try
             {
                 string path = _paths.DescriptorCache(name);
-                if (!File.Exists(path)) return null;
-                return DescriptorParser.Parse(File.ReadAllText(path));
+                if (!File.Exists(path))
+                {
+                    available = false;
+                    return null;
+                }
+                AppDescriptor d = DescriptorParser.Parse(File.ReadAllText(path));
+                available = true;
+                return d;
             }
             catch
             {
+                available = false;
                 return null;
             }
         }

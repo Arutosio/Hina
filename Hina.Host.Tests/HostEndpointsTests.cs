@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Hina.Host.Tests
 {
@@ -85,6 +86,34 @@ namespace Hina.Host.Tests
             using var client = _factory.CreateClient();
             var resp = await client.GetAsync("/nope/missing.bin");
             Assert.Equal(HttpStatusCode.NotFound, resp.StatusCode);
+        }
+
+        // In multi-app mode the unknown-prefix middleware must pass /health through
+        // regardless of casing — /HEALTH must reach the MapGet endpoint, not return 404.
+        [Fact]
+        public async Task Health_UpperCase_MultiAppMode_ReturnsOk()
+        {
+            string appDir = Path.Combine(Path.GetTempPath(), "hina_host_multiapp_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var opts = new Hina.Host.HostOptions();
+                opts.Apps["testapp"] = appDir;
+
+                using var factory = new WebApplicationFactory<Program>()
+                    .WithWebHostBuilder(b =>
+                    {
+                        b.UseSetting("Patcher:Root", _root);
+                        b.ConfigureServices(s => s.AddSingleton(opts));
+                    });
+
+                using var client = factory.CreateClient();
+                var resp = await client.GetAsync("/HEALTH");
+                Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+            }
+            finally
+            {
+                try { Directory.Delete(appDir, recursive: true); } catch { /* best effort */ }
+            }
         }
     }
 }

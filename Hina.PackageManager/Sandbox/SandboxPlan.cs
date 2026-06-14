@@ -12,9 +12,23 @@ namespace Hina.PackageManager.Sandbox
 
         public IReadOnlyList<ResolvedFsRule> Rules { get; }
 
-        // True if the app's network access should be denied. Enforced on Linux via
-        // Landlock net rules (ABI >= 4 / kernel 6.7+); declared-only on older
-        // kernels and other OSes. Never set when Unrestricted (host opt-out).
+        // True if the app's network access should be denied.
+        //
+        // Enforcement reality on Linux (Landlock):
+        //   kernel < 6.7  (ABI < 4) : NOT enforced at all — app has full network
+        //                              access; a WARNING is emitted once at launch.
+        //   kernel 6.7+   (ABI >= 4) : TCP bind/connect are denied. UDP, ICMP/raw,
+        //                              and path-based UNIX sockets are NOT covered by
+        //                              Landlock and remain accessible (a WARNING
+        //                              documents this gap).
+        //   kernel 6.8+   (ABI >= 5) : additionally, abstract UNIX socket connections
+        //                              are scoped. UDP/ICMP/raw remain outside
+        //                              Landlock's reach.
+        //
+        // macOS (Seatbelt) and Windows (AppContainer) deny all network access when
+        // this flag is set — Linux is more permissive due to Landlock limitations.
+        //
+        // Never set when Unrestricted is true (host opt-out).
         public bool RestrictNetwork { get; }
 
         public SandboxPlan(bool unrestricted, IReadOnlyList<ResolvedFsRule> rules, bool restrictNetwork = false)

@@ -47,6 +47,8 @@ namespace Hina.Builder.Init
             string description = prompt.Ask("Short description", defaults.Description);
             string homepage = prompt.Ask("Homepage URL (optional)", defaults.Homepage ?? "");
             string baseUrl = prompt.Ask("Patch server base URL (where you'll host the files)", defaults.BaseUrl);
+            // BUG-027: normalize trailing slash so descriptor.BaseUrl and manifest BaseUrl agree.
+            baseUrl = baseUrl.EndsWith("/", StringComparison.Ordinal) ? baseUrl : baseUrl + "/";
             bool allowInsecure = baseUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase);
 
             // --- executables: per-variant subdirs (multi-platform) OR a single payload ---
@@ -358,12 +360,16 @@ namespace Hina.Builder.Init
             foreach (VariantDir vd in variantDirs)
             {
                 IReadOnlyList<DetectedExecutable> detected = ExecutableDetector.Detect(vd.Dir);
+                // BUG-013: only propose an executable that matches this variant's OS.
+                // The old fallback (detected[0]) could suggest a Windows .exe as the default
+                // for a linux variant when the detector found a cross-OS binary first.
                 DetectedExecutable? best = null;
                 foreach (DetectedExecutable d in detected)
                 {
                     if (OsString(d.Os) == vd.Os) { best = d; break; }
                 }
-                best ??= detected.Count > 0 ? detected[0] : null;
+                // No OS-matched candidate: do NOT fall back to a wrong-OS binary.
+                // Let the user supply the path manually via the ask below.
 
                 string exec;
                 if (best != null && prompt.Confirm($"[{vd.Token}] use '{best.RelPath}' as the executable?", true))

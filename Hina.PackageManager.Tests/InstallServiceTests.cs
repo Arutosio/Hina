@@ -9,6 +9,7 @@ using Hina.PackageManager.Descriptor;
 using Hina.PackageManager.Install;
 using Hina.PackageManager.Paths;
 using Hina.PackageManager.Registry;
+using Microsoft.Extensions.Logging;
 
 namespace Hina.PackageManager.Tests
 {
@@ -240,6 +241,42 @@ namespace Hina.PackageManager.Tests
             Assert.False(res.Removed);
         }
 
+        [Fact]
+        public async Task Install_SandboxedApp_DisclosureContainsRealAppName()
+        {
+            // BUG-030: DiscloseSandbox must log the actual app name, not the literal "<app>".
+            (string priv, string pub) = KeyGenerator.GenerateEd25519();
+            AppDescriptor descriptor = BuildDescriptor(pub);
+            descriptor.Sandbox = new SandboxSpec
+            {
+                Enabled = true,
+                Filesystem = { new FsRule { Path = "home", Access = "ro" } }
+            };
+            DescriptorSigner.AttachSignature(descriptor, Convert.FromBase64String(priv));
+
+            InstallPaths paths = InstallPaths.ForRoot(_tempDir);
+            string execRel = InstallService.ExecForCurrentOs(descriptor)!;
+
+            InstallServiceFakeLogger logger = new InstallServiceFakeLogger();
+            InstallService svc = new(
+                paths,
+                new FakePlatformIntegration(),
+                fetcher: new StubFetcher(descriptor),
+                patchClientFactory: cfg => new FakePatchClient(cfg, new Dictionary<string, byte[]> { [execRel] = new byte[] { 1 } }),
+                logger: logger);
+
+            await svc.InstallAsync(
+                new Uri("https://example.com/hina.app.json"),
+                new InstallOptions { AssumeTrustOnFirstUse = true },
+                CancellationToken.None);
+
+            // The "Grant more paths later" disclosure must reference the real app name.
+            var grantMsg = logger.Messages.Find(m => m.Text != null && m.Text.Contains("Grant more paths"));
+            Assert.NotNull(grantMsg.Text);
+            Assert.Contains("demo", grantMsg.Text!);
+            Assert.DoesNotContain("<app>", grantMsg.Text!);
+        }
+
         private static AppDescriptor BuildDescriptor(string publicKey)
         {
             ExecMap exec = new ExecMap
@@ -280,5 +317,20 @@ namespace Hina.PackageManager.Tests
 
         public override Task<AppDescriptor> FetchAsync(Uri url, CancellationToken ct) =>
             Task.FromResult(_descriptor);
+    }
+
+    // Minimal ILogger that captures formatted messages for assertion in InstallServiceTests.
+    internal sealed class InstallServiceFakeLogger : ILogger
+    {
+        public List<(LogLevel Level, string Text)> Messages { get; } = new();
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            Messages.Add((logLevel, formatter(state, exception)));
+        }
     }
 }

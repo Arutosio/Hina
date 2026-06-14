@@ -77,10 +77,7 @@ namespace Hina.Core.Chunking
                         byte[] chunkData = new byte[chunk.Size];
                         Buffer.BlockCopy(fileData, offset, chunkData, 0, chunk.Size);
                         byte[] compressed = BrotliCodec.Compress(chunkData);
-                        using (FileStream outFs = File.Create(outPath))
-                        {
-                            await outFs.WriteAsync(compressed.AsMemory(0, compressed.Length), ct);
-                        }
+                        await WriteAtomicAsync(outPath, compressed, ct);
                     }
 
                     offset += chunk.Size;
@@ -117,11 +114,8 @@ namespace Hina.Core.Chunking
                             string outPath = Path.Combine(outDir, hashOnly + ".chunk.br");
                             if (!File.Exists(outPath))
                             {
-                                using (FileStream outFs = File.Create(outPath))
-                                {
-                                    byte[] compressed = BrotliCodec.Compress(buffer.AsSpan(0, read).ToArray());
-                                    await outFs.WriteAsync(compressed.AsMemory(0, compressed.Length), ct);
-                                }
+                                byte[] compressed = BrotliCodec.Compress(buffer.AsSpan(0, read).ToArray());
+                                await WriteAtomicAsync(outPath, compressed, ct);
                             }
                         }
 
@@ -129,6 +123,34 @@ namespace Hina.Core.Chunking
                         fileOffset += read;
                     }
                 }
+            }
+        }
+
+        // Writes 'data' atomically to 'canonicalPath' by first writing to a sibling
+        // temp file and then renaming. If the write is interrupted (cancellation or
+        // crash) the temp file is cleaned up and the canonical path is never touched,
+        // so a partial/corrupt chunk can never be mistaken for a complete one.
+        private static async Task WriteAtomicAsync(string canonicalPath, byte[] data, CancellationToken ct)
+        {
+            string dir = Path.GetDirectoryName(canonicalPath)!;
+            string tempPath = Path.Combine(dir, Path.GetFileName(canonicalPath) + ".tmp" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                using (FileStream tmp = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                           bufferSize: 65536, useAsync: true))
+                {
+                    await tmp.WriteAsync(data.AsMemory(0, data.Length), ct);
+                    await tmp.FlushAsync(ct);
+                }
+                // Atomic promotion: if the canonical path was created by a concurrent
+                // writer between our File.Exists check and here, overwriting is safe
+                // because content-addressed chunks with the same hash are byte-identical.
+                File.Move(tempPath, canonicalPath, overwrite: true);
+            }
+            catch
+            {
+                try { File.Delete(tempPath); } catch { /* best-effort cleanup */ }
+                throw;
             }
         }
     }

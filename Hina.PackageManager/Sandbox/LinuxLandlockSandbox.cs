@@ -16,6 +16,21 @@ namespace Hina.PackageManager.Sandbox
     //
     // Enforcement is Linux-only; the P/Invoke declarations compile everywhere but
     // are never called off Linux (the factory hands back NoOpSandbox instead).
+    //
+    // Network restriction coverage by ABI:
+    //   ABI < 4  (kernel < 6.7): no network Landlock support — network denial is
+    //            NOT enforced; app runs with full network access. A one-time WARNING
+    //            is emitted so the operator is aware.
+    //   ABI >= 4 (kernel 6.7+): TCP bind+connect are denied. UDP, ICMP/raw, and
+    //            path-based UNIX sockets are NOT covered by Landlock net rights and
+    //            remain accessible. A WARNING documents this gap.
+    //   ABI >= 5 (kernel 6.8+): abstract UNIX sockets are additionally scoped
+    //            (LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET), closing one IPC/exfil vector.
+    //            UDP/ICMP/raw remain outside Landlock's reach.
+    //
+    // If complete network isolation equivalent to macOS/Windows is required, a
+    // seccomp BPF filter or a network namespace (unshare CLONE_NEWNET) is needed in
+    // addition to Landlock — outside the scope of this backend.
     public sealed class LinuxLandlockSandbox : ISandboxLauncher
     {
         // syscall numbers — identical on x86_64 and aarch64 (added together in 5.13).
@@ -47,11 +62,23 @@ namespace Hina.PackageManager.Sandbox
         private const ulong FS_REFER = 1ul << 13;      // ABI v2
         private const ulong FS_TRUNCATE = 1ul << 14;   // ABI v3
 
-        // Network access-right bits (ABI v4 / kernel 6.7+). Scoping TCP bind/connect
-        // lets us actually ENFORCE the declared `network` capability.
+        // Network access-right bits (ABI v4 / kernel 6.7+). Only TCP bind/connect
+        // are exposed by Landlock; UDP, ICMP/raw, and UNIX sockets have no net right.
         private const int NET_ABI = 4;
         private const ulong NET_BIND_TCP = 1ul << 0;
         private const ulong NET_CONNECT_TCP = 1ul << 1;
+
+        // ABI v5 (kernel 6.8+): scoped abstract UNIX socket connections.
+        // Stored in the separate `scoped` field of RulesetAttr, not in handled_access_net.
+        private const int NET_SCOPE_ABI = 5;
+        private const ulong LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET = 1ul << 0;
+
+        // One-time warning guards (process-wide; volatile int used with
+        // Interlocked.CompareExchange to avoid printing on every launch).
+        // BUG-018: kernel < 6.7, network denial not enforceable at all.
+        private static volatile int _netUnenforceableWarned;
+        // BUG-019: kernel >= 6.7 but UDP/raw remain outside Landlock's reach.
+        private static volatile int _netPartialWarned;
 
         // Implicit system-runtime grants. A dynamically-linked Linux app must read
         // the loader (/lib64/ld-linux-*), libc, and system libraries to even start;
@@ -128,31 +155,27 @@ namespace Hina.PackageManager.Sandbox
 
             ulong handled = HandledMask(_abi);
 
-            // Enforce the network capability when the plan denies it AND the kernel
-            // is new enough (ABI >= 4). We "handle" TCP bind+connect but add NO
-            // net-port allow rules, so every TCP bind/connect is denied. On older
-            // kernels we cannot enforce — log it so the app/operator knows the
-            // declared denial is not actually applied here.
-            ulong netHandled = 0;
-            if (plan.RestrictNetwork)
-            {
-                if (_abi >= NET_ABI)
-                {
-                    netHandled = NET_BIND_TCP | NET_CONNECT_TCP;
-                }
-                else
-                {
-                    _logger.LogInformation(
-                        "Sandbox requested network denial but Landlock ABI {Abi} < {NetAbi} (kernel < 6.7); network not enforced.",
-                        _abi, NET_ABI);
-                }
-            }
+            // Emit one-time warnings that disclose the actual network enforcement
+            // coverage to operators. The warnings fire here (before the syscall) so
+            // they appear even if ruleset creation later fails.
+            // BUG-018: ABI < 4 → network denial is wholly unenforced (full network access).
+            // BUG-019: ABI >= 4 → only TCP is restricted; UDP/ICMP/raw remain reachable.
+            EmitNetworkDisclosureWarnings(plan.RestrictNetwork);
 
-            RulesetAttr attr = new RulesetAttr { handled_access_fs = handled, handled_access_net = netHandled };
-            // Pass only the fs field's size on pre-net kernels so an old Landlock
-            // doesn't reject a struct it doesn't understand; include the net field
-            // only when we actually use it.
-            UIntPtr attrSize = (UIntPtr)(netHandled != 0 ? Marshal.SizeOf<RulesetAttr>() : sizeof(ulong));
+            // Compute the (netHandled, netScoped, attrSize) triple for the running ABI.
+            // attrSize is progressive so older kernels never see struct fields they
+            // don't know (which would cause EINVAL from landlock_create_ruleset):
+            //   < 4  : only handled_access_fs  (1 × ulong = 8 bytes)
+            //   4    : fs + handled_access_net  (2 × ulong = 16 bytes)
+            //   >= 5 : fs + net + scoped        (3 × ulong = 24 bytes)
+            (ulong netHandled, ulong netScoped, int attrBytes) = ComputeNetAttr(_abi, plan.RestrictNetwork);
+            RulesetAttr attr = new RulesetAttr
+            {
+                handled_access_fs  = handled,
+                handled_access_net = netHandled,
+                scoped             = netScoped,
+            };
+            UIntPtr attrSize = (UIntPtr)attrBytes;
             long rulesetFd = syscall(SYS_landlock_create_ruleset, ref attr, attrSize, 0u);
             if (rulesetFd < 0)
             {
@@ -247,6 +270,66 @@ namespace Hina.PackageManager.Sandbox
             }
         }
 
+        // True when the running kernel supports Landlock network restrictions (TCP).
+        // Exposed as internal for unit tests that want to assert policy without
+        // executing P/Invoke or needing a real Linux kernel.
+        internal bool CanEnforceNetwork => _abi >= NET_ABI;
+
+        // ── Test-only helpers (InternalsVisibleTo: Hina.PackageManager.Tests) ──
+
+        // Construct a sandbox with a caller-supplied ABI value instead of probing
+        // the real kernel. Used by unit tests that must control the ABI without
+        // running on Linux or touching any P/Invoke.
+        internal static LinuxLandlockSandbox CreateForTest(int abi, ILogger logger)
+        {
+            // The one-time disclosure guards are process-wide (in production each `hina run`
+            // is a fresh process, so once-per-process == once-per-launch). Tests, however,
+            // share a process; reset the guards here so each test observes the first-warning
+            // behaviour deterministically regardless of run order.
+            Interlocked.Exchange(ref _netUnenforceableWarned, 0);
+            Interlocked.Exchange(ref _netPartialWarned, 0);
+            return new LinuxLandlockSandbox(logger, abi);
+        }
+
+        // Secondary constructor that accepts a pre-resolved ABI, bypassing ProbeAbi().
+        private LinuxLandlockSandbox(ILogger logger, int abi)
+        {
+            _logger = logger;
+            _abi = abi;
+        }
+
+        // Execute only the warning-disclosure block from Launch, without performing
+        // any syscalls or execv. Lets unit tests assert on log output for the two
+        // network-enforcement cases (BUG-018: unenforced; BUG-019: partial).
+        internal void EmitNetworkDisclosureWarnings(bool restrictNetwork)
+        {
+            if (!restrictNetwork) return;
+
+            if (_abi >= NET_ABI)
+            {
+                if (Interlocked.CompareExchange(ref _netPartialWarned, 1, 0) == 0)
+                {
+                    _logger.LogWarning(
+                        "Sandbox network denial is PARTIAL on this kernel (Landlock ABI {Abi}): " +
+                        "TCP bind/connect are restricted, but UDP, ICMP/raw sockets are NOT blocked by Landlock. " +
+                        "DNS, QUIC, and HTTP/3 via UDP remain reachable. " +
+                        "Full network isolation requires a seccomp filter or a network namespace.",
+                        _abi);
+                }
+            }
+            else
+            {
+                if (Interlocked.CompareExchange(ref _netUnenforceableWarned, 1, 0) == 0)
+                {
+                    _logger.LogWarning(
+                        "Sandbox requested network denial but Landlock ABI {Abi} < {NetAbi} (kernel < 6.7); " +
+                        "network restriction cannot be enforced — the app runs with FULL network access. " +
+                        "Upgrade to kernel 6.7+ to enforce network isolation.",
+                        _abi, NET_ABI);
+                }
+            }
+        }
+
         private static ulong HandledMask(int abi)
         {
             ulong mask = FS_EXECUTE | FS_WRITE_FILE | FS_READ_FILE | FS_READ_DIR
@@ -255,6 +338,32 @@ namespace Hina.PackageManager.Sandbox
             if (abi >= 2) mask |= FS_REFER;
             if (abi >= 3) mask |= FS_TRUNCATE;
             return mask;
+        }
+
+        // Compute the (netHandled, netScoped, attrSize) triple for a given ABI and
+        // RestrictNetwork flag without touching any syscall. Extracted for testability.
+        //
+        // Returns:
+        //   netHandled : bits for handled_access_net  (0 if ABI < 4 or not restricting)
+        //   netScoped  : bits for scoped field        (0 if ABI < 5 or not restricting)
+        //   attrSize   : byte count to pass to landlock_create_ruleset
+        internal static (ulong netHandled, ulong netScoped, int attrSize) ComputeNetAttr(int abi, bool restrictNetwork)
+        {
+            if (!restrictNetwork || abi < NET_ABI)
+            {
+                // ABI < 4: no network Landlock support, or network not restricted.
+                // attrSize covers only the fs field.
+                return (0ul, 0ul, sizeof(ulong));
+            }
+
+            ulong netHandled = NET_BIND_TCP | NET_CONNECT_TCP;
+            ulong netScoped  = abi >= NET_SCOPE_ABI ? LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET : 0ul;
+
+            int attrSize = abi >= NET_SCOPE_ABI
+                ? 3 * sizeof(ulong)   // fs + net + scoped
+                : 2 * sizeof(ulong);  // fs + net
+
+            return (netHandled, netScoped, attrSize);
         }
 
         // Replace the current process image. Returns only on failure.
@@ -281,8 +390,9 @@ namespace Hina.PackageManager.Sandbox
         [StructLayout(LayoutKind.Sequential)]
         private struct RulesetAttr
         {
-            public ulong handled_access_fs;
-            public ulong handled_access_net; // ABI v4+; passed only when used (see attrSize).
+            public ulong handled_access_fs;   // ABI v1+
+            public ulong handled_access_net;  // ABI v4+ (kernel 6.7); passed only when ABI >= 4 (see attrSize).
+            public ulong scoped;              // ABI v5+ (kernel 6.8); LANDLOCK_SCOPE_* bits; passed only when ABI >= 5.
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]

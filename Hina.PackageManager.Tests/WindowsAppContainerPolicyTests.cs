@@ -15,11 +15,14 @@ namespace Hina.PackageManager.Tests
         private static SandboxPlan Plan(bool restrictNetwork, params ResolvedFsRule[] rules)
             => new SandboxPlan(unrestricted: false, rules, restrictNetwork);
 
+        // ---- ContainerName (BUG-009 regression tests) ----
+
         [Fact]
         public void ContainerName_PrefixesHinaAndIsDeterministic()
         {
-            string a = WindowsAppContainerPolicy.ContainerName("signal");
-            string b = WindowsAppContainerPolicy.ContainerName("signal");
+            // Same (basename, anchor) always produces the same moniker.
+            string a = WindowsAppContainerPolicy.ContainerName("signal", @"C:\Apps\signal");
+            string b = WindowsAppContainerPolicy.ContainerName("signal", @"C:\Apps\signal");
             Assert.Equal(a, b);
             Assert.StartsWith("Hina.", a);
             Assert.Contains("signal", a);
@@ -30,7 +33,7 @@ namespace Hina.PackageManager.Tests
         {
             // AppContainer monikers are limited to 64 chars and a constrained charset;
             // spaces / slashes must not leak into the name.
-            string name = WindowsAppContainerPolicy.ContainerName("My App/../weird name!");
+            string name = WindowsAppContainerPolicy.ContainerName("My App/../weird name!", @"C:\Apps\myapp");
             Assert.DoesNotContain(" ", name);
             Assert.DoesNotContain("/", name);
             Assert.DoesNotContain("\\", name);
@@ -40,8 +43,59 @@ namespace Hina.PackageManager.Tests
         [Fact]
         public void ContainerName_LongAppNameStillCapsAt64()
         {
-            string name = WindowsAppContainerPolicy.ContainerName(new string('x', 200));
+            string name = WindowsAppContainerPolicy.ContainerName(new string('x', 200), @"C:\Apps\longapp");
             Assert.True(name.Length <= 64, $"name too long: {name.Length}");
+        }
+
+        // BUG-009: two apps with identical exe basenames but different install paths
+        // must receive DIFFERENT container names (and therefore different SIDs).
+        [Fact]
+        public void ContainerName_SameBasenameDifferentPath_ProducesDifferentNames()
+        {
+            string nameA = WindowsAppContainerPolicy.ContainerName("app", @"C:\Apps\foo");
+            string nameB = WindowsAppContainerPolicy.ContainerName("app", @"C:\Apps\bar");
+            Assert.NotEqual(nameA, nameB);
+        }
+
+        // BUG-009: same (basename, anchor) must always produce the same name so the
+        // AppContainer profile created at first launch is reused on subsequent launches.
+        [Fact]
+        public void ContainerName_SamePathSameBasename_IsDeterministic()
+        {
+            string first  = WindowsAppContainerPolicy.ContainerName("app", @"C:\Apps\myapp");
+            string second = WindowsAppContainerPolicy.ContainerName("app", @"C:\Apps\myapp");
+            Assert.Equal(first, second);
+        }
+
+        // BUG-009: even with a 200-char basename the hash suffix must remain intact
+        // so that two different anchors still produce distinct names after the 64-char cap.
+        [Fact]
+        public void ContainerName_HashSurvivesLengthCap()
+        {
+            string longBasename = new string('x', 200);
+            string nameA = WindowsAppContainerPolicy.ContainerName(longBasename, @"C:\Apps\alpha");
+            string nameB = WindowsAppContainerPolicy.ContainerName(longBasename, @"C:\Apps\beta");
+
+            Assert.True(nameA.Length <= 64, $"nameA too long: {nameA.Length}");
+            Assert.True(nameB.Length <= 64, $"nameB too long: {nameB.Length}");
+            // Different anchors must still be distinguishable even after truncation.
+            Assert.NotEqual(nameA, nameB);
+        }
+
+        // BUG-009: minor spelling differences in the anchor that denote the same
+        // directory (trailing separator, case) must not produce spurious extra SIDs.
+        [Fact]
+        public void ContainerName_PathCanonicalization_TrailingSlashAndCaseAreIgnored()
+        {
+            // Trailing directory separator stripped.
+            string withSlash    = WindowsAppContainerPolicy.ContainerName("app", @"C:\Apps\myapp\");
+            string withoutSlash = WindowsAppContainerPolicy.ContainerName("app", @"C:\Apps\myapp");
+            Assert.Equal(withSlash, withoutSlash);
+
+            // Lower-invariant: on Windows path comparison is case-insensitive.
+            string upper = WindowsAppContainerPolicy.ContainerName("app", @"C:\Apps\MyApp");
+            string lower = WindowsAppContainerPolicy.ContainerName("app", @"C:\apps\myapp");
+            Assert.Equal(upper, lower);
         }
 
         [Fact]

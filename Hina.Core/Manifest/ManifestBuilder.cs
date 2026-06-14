@@ -46,6 +46,15 @@ namespace Hina.Core.Manifest
             IChunker chunker,
             CancellationToken ct)
         {
+            // Determine whether this is a fixed-size chunker (RsyncChunker) or a
+            // variable-size chunker (e.g. ContentDefinedChunker).
+            // For fixed-size runs ChunkSize carries the requested block size as a hint.
+            // For variable-size CDC runs there is no single representative size, so we
+            // record 0 to signal "variable" — the patch client derives window sizes from
+            // the actual chunk.Size values recorded per chunk rather than from this field.
+            bool isFixedSize = chunker is RsyncChunker;
+            int descriptiveChunkSize = isFixedSize ? chunkSize : 0;
+
             Manifest manifest = new Manifest
             {
                 BaseUrl = baseUrl.ToString()
@@ -68,7 +77,7 @@ namespace Hina.Core.Manifest
                         Size = info.Length,
                         MTimeUtc = info.LastWriteTimeUtc,
                         FileHash = fileHash,
-                        ChunkSize = chunkSize,
+                        ChunkSize = descriptiveChunkSize,
                         Chunks = chunks
                     });
                 }

@@ -78,5 +78,41 @@ namespace Hina.Builder.Tests
             // The inner Mach-O is not also listed as a separate plain candidate.
             Assert.Single(found, e => e.Os == TargetOs.Macos);
         }
+
+        [Fact]
+        public void Detect_AppBundleWithoutContentsMacOS_DoesNotSuppressMachOInside()
+        {
+            // A malformed .app that lacks the Contents/MacOS directory — FindBundleExec
+            // returns null. The Mach-O inside must still surface as a plain candidate and
+            // the bundle directory path must NOT be proposed as an executable.
+            string macho = Path.Combine("Broken.app", "Resources", "game");
+            Write(macho, MachO);
+
+            var found = ExecutableDetector.Detect(new DirectoryInfo(_root));
+
+            // The inner Mach-O is visible as a normal candidate.
+            Assert.Contains(found, e => e.RelPath == "Broken.app/Resources/game" && e.Os == TargetOs.Macos);
+            // No entry whose RelPath points at the bundle directory itself.
+            Assert.DoesNotContain(found, e => e.IsBundle);
+            Assert.DoesNotContain(found, e => e.RelPath == "Broken.app" || e.RelPath == "Broken.app/");
+        }
+
+        [Fact]
+        public void Detect_AppBundleWithoutContentsMacOS_DirectoryPathNotProposedAsExecutable()
+        {
+            // Belt-and-suspenders check: no candidate should ever carry a RelPath that
+            // resolves to a directory rather than a file, even when the bundle is malformed.
+            string macho = Path.Combine("Empty.app", "bin", "myexe");
+            Write(macho, MachO);
+
+            var found = ExecutableDetector.Detect(new DirectoryInfo(_root));
+
+            foreach (var candidate in found)
+            {
+                string fullPath = Path.Combine(_root, candidate.RelPath.Replace('/', Path.DirectorySeparatorChar));
+                Assert.True(File.Exists(fullPath),
+                    $"Candidate '{candidate.RelPath}' does not point to a file.");
+            }
+        }
     }
 }

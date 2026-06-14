@@ -67,5 +67,57 @@ namespace Hina.CLI.Tests
             string[] args = { "install", "https://example.com/a.json", "--allow-insecure", "--retries", "3" };
             Assert.Null(Args.FirstUnknownFlag(args, known, startIndex: 1));
         }
+
+        // BUG-025: KnownFlags in PermsCommand used StringComparer.Ordinal, but HasFlag/GetValue
+        // use OrdinalIgnoreCase. A mixed-case variant like `--Grant` was therefore rejected by
+        // FirstUnknownFlag before HasFlag/GetValue could recognise it. After the fix, the KnownFlags
+        // set is also OrdinalIgnoreCase, so case variants are treated consistently throughout.
+
+        [Theory]
+        [InlineData("--grant")]
+        [InlineData("--Grant")]
+        [InlineData("--GRANT")]
+        [InlineData("--revoke")]
+        [InlineData("--Revoke")]
+        [InlineData("--REVOKE")]
+        public void FirstUnknownFlag_PermsKnownFlags_CaseVariants_AreNotUnknown(string flag)
+        {
+            // Reproduce the exact set PermsCommand now uses (OrdinalIgnoreCase).
+            var knownFlags = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+            {
+                "--grant", "--revoke"
+            };
+            string[] args = { "perms", "demo", flag, "/tmp/x" };
+            Assert.Null(Args.FirstUnknownFlag(args, knownFlags, startIndex: 1));
+        }
+
+        [Fact]
+        public void FirstUnknownFlag_PermsKnownFlags_OrdinalWouldHaveFailed_UpperCase()
+        {
+            // Document the OLD (broken) behaviour: Ordinal would have surfaced "--Grant" as unknown.
+            var ordinalSet = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal)
+            {
+                "--grant", "--revoke"
+            };
+            string[] args = { "perms", "demo", "--Grant", "/tmp/x" };
+            Assert.Equal("--Grant", Args.FirstUnknownFlag(args, ordinalSet, startIndex: 1));
+        }
+
+        [Fact]
+        public void HasFlag_CaseInsensitive_RecognisesMixedCase()
+        {
+            // HasFlag uses OrdinalIgnoreCase in Core.Cli.Args — verify it accepts mixed-case
+            // perms flags so the BUG-025 fix closes the full round-trip (detect + read).
+            string[] args = { "perms", "demo", "--Grant", "/tmp/x" };
+            Assert.True(Args.HasFlag(args, "--grant"));
+        }
+
+        [Fact]
+        public void GetValue_CaseInsensitive_ReturnsMixedCaseFlagValue()
+        {
+            // GetValue also uses OrdinalIgnoreCase — `--Grant /tmp/x` must yield "/tmp/x".
+            string[] args = { "perms", "demo", "--Grant", "/tmp/x" };
+            Assert.Equal("/tmp/x", Args.GetValue(args, "--grant"));
+        }
     }
 }

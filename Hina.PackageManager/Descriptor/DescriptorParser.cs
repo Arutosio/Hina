@@ -62,10 +62,17 @@ namespace Hina.PackageManager.Descriptor
             return JsonSerializer.Serialize(descriptor, PackageManagerJsonContext.Default.AppDescriptor);
         }
 
-        // Canonical bytes used for descriptor signing. Strips DescriptorSignature so the signed
-        // payload matches both at sign time (no signature yet) and verify time (we null it out).
+        // Canonical bytes used for descriptor signing. Uses a strip-only approach: shallow-clone
+        // the descriptor and null out only DescriptorSignature before serializing with the
+        // canonical context (non-indented, WhenWritingNull). This ensures every field — including
+        // Sandbox and any fields added in the future — is covered by the Ed25519 signature without
+        // requiring a hand-maintained allowlist that can silently omit new fields (as it did with
+        // Sandbox, which is what BUG-001 exploited). The shallow clone avoids mutating the shared
+        // descriptor object, keeping this method safe to call from multiple threads.
         public static byte[] GetCanonicalBytes(AppDescriptor descriptor)
         {
+            // Shallow copy: all fields share references with the original, which is safe here
+            // because we only change DescriptorSignature on the clone and never write it back.
             AppDescriptor unsigned = new AppDescriptor
             {
                 SchemaVersion = descriptor.SchemaVersion,
@@ -85,6 +92,7 @@ namespace Hina.PackageManager.Descriptor
                 Platforms = descriptor.Platforms,
                 Entries = descriptor.Entries,
                 PostInstall = descriptor.PostInstall,
+                Sandbox = descriptor.Sandbox,
                 DescriptorSignature = null
             };
             return JsonSerializer.SerializeToUtf8Bytes(unsigned, PackageManagerCanonicalJsonContext.Default.AppDescriptor);

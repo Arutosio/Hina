@@ -346,6 +346,175 @@ namespace Hina.Core.Tests
             Assert.False(RetryPolicy.IsTransient(new HttpRequestException("err", null, HttpStatusCode.Unauthorized)));
         }
 
+        // BUG-021: HTTP 429 (Too Many Requests) must be treated as transient so a CDN rate-limit
+        // causes a retry with backoff instead of an immediate failure.
+        [Fact]
+        public void IsTransient_429TooManyRequests_ReturnsTrue()
+        {
+            Assert.True(RetryPolicy.IsTransient(new HttpRequestException("err", null, HttpStatusCode.TooManyRequests)));
+        }
+
+        [Fact]
+        public void IsTransient_408RequestTimeout_ReturnsTrue()
+        {
+            Assert.True(RetryPolicy.IsTransient(new HttpRequestException("err", null, HttpStatusCode.RequestTimeout)));
+        }
+
+        [Fact]
+        public async Task GetChunkAsync_RetryOn429ThenSuccess()
+        {
+            // BUG-021: a 429 from the CDN must be retried; previously it was treated as a
+            // non-retryable 4xx and caused an immediate failure.
+            int callCount = 0;
+            byte[] original = new byte[] { 11, 22, 33 };
+            byte[] compressed = BrotliCodec.Compress(original);
+
+            var handler = new SequenceHandler(new Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>[]
+            {
+                (req, ct) =>
+                {
+                    callCount++;
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+                    {
+                        Content = new StringContent("Rate limited")
+                    });
+                },
+                (req, ct) =>
+                {
+                    callCount++;
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent(compressed)
+                    });
+                }
+            });
+
+            using var http = new HttpClient(handler);
+            var policy = new RetryPolicy(maxRetries: 3, baseDelayMs: 10, jitterRng: new Random(42));
+            var client = new HttpChunkClient(http, policy);
+
+            byte[] result = await client.GetChunkAsync(BaseUrl, Hash(original), CancellationToken.None);
+
+            Assert.Equal(original, result);
+            Assert.Equal(2, callCount);
+        }
+
+        [Fact]
+        public async Task GetChunkAsync_429ExhaustsRetries_Throws()
+        {
+            // BUG-021: when a 429 persists across all retries the error must surface as an
+            // HttpRequestException (same as 5xx exhaustion), not silently disappear.
+            int callCount = 0;
+
+            var handler = new SequenceHandler(new Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>[]
+            {
+                (req, ct) => { callCount++; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TooManyRequests)); },
+                (req, ct) => { callCount++; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TooManyRequests)); },
+                (req, ct) => { callCount++; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TooManyRequests)); },
+            });
+
+            using var http = new HttpClient(handler);
+            var policy = new RetryPolicy(maxRetries: 2, baseDelayMs: 10, jitterRng: new Random(42));
+            var client = new HttpChunkClient(http, policy);
+
+            var ex = await Assert.ThrowsAsync<HttpRequestException>(() =>
+                client.GetChunkAsync(BaseUrl, "sha256:aabb001122", CancellationToken.None));
+
+            Assert.Contains("failed after", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(3, callCount); // 1 initial + 2 retries
+        }
+
+        [Fact]
+        public async Task GetChunkAsync_429WithRetryAfterHeader_HonoursDelay()
+        {
+            // BUG-021: when the server supplies a Retry-After: <seconds> header the retry delay
+            // must come from that value (capped at maxDelayMs), not from the exponential backoff.
+            int callCount = 0;
+            byte[] original = new byte[] { 44, 55, 66 };
+            byte[] compressed = BrotliCodec.Compress(original);
+
+            var handler = new SequenceHandler(new Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>[]
+            {
+                (req, ct) =>
+                {
+                    callCount++;
+                    var resp = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+                    // Retry-After: 1 second — small enough for a unit test to complete quickly
+                    resp.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(1));
+                    return Task.FromResult(resp);
+                },
+                (req, ct) =>
+                {
+                    callCount++;
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent(compressed)
+                    });
+                }
+            });
+
+            using var http = new HttpClient(handler);
+            // maxDelayMs: 2000 so the 1-second Retry-After hint fits within the cap.
+            // baseDelayMs: 5000 — larger than the hint, so if the hint is NOT used the
+            // exponential backoff would impose a longer wait and make the delay difference obvious.
+            var policy = new RetryPolicy(maxRetries: 3, baseDelayMs: 5000, maxDelayMs: 2000, jitterRng: new Random(42));
+            var client = new HttpChunkClient(http, policy);
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            byte[] result = await client.GetChunkAsync(BaseUrl, Hash(original), CancellationToken.None);
+            sw.Stop();
+
+            Assert.Equal(original, result);
+            Assert.Equal(2, callCount);
+            // The delay must be ~1000 ms (Retry-After hint), not ~5000 ms (exponential backoff base).
+            // Allow generous margin for CI jitter but well below the 5000 ms exponential base.
+            Assert.InRange(sw.ElapsedMilliseconds, 800, 3000);
+        }
+
+        [Fact]
+        public async Task GetChunkAsync_429WithRetryAfterAboveMaxDelay_CapsAtMaxDelay()
+        {
+            // BUG-021: a Retry-After value larger than maxDelayMs must be capped so the client
+            // never stalls indefinitely because of a misbehaving or hostile server.
+            int callCount = 0;
+            byte[] original = new byte[] { 77, 88, 99 };
+            byte[] compressed = BrotliCodec.Compress(original);
+
+            var handler = new SequenceHandler(new Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>[]
+            {
+                (req, ct) =>
+                {
+                    callCount++;
+                    var resp = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+                    // Retry-After: 1 hour — must be capped at maxDelayMs (10 ms in this test).
+                    resp.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromHours(1));
+                    return Task.FromResult(resp);
+                },
+                (req, ct) =>
+                {
+                    callCount++;
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent(compressed)
+                    });
+                }
+            });
+
+            using var http = new HttpClient(handler);
+            // maxDelayMs: 10 ms — the 1-hour Retry-After must be clamped to this.
+            var policy = new RetryPolicy(maxRetries: 3, baseDelayMs: 10, maxDelayMs: 10, jitterRng: new Random(42));
+            var client = new HttpChunkClient(http, policy);
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            byte[] result = await client.GetChunkAsync(BaseUrl, Hash(original), CancellationToken.None);
+            sw.Stop();
+
+            Assert.Equal(original, result);
+            Assert.Equal(2, callCount);
+            // Must complete well under 1 second (the cap held, not the 1-hour hint).
+            Assert.InRange(sw.ElapsedMilliseconds, 0, 2000);
+        }
+
         [Fact]
         public void IsTransient_NetworkError_NoStatusCode_ReturnsTrue()
         {

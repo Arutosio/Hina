@@ -10,7 +10,11 @@ namespace Hina.Core.Patching
     // Tracks backups for rollback across patch sessions.
     public sealed class PatchJournal
     {
-        public string Status { get; set; } = "InProgress";
+        // Named status constants used by both writer (PatchClient) and reader (guard check).
+        public const string StatusInProgress = "InProgress";
+        public const string StatusCompleted = "Completed";
+
+        public string Status { get; set; } = StatusInProgress;
         public DateTimeOffset CreatedUtc { get; set; } = DateTimeOffset.UtcNow;
         public List<PatchJournalEntry> Entries { get; set; } = new List<PatchJournalEntry>();
 

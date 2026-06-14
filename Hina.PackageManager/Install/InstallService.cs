@@ -206,7 +206,7 @@ namespace Hina.PackageManager.Install
                     || RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
                 if (sandboxRequested)
                 {
-                    DiscloseSandbox(descriptor.Sandbox!, sandboxEnforceable);
+                    DiscloseSandbox(descriptor.Sandbox!, sandboxEnforceable, descriptor.Name);
                 }
                 bool routeThroughHina = sandboxRequested && sandboxEnforceable;
                 string hinaExe = Environment.ProcessPath ?? "hina";
@@ -257,7 +257,7 @@ namespace Hina.PackageManager.Install
         // platform can't enforce (an old Linux kernel without Landlock, or a Windows session that
         // can't honour AppContainer) — there the scope is declared but NOT applied, so we say so
         // plainly instead of implying isolation that won't happen.
-        private void DiscloseSandbox(SandboxSpec sandbox, bool enforceable)
+        private void DiscloseSandbox(SandboxSpec sandbox, bool enforceable, string appName)
         {
             if (!enforceable)
             {
@@ -287,7 +287,7 @@ namespace Hina.PackageManager.Install
             }
             if (enforceable)
             {
-                _logger.LogInformation("Grant more paths later with: hina perms {Name} --grant <path>[:rw]", "<app>");
+                _logger.LogInformation("Grant more paths later with: hina perms {Name} --grant <path>[:rw]", appName);
             }
         }
 

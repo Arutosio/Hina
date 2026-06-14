@@ -56,8 +56,13 @@ namespace Hina.PackageManager.Platform.MacOS
         // to the binary would bypass the sandbox.
         public Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, string? launchOverride, CancellationToken ct)
         {
+            // BUG-016 fix: key the bundle path on both Name and Id so two entries with
+            // the same Name produce distinct on-disk paths. The human-readable display
+            // name (CFBundleName in the plist) keeps entry.Name so Finder shows a clean
+            // label; only the directory stem gains the Id suffix.
             string bundlePath = WriteAppBundle(
-                bundleName: entry.Name,
+                bundleName: entry.Name + " " + entry.Id,
+                displayName: entry.Name,
                 bundleId: "com.hina." + SanitizeId(entry.Id),
                 execTarget: Path.Combine(appDir, entry.Exec),
                 iconRelative: entry.Icon != null ? Path.Combine(appDir, entry.Icon) : null,
@@ -98,8 +103,11 @@ namespace Hina.PackageManager.Platform.MacOS
 
         public Task<string> RegisterMimeType(MimeTypeHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
         {
+            // BUG-007 fix: include EntryId in the bundle name so two entries that
+            // register the same MIME type land on distinct on-disk paths.
             string bundlePath = WriteAppBundle(
-                bundleName: $"Hina MIME {hook.MimeType}",
+                bundleName: $"Hina MIME {hook.MimeType} {hook.EntryId}",
+                displayName: $"Hina MIME {hook.MimeType}",
                 bundleId: "com.hina.mime." + SanitizeId(hook.MimeType) + "." + SanitizeId(hook.EntryId),
                 execTarget: entryExecAbs,
                 iconRelative: null,
@@ -118,8 +126,11 @@ namespace Hina.PackageManager.Platform.MacOS
 
         public Task<string> RegisterUrlScheme(UrlSchemeHook hook, string appDir, string? entryExecAbs, CancellationToken ct)
         {
+            // BUG-007 fix: include EntryId in the bundle name so two entries that
+            // register the same URL scheme land on distinct on-disk paths.
             string bundlePath = WriteAppBundle(
-                bundleName: $"Hina URL {hook.Scheme}",
+                bundleName: $"Hina URL {hook.Scheme} {hook.EntryId}",
+                displayName: $"Hina URL {hook.Scheme}",
                 bundleId: "com.hina.url." + SanitizeId(hook.Scheme) + "." + SanitizeId(hook.EntryId),
                 execTarget: entryExecAbs,
                 iconRelative: null,
@@ -242,7 +253,11 @@ $@"<?xml version=""1.0"" encoding=""UTF-8""?>
 
         // ---- App bundle writer ----
 
-        private string WriteAppBundle(string bundleName, string bundleId, string? execTarget, string? iconRelative, string? documentTypes, string? urlTypes, string? launchOverride = null)
+        // bundleName   — unique key used for the on-disk directory stem and the
+        //               CFBundleExecutable filename (includes Id suffix to avoid collisions).
+        // displayName  — human-readable label written into CFBundleName; shown by Finder /
+        //               Launch Services. When null, falls back to bundleName.
+        private string WriteAppBundle(string bundleName, string? displayName, string bundleId, string? execTarget, string? iconRelative, string? documentTypes, string? urlTypes, string? launchOverride = null)
         {
             Directory.CreateDirectory(_userAppsDir);
 
@@ -282,7 +297,7 @@ $@"<?xml version=""1.0"" encoding=""UTF-8""?>
             }
 
             string plistPath = Path.Combine(contentsDir, "Info.plist");
-            string plist = BuildInfoPlist(bundleName, bundleId, execName, documentTypes, urlTypes);
+            string plist = BuildInfoPlist(displayName ?? bundleName, bundleId, execName, documentTypes, urlTypes);
             File.WriteAllText(plistPath, plist);
 
             return bundlePath;

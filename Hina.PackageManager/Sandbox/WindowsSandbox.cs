@@ -101,7 +101,9 @@ namespace Hina.PackageManager.Sandbox
         [SupportedOSPlatform("windows")]
         private int LaunchInAppContainer(string execAbs, IReadOnlyList<string> appArgs, SandboxPlan plan, CancellationToken ct)
         {
-            string containerName = WindowsAppContainerPolicy.ContainerName(DeriveAppName(execAbs));
+            string appName   = DeriveAppName(execAbs);
+            string anchorPath = DeriveAnchorPath(execAbs, plan);
+            string containerName = WindowsAppContainerPolicy.ContainerName(appName, anchorPath);
 
             IntPtr containerSid = CreateOrDeriveContainerSid(containerName);
             _logger.LogDebug("AppContainer '{Name}' SID {Sid}", containerName, SidToString(containerSid));
@@ -173,12 +175,31 @@ namespace Hina.PackageManager.Sandbox
             return "?";
         }
 
-        // App name used for the container moniker: the executable's file name without
-        // extension. Stable per installed app (each app's exec lives in its own dir).
+        // Human-readable segment of the container moniker: the executable's file name
+        // without extension. Used as the basename part of "Hina.<basename>.<hex8>".
         private static string DeriveAppName(string execAbs)
         {
             string name = Path.GetFileNameWithoutExtension(execAbs);
             return string.IsNullOrEmpty(name) ? "app" : name;
+        }
+
+        // Unique anchor path used to hash-differentiate the AppContainer moniker (BUG-009).
+        // Two apps with the same exe basename but different install paths must produce
+        // distinct monikers so their AppContainer SIDs — and the additive DACL grants
+        // written onto each app's directory — never collide.
+        //
+        // Priority: rules[0].Path (the app's install dir, set by RunCommand / DevCommand)
+        //           → directory of execAbs → execAbs itself (last-resort, always non-empty).
+        private static string DeriveAnchorPath(string execAbs, SandboxPlan plan)
+        {
+            if (plan.Rules.Count > 0 && !string.IsNullOrEmpty(plan.Rules[0].Path))
+                return plan.Rules[0].Path;
+
+            string? dir = Path.GetDirectoryName(execAbs);
+            if (!string.IsNullOrEmpty(dir))
+                return dir;
+
+            return execAbs;
         }
 
         [SupportedOSPlatform("windows")]
@@ -423,7 +444,8 @@ namespace Hina.PackageManager.Sandbox
 
         // CreateProcessW takes one mutable command-line buffer. argv[0] is the exe path;
         // every token is quoted the way CommandLineToArgvW expects.
-        private static char[] BuildCommandLine(string execAbs, IReadOnlyList<string> appArgs)
+        // internal so the unit tests in Hina.PackageManager.Tests can exercise it directly.
+        internal static char[] BuildCommandLine(string execAbs, IReadOnlyList<string> appArgs)
         {
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             sb.Append(QuoteArg(execAbs));
@@ -438,13 +460,65 @@ namespace Hina.PackageManager.Sandbox
             return buffer;
         }
 
-        private static string QuoteArg(string arg)
+        // Quote a single argument according to the CommandLineToArgvW rules (the same
+        // algorithm used by MSVC's argv parser and Daniel Colascione's ArgvQuote):
+        //
+        //   • Backslashes are only special immediately before a '"' or at the end of
+        //     the quoted string (before the closing '"').
+        //   • Before a '"': emit 2*N+1 backslashes, then the escaped '"' (\"').
+        //   • At the closing '"': emit 2*N backslashes so the trailing '\' does NOT
+        //     escape the closing quote.
+        //   • Elsewhere: backslashes are literal — emit them as-is.
+        //
+        // BUG-020 fix: the previous implementation did not double backslashes before
+        // quotes, so e.g. "C:\dir\" was emitted as "C:\dir\" — CommandLineToArgvW
+        // then treated \" as an escaped quote, breaking the argument boundary.
+        //
+        // internal so the unit tests in Hina.PackageManager.Tests can exercise it directly.
+        internal static string QuoteArg(string arg)
         {
-            if (arg.Length > 0 && arg.IndexOfAny(new[] { ' ', '\t', '"' }) < 0)
+            // Fast-path: no characters that force quoting (\n and \v also force it per
+            // CommandLineToArgvW, so include them here alongside the obvious ones).
+            if (arg.Length > 0 && arg.IndexOfAny(new[] { ' ', '\t', '\n', '\v', '"' }) < 0)
             {
                 return arg;
             }
-            return "\"" + arg.Replace("\"", "\\\"") + "\"";
+
+            System.Text.StringBuilder sb = new System.Text.StringBuilder(arg.Length + 4);
+            sb.Append('"');
+
+            int i = 0;
+            while (i < arg.Length)
+            {
+                // Count the run of consecutive backslashes.
+                int n = 0;
+                while (i < arg.Length && arg[i] == '\\') { n++; i++; }
+
+                if (i == arg.Length)
+                {
+                    // End of string: the backslash run precedes the closing '"'.
+                    // Emit 2*N backslashes so none of them escapes the closing quote.
+                    sb.Append('\\', n * 2);
+                    break;
+                }
+                else if (arg[i] == '"')
+                {
+                    // The run precedes a literal '"': emit 2*N+1 backslashes, then \".
+                    sb.Append('\\', n * 2 + 1);
+                    sb.Append('"');
+                    i++;
+                }
+                else
+                {
+                    // Ordinary character: backslashes are not special here, emit as-is.
+                    sb.Append('\\', n);
+                    sb.Append(arg[i]);
+                    i++;
+                }
+            }
+
+            sb.Append('"');
+            return sb.ToString();
         }
 
         // ---- Win32 constants ----

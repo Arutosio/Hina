@@ -62,9 +62,13 @@ namespace Hina.Host
             }
         }
 
+        // threshold == 0 means "abuse detection disabled": always returns false regardless of
+        // how many requests the IP has made. This mirrors the requestsPerMinutePerIp == 0
+        // convention (no rate limit) so that a single value silences the feature cleanly.
         public bool ShouldLogAbuse(string ip, string appName, int threshold, out long count)
         {
             count = 0;
+            if (threshold == 0) return false;
             if (!_keys.TryGetValue($"{ip}|{appName}", out var b)) return false;
             count = b.CountLastMinute();
             if (count < threshold) return false;

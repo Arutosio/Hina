@@ -2286,7 +2286,7 @@ Nota di cautela: `Directory.Delete(recursive:true)` su una directory utente arbi
 - **Modulo**: PM/Sandbox-win
 - **File:linea**: Hina.PackageManager/Sandbox/WindowsSandbox.cs:437-442 (ramo cancellazione di CreateAndWait)
 - **Severita**: Basso
-- **Stato**: DA CONFERMARE
+- **Stato**: FIXATO (giro fix r2)
 - **Lente**: risorse/leak (correttezza, parita comportamentale tra backend)
 - **Verdetto avversariale**: REALE (3/3 scettici non-refutato, 3/3 raggiungibile)
 
@@ -2319,3 +2319,5 @@ Nota di cautela: `Directory.Delete(recursive:true)` su una directory utente arbi
   - Robusta (consigliata): Job Object con `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` + create-suspended/assign/resume. Pro: atomica, cattura tutti i discendenti presenti e futuri, parita esatta con `entireProcessTree: true` degli altri backend, KILL_ON_JOB_CLOSE come backstop anche su crash del padre. Contro: piu P/Invoke e una finestra create->resume da gestire.
 
 ---
+
+> VERIFICA FIX (giro fix r2): applicato il Job Object con JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE + create-suspended/assign/resume in WindowsSandbox.CreateAndWait; al cancel si chiama TerminateJobObject (fallback TerminateProcess se l'assegnazione al job fallisce). Verificato: `dotnet build -c Release` 0 errori, `dotnet test` PackageManager 408 verdi (le modifiche non rompono i test command-line/policy esistenti). NOTA TEST: un test di regressione DETERMINISTICO sul kill dell'albero non e' fattibile in questo harness (richiede desktop Windows interattivo + creazione di un AppContainer profile privilegiato + un figlio reale che genera sottoprocessi; il path Job vive solo in LaunchInAppContainer). Validazione reale demandata al job CI `windows-sandbox` e alla code-review del pattern Win32 standard. Nessun test fabbricato che non eserciti davvero il comportamento.

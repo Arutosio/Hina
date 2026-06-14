@@ -414,7 +414,9 @@ namespace Hina.PackageManager.Sandbox
                 IntPtr.Zero,
                 IntPtr.Zero,
                 bInheritHandles: false,
-                EXTENDED_STARTUPINFO_PRESENT,
+                // CREATE_SUSPENDED so the child can be assigned to a Job Object before it runs,
+                // guaranteeing no descendant escapes the kill-on-cancel tree (BUG-048).
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED,
                 IntPtr.Zero,
                 string.IsNullOrEmpty(workingDir) ? null : workingDir,
                 ref si,
@@ -426,17 +428,53 @@ namespace Hina.PackageManager.Sandbox
             }
             _logger.LogDebug("AppContainer launched pid {Pid} for {Exec}", pi.dwProcessId, execAbs);
 
+            IntPtr hJob = IntPtr.Zero;
             try
             {
-                // Poll so a cancellation can terminate the child (mirrors the kill-on-cancel
-                // behaviour of the other backends).
+                // Confine the child (and every descendant) to a Job Object with
+                // KILL_ON_JOB_CLOSE so a cancel terminates the WHOLE tree — parity with the
+                // entireProcessTree:true used by the SpawnDirect and macOS backends (BUG-048).
+                // The child is suspended; assign it to the job, then resume.
+                hJob = CreateJobObject(IntPtr.Zero, null);
+                if (hJob != IntPtr.Zero)
+                {
+                    JOBOBJECT_EXTENDED_LIMIT_INFORMATION info = default;
+                    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                    int len = Marshal.SizeOf<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>();
+                    IntPtr buf = Marshal.AllocHGlobal(len);
+                    try
+                    {
+                        Marshal.StructureToPtr(info, buf, false);
+                        SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, buf, (uint)len);
+                    }
+                    finally { Marshal.FreeHGlobal(buf); }
+
+                    if (!AssignProcessToJobObject(hJob, pi.hProcess))
+                    {
+                        // Rare on a lowbox (e.g. already in an unassignable job). Fall back to
+                        // killing only the root, preserving the prior behaviour.
+                        _logger.LogDebug("Could not assign pid {Pid} to a job; cancel will kill only the root process.", pi.dwProcessId);
+                        CloseHandle(hJob);
+                        hJob = IntPtr.Zero;
+                    }
+                }
+
+                // Resume the suspended child regardless of whether the job was set up.
+                ResumeThread(pi.hThread);
+
+                // Poll so a cancellation can terminate the child tree.
                 while (true)
                 {
                     uint wait = WaitForSingleObject(pi.hProcess, 100);
                     if (wait == WAIT_OBJECT_0) break;
                     if (ct.IsCancellationRequested)
                     {
-                        try { TerminateProcess(pi.hProcess, 1); } catch { /* race */ }
+                        try
+                        {
+                            if (hJob != IntPtr.Zero) { TerminateJobObject(hJob, 1); }
+                            else { TerminateProcess(pi.hProcess, 1); }
+                        }
+                        catch { /* race */ }
                         WaitForSingleObject(pi.hProcess, INFINITE);
                         break;
                     }
@@ -446,6 +484,7 @@ namespace Hina.PackageManager.Sandbox
             }
             finally
             {
+                if (hJob != IntPtr.Zero) { CloseHandle(hJob); }
                 CloseHandle(pi.hThread);
                 CloseHandle(pi.hProcess);
             }
@@ -553,8 +592,13 @@ namespace Hina.PackageManager.Sandbox
         private const uint SE_GROUP_ENABLED = 0x00000004;
         private const int PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES = 0x00020009;
         private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
+        private const uint CREATE_SUSPENDED = 0x00000004;
         private const uint WAIT_OBJECT_0 = 0x00000000;
         private const uint INFINITE = 0xFFFFFFFF;
+
+        // Job Object: kill the whole tree when the job handle closes / is terminated (BUG-048).
+        private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+        private const int JobObjectExtendedLimitInformation = 9;
 
         // ---- Win32 structs ----
 
@@ -716,5 +760,60 @@ namespace Hina.PackageManager.Sandbox
         [DllImport("kernel32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool CloseHandle(IntPtr hObject);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern uint ResumeThread(IntPtr hThread);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr CreateJobObject(IntPtr lpJobAttributes, string? lpName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetInformationJobObject(IntPtr hJob, int JobObjectInformationClass,
+            IntPtr lpJobObjectInformation, uint cbJobObjectInformationLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool TerminateJobObject(IntPtr hJob, uint uExitCode);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+        {
+            public long PerProcessUserTimeLimit;
+            public long PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize;
+            public UIntPtr MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass;
+            public uint SchedulingClass;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IO_COUNTERS
+        {
+            public ulong ReadOperationCount;
+            public ulong WriteOperationCount;
+            public ulong OtherOperationCount;
+            public ulong ReadTransferCount;
+            public ulong WriteTransferCount;
+            public ulong OtherTransferCount;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+        {
+            public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+            public IO_COUNTERS IoInfo;
+            public UIntPtr ProcessMemoryLimit;
+            public UIntPtr JobMemoryLimit;
+            public UIntPtr PeakProcessMemoryUsed;
+            public UIntPtr PeakJobMemoryUsed;
+        }
     }
 }

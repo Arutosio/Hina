@@ -268,5 +268,125 @@ namespace Hina.PackageManager.Tests
 
             await p.UnregisterAutostart(evidence, CancellationToken.None);
         }
+
+        // BUG-008: command injection via double-quotes or % in the target path.
+        // The .cmd shim must emit a safe quoted token regardless of path content.
+        [Fact]
+        [SupportedOSPlatform("windows")]
+        public async Task AddToPath_TargetWithDoubleQuote_DoesNotBreakCmdShim()
+        {
+            if (!IsWindows) return;
+
+            WindowsPlatformIntegration p = NewPlatform();
+            // A path containing an embedded double-quote: the shim must not close
+            // the surrounding quotes and expose a command-injection surface.
+            string targetExec = "C:\\Apps\\my\"app\\bin\\demo.exe";
+
+            string evidence = await p.AddToPath("demo-quoted", targetExec, CancellationToken.None);
+
+            string content = File.ReadAllText(evidence);
+            Assert.Contains("@echo off", content);
+            // The path must appear with its quote doubled ("") — not raw — so the
+            // outer double-quotes are never prematurely closed.
+            Assert.Contains("\"C:\\Apps\\my\"\"app\\bin\\demo.exe\" %*", content);
+            // The raw unescaped quote must NOT appear (would enable injection).
+            Assert.DoesNotContain("my\"app\\bin\\demo.exe\" %*\r\n\"", content);
+        }
+
+        [Fact]
+        [SupportedOSPlatform("windows")]
+        public async Task AddToPath_TargetWithPercentSign_DoesNotExpandVariable()
+        {
+            if (!IsWindows) return;
+
+            WindowsPlatformIntegration p = NewPlatform();
+            // A path containing %-delimited text: without escaping CMD would expand
+            // %APPDATA% (or similar) even inside double-quotes, producing a wrong path.
+            string targetExec = "C:\\Users\\%USERNAME%\\Apps\\demo.exe";
+
+            string evidence = await p.AddToPath("demo-percent", targetExec, CancellationToken.None);
+
+            string content = File.ReadAllText(evidence);
+            // % must be doubled to %% in the shim content.
+            Assert.Contains("\"C:\\Users\\%%USERNAME%%\\Apps\\demo.exe\" %*", content);
+            // The raw, undoubled path must not appear — that form would expand %USERNAME%
+            // at runtime. (%%USERNAME%% legitimately contains "%USERNAME%" as a substring,
+            // so we assert the surrounding undoubled segment is absent instead.)
+            Assert.DoesNotContain("\\Users\\%USERNAME%\\Apps", content);
+        }
+
+        [Fact]
+        [SupportedOSPlatform("windows")]
+        public async Task AddToPath_TargetWithBothQuoteAndPercent_EscapesBoth()
+        {
+            if (!IsWindows) return;
+
+            WindowsPlatformIntegration p = NewPlatform();
+            string targetExec = "C:\\my\"apps\\%SPECIAL%\\demo.exe";
+
+            string evidence = await p.AddToPath("demo-both", targetExec, CancellationToken.None);
+
+            string content = File.ReadAllText(evidence);
+            Assert.Contains("\"C:\\my\"\"apps\\%%SPECIAL%%\\demo.exe\" %*", content);
+        }
+
+        // BUG-015: two ShellEntry records with the same Name but different Id must
+        // produce distinct .lnk files so uninstalling one does not remove the other's shortcut.
+        [Fact]
+        [SupportedOSPlatform("windows")]
+        public async Task CreateMenuShortcut_SameNameDifferentId_ProducesDistinctLnkFiles()
+        {
+            if (!IsWindows) return;
+
+            WindowsPlatformIntegration p = NewPlatform();
+
+            string appDir = Path.Combine(_tempDir, "payload-collision");
+            string exec1 = Path.Combine(appDir, "bin", "app1.exe");
+            string exec2 = Path.Combine(appDir, "bin", "app2.exe");
+            Directory.CreateDirectory(Path.GetDirectoryName(exec1)!);
+            File.WriteAllBytes(exec1, new byte[] { 0x4D, 0x5A });
+            File.WriteAllBytes(exec2, new byte[] { 0x4D, 0x5A });
+
+            // Both entries share the same display Name; only Id differs.
+            ShellEntry entryA = new ShellEntry { Id = "entry-a", Name = "Shared App", Exec = "bin\\app1.exe" };
+            ShellEntry entryB = new ShellEntry { Id = "entry-b", Name = "Shared App", Exec = "bin\\app2.exe" };
+
+            string evidenceA = await p.CreateMenuShortcut(entryA, appDir, CancellationToken.None);
+            string evidenceB = await p.CreateMenuShortcut(entryB, appDir, CancellationToken.None);
+
+            // The two .lnk paths must be distinct — BUG-015 would have made them equal.
+            Assert.NotEqual(evidenceA, evidenceB);
+
+            // Both shortcut files must exist simultaneously.
+            Assert.True(File.Exists(evidenceA), $"Shortcut for entry-a not found: {evidenceA}");
+            Assert.True(File.Exists(evidenceB), $"Shortcut for entry-b not found: {evidenceB}");
+
+            // Removing one evidence path must leave the other intact.
+            await p.RemoveMenuShortcut(evidenceA, CancellationToken.None);
+            Assert.False(File.Exists(evidenceA), "Shortcut A should have been removed");
+            Assert.True(File.Exists(evidenceB), "Shortcut B must survive removal of A's evidence");
+        }
+
+        [Fact]
+        [SupportedOSPlatform("windows")]
+        public async Task CreateMenuShortcut_LnkPathContainsEntryId()
+        {
+            if (!IsWindows) return;
+
+            WindowsPlatformIntegration p = NewPlatform();
+
+            string appDir = Path.Combine(_tempDir, "payload-idcheck");
+            string execAbs = Path.Combine(appDir, "bin", "demo.exe");
+            Directory.CreateDirectory(Path.GetDirectoryName(execAbs)!);
+            File.WriteAllBytes(execAbs, new byte[] { 0x4D, 0x5A });
+
+            ShellEntry entry = new ShellEntry { Id = "my-unique-id", Name = "My App", Exec = "bin\\demo.exe" };
+            string evidence = await p.CreateMenuShortcut(entry, appDir, CancellationToken.None);
+
+            // The filename stem must contain the entry Id to prevent regressions of BUG-015.
+            string filename = Path.GetFileNameWithoutExtension(evidence);
+            Assert.Contains("my-unique-id", filename);
+            Assert.EndsWith(".lnk", evidence);
+        }
     }
 }

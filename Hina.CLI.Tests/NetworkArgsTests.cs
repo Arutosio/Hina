@@ -36,6 +36,26 @@ namespace Hina.CLI.Tests
                 NetworkArgs.FromArgs(new[] { "install", "https://e.com/a.json", "--retries", value }));
         }
 
+        // BUG-033: --connect-timeout/--request-timeout are seconds * 1000; without an upper bound
+        // a huge value overflows int (negative timeout downstream, or a tiny positive one in a
+        // narrow band). Reject values above the 24h cap loudly.
+        [Theory]
+        [InlineData("--connect-timeout", "3000000")]  // wraps negative
+        [InlineData("--connect-timeout", "4294968")]  // wraps to a tiny positive
+        [InlineData("--request-timeout", "3000000")]
+        public void FromArgs_TimeoutTooLarge_Throws(string flag, string value)
+        {
+            Assert.Throws<FormatException>(() =>
+                NetworkArgs.FromArgs(new[] { "install", "https://e.com/a.json", flag, value }));
+        }
+
+        [Fact]
+        public void FromArgs_TimeoutWithinCap_IsHonored()
+        {
+            NetworkOptions opts = NetworkArgs.FromArgs(new[] { "install", "https://e.com/a.json", "--request-timeout", "600" });
+            Assert.Equal(600 * 1000, opts.RequestTimeoutMs);
+        }
+
         [Fact]
         public void FromArgs_TrailingFlagWithoutValue_Throws()
         {

@@ -1642,7 +1642,7 @@ Opzione MINIMA (cap + log) se la singola passata e' troppo invasiva: dopo aver c
 - **Modulo**: CLI/Commands
 - **File:linea**: Hina.CLI/Commands/NetworkArgs.cs:18-19,26-27 (validazione: ParseInt riga 47)
 - **Severita**: Basso
-- **Stato**: DA CONFERMARE
+- **Stato**: FIXATO (giro fix r2)
 - **Lente**: correttezza
 - **Verdetto avversariale**: REALE
 
@@ -1682,7 +1682,7 @@ Opzione MINIMA (cap + log) se la singola passata e' troppo invasiva: dopo aver c
 - **Modulo**: CLI/Commands
 - **File:linea**: Hina.CLI/Commands/DevCommand.cs:179-183
 - **Severita**: Basso
-- **Stato**: DA CONFERMARE
+- **Stato**: FIXATO (giro fix r2)
 - **Lente**: correttezza
 - **Verdetto avversariale**: REALE
 
@@ -1717,7 +1717,7 @@ Opzione MINIMA (cap + log) se la singola passata e' troppo invasiva: dopo aver c
 - **Modulo**: CLI/Commands
 - **File:linea**: Hina.CLI/Commands/RunCommand.cs:21-37 (parsing), 96-117 (ResolveExecRel)
 - **Severita**: Basso
-- **Stato**: DA CONFERMARE
+- **Stato**: FIXATO (giro fix r2)
 - **Lente**: correttezza
 - **Verdetto avversariale**: REALE
 

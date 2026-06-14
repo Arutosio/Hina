@@ -373,6 +373,49 @@ namespace Hina.CLI.Tests
             Assert.Equal(2, await Dispatch("dev", "sandbox-run", "--app-dir", _root));
         }
 
+        // BUG-034: `--allow :rw` (bare access suffix, no path) stripped to an empty path and
+        // Path.GetFullPath("") threw a cryptic "path is empty" with no mention of --allow.
+        [Fact]
+        public async Task DevSandboxRun_AllowOnlyAccessSuffix_ReturnsUsageErrorNamingTheFlag()
+        {
+            var log = new CapturingLogger();
+            var ctx = new CommandContext(InstallPaths.ForRoot(_root), log, NullLoggerFactory.Instance, CancellationToken.None);
+
+            int exit = await CommandRouter.DispatchAsync(ctx,
+                new[] { "dev", "sandbox-run", "--app-dir", _root, "--allow", ":rw", "--", "/bin/true" });
+
+            Assert.Equal(2, exit);
+            Assert.Contains(log.Messages, m => m.Contains("--allow"));
+        }
+
+        // BUG-035: `hina run` ignored unknown flags (treated as the entryId, yielding a misleading
+        // "entry not defined" error) and silently dropped extra positionals.
+        [Fact]
+        public async Task Run_UnknownFlag_ReturnsUsageErrorNamingTheFlag()
+        {
+            var log = new CapturingLogger();
+            var ctx = new CommandContext(InstallPaths.ForRoot(_root), log, NullLoggerFactory.Instance, CancellationToken.None);
+
+            int exit = await CommandRouter.DispatchAsync(ctx, new[] { "run", "demo", "--jobs", "5" });
+
+            Assert.Equal(2, exit);
+            Assert.Contains(log.Messages, m => m.Contains("Unknown flag"));
+        }
+
+        [Fact]
+        public async Task Run_TooManyPositionals_ReturnsUsageError()
+        {
+            Assert.Equal(2, await Dispatch("run", "demo", "e1", "e2"));
+        }
+
+        [Fact]
+        public async Task Run_AppArgsAfterSeparator_AreNotRejected()
+        {
+            // GUARD (BUG-035): args after `--` are passed verbatim and may start with '-'. They
+            // must NOT be rejected as unknown flags; this reaches the not-installed path (exit 1).
+            Assert.Equal(1, await Dispatch("run", "ghost", "--", "--verbose"));
+        }
+
         [Fact]
         public async Task ReadOnly_FutureSchemaRegistry_ReturnsErrorCodeNotCrash()
         {

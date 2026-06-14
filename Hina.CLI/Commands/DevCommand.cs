@@ -180,6 +180,13 @@ namespace Hina.CLI.Commands
                 bool rw = spec.EndsWith(":rw", StringComparison.Ordinal);
                 string p = (spec.EndsWith(":rw", StringComparison.Ordinal) || spec.EndsWith(":ro", StringComparison.Ordinal))
                     ? spec[..^3] : spec;
+                if (string.IsNullOrWhiteSpace(p))
+                {
+                    // A bare ":rw"/":ro" (or empty) has no path part; Path.GetFullPath("") would
+                    // throw a cryptic "path is empty" with no mention of --allow (BUG-034).
+                    logger.LogError("--allow '{Spec}' is missing the path part. Expected --allow <path>[:ro|:rw].", spec);
+                    return 2;
+                }
                 rules.Add(new ResolvedFsRule(Path.GetFullPath(p), rw));
             }
 

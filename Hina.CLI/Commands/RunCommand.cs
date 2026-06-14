@@ -33,6 +33,23 @@ namespace Hina.CLI.Commands
                 return 2;
             }
 
+            // Reject unknown flags and extra positionals (BUG-035), matching install/update/etc.
+            // Only the tokens BEFORE '--' are checked; appArgs after '--' are passed verbatim and
+            // may legitimately start with '-' (e.g. `hina run app -- --verbose`).
+            foreach (string tok in positionals)
+            {
+                if (tok.StartsWith('-'))
+                {
+                    ctx.Logger.LogError("Unknown flag '{Flag}'. Usage: hina run <app> [entryId] [-- args...]", tok);
+                    return 2;
+                }
+            }
+            if (positionals.Count > 2)
+            {
+                ctx.Logger.LogError("Too many arguments. Usage: hina run <app> [entryId] [-- args...]");
+                return 2;
+            }
+
             string name = positionals[0];
             string? entryId = positionals.Count > 1 ? positionals[1] : null;
 

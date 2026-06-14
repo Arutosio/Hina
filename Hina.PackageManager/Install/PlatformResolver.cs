@@ -31,7 +31,16 @@ namespace Hina.PackageManager.Install
         {
             if (descriptor.Platforms.Count == 0)
             {
-                return new PlatformResolution { ExecRelative = InstallService.ExecForCurrentOs(descriptor), ManifestToken = null };
+                // Legacy single-manifest app. Flag NoBuildForPlatform when the Exec map has no
+                // entry for this OS (BUG-042) so install fails fast BEFORE downloading the whole
+                // payload — symmetric with the multi-variant branch below.
+                string? legacyExec = InstallService.ExecForCurrentOs(descriptor);
+                return new PlatformResolution
+                {
+                    ExecRelative = legacyExec,
+                    ManifestToken = null,
+                    NoBuildForPlatform = legacyExec == null
+                };
             }
 
             PlatformSelection? sel = PlatformSelector.Select(
@@ -56,7 +65,8 @@ namespace Hina.PackageManager.Install
         {
             if (descriptor.Platforms.Count == 0)
             {
-                return new PlatformResolution { ExecRelative = InstallService.ExecForCurrentOs(descriptor), ManifestToken = null };
+                // Same legacy resolution (incl. the NoBuildForPlatform flag) as install time.
+                return ForCurrentMachine(descriptor);
             }
             if (!string.IsNullOrEmpty(installedToken))
             {

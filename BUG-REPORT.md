@@ -2010,7 +2010,7 @@ Nota: dopo il guard, `configPath` se non-null e' garantito esistente, quindi `js
 - **Modulo:** PM/Install-core
 - **File:linea:** `Hina.PackageManager/Install/PlatformResolver.cs:32-34` (causa) / `Hina.PackageManager/Install/InstallService.cs:161-194` (effetto) / `Hina.PackageManager/Install/InstallService.cs:294-300` (ExecForCurrentOs) / `Hina.PackageManager/Descriptor/DescriptorValidator.cs:83-91` (perche passa la validazione)
 - **Severita:** Basso
-- **Stato:** DA CONFERMARE
+- **Stato:** FIXATO (giro fix r2)
 - **Lente:** risorse/leak (efficienza/coerenza)
 - **Verdetto avversariale:** REALE
 

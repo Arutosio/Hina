@@ -51,6 +51,23 @@ namespace Hina.PackageManager.Tests
             Assert.True(r.NoBuildForPlatform);
         }
 
+        // BUG-042: a legacy descriptor whose Exec map has no entry for the current OS must flag
+        // NoBuildForPlatform so install fails fast BEFORE downloading the whole payload.
+        [Fact]
+        public void Legacy_NoExecForCurrentOs_FlagsNoBuild()
+        {
+            bool isWin = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                System.Runtime.InteropServices.OSPlatform.Windows);
+            AppDescriptor d = new AppDescriptor
+            {
+                // Cover only an OS different from the test host.
+                Exec = isWin ? new ExecMap { Linux = "g" } : new ExecMap { Windows = "g.exe" }
+            };
+            PlatformResolution r = PlatformResolver.ForCurrentMachine(d);
+            Assert.True(r.NoBuildForPlatform);  // before the fix: false
+            Assert.Null(r.ExecRelative);
+        }
+
         [Fact]
         public void ForInstalledToken_ExactToken_ResolvesThatVariant()
         {

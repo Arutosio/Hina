@@ -34,14 +34,24 @@ namespace Hina.Core.Cli
         // First token that looks like a flag (starts with '-') but isn't in the known set.
         // Lets a command reject typos (e.g. `--allow-insecue`) instead of silently ignoring
         // them — a silently-dropped `--allow-insecure` would change security behavior with no
-        // diagnostic. Value tokens of valued flags don't start with '-', so they're skipped here.
-        public static string? FirstUnknownFlag(string[] args, HashSet<string> known, int startIndex = 0)
+        // diagnostic.
+        //
+        // BUG-024: when `valuedFlags` is supplied, a token that is a known valued flag causes
+        // the immediately following token (its value) to be skipped rather than inspected.
+        // Without this, a value that starts with '-' (e.g. `--name -x`) was falsely reported
+        // as an unknown flag.  Pass null (or omit) to preserve the original behaviour for
+        // callers that have no valued flags.
+        public static string? FirstUnknownFlag(string[] args, HashSet<string> known,
+            int startIndex = 0, HashSet<string>? valuedFlags = null)
         {
             for (int i = startIndex; i < args.Length; i++)
             {
                 string a = args[i];
                 if (!a.StartsWith("-", StringComparison.Ordinal)) continue;
                 if (!known.Contains(a)) return a;
+                // Skip the value token of a known valued flag so a value that starts with '-'
+                // is never mistaken for an unknown flag.
+                if (valuedFlags != null && valuedFlags.Contains(a) && i + 1 < args.Length) i++;
             }
             return null;
         }

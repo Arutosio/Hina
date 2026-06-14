@@ -399,12 +399,21 @@ namespace Hina.PackageManager.Sandbox
 
             string? workingDir = Path.GetDirectoryName(execAbs);
 
+            // bInheritHandles: false — the container launch does NOT redirect stdio, so no
+            // handle needs to be inherited by the child. Passing true at a lowbox security
+            // boundary without a PROC_THREAD_ATTRIBUTE_HANDLE_LIST is the wrong pattern:
+            // any inheritable handle that the parent happens to hold would silently leak
+            // into the sandboxed process, widening its ambient authority.
+            //
+            // If stdio redirection inside the container is ever added, set bInheritHandles
+            // back to true AND add PROC_THREAD_ATTRIBUTE_HANDLE_LIST to the attribute list
+            // with only the three explicit stdio handles — never an open-ended inherit grant.
             bool ok = CreateProcessW(
                 applicationName,
                 commandLine,
                 IntPtr.Zero,
                 IntPtr.Zero,
-                bInheritHandles: true,
+                bInheritHandles: false,
                 EXTENDED_STARTUPINFO_PRESENT,
                 IntPtr.Zero,
                 string.IsNullOrEmpty(workingDir) ? null : workingDir,

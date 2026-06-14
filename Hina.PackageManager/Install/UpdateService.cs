@@ -201,23 +201,21 @@ namespace Hina.PackageManager.Install
             // consented to — refuse BEFORE touching disk so nothing is half-applied.
             //
             // BUG-006 fix (fail-closed): when the previous descriptor cache is absent or
-            // unparseable we cannot establish the baseline sandbox scope. Without the
-            // baseline, SandboxDiff.Compute treats the old side as "unsandboxed" (null),
-            // which means: if the new version also has no sandbox (newOn=false), the diff
-            // is empty and Broadened=false — but we cannot confirm old was unsandboxed,
-            // so a sandboxed→unsandboxed transition would pass silently. Conversely, if
-            // the new version enables a sandbox (newOn=true), that is strictly narrowing
-            // regardless of what old had, so it is safe to proceed without consent.
-            // Therefore the gate must fail-closed only when the new descriptor has no
-            // active sandbox (newOn=false): in that case we cannot tell whether the update
-            // drops an existing sandbox, which would broaden access to the full host.
-            bool newSandboxOn = descriptor.Sandbox?.Enabled == true;
-            if (!previousDescriptorAvailable && !newSandboxOn && !options.AcceptNewPermissions)
+            // unparseable we cannot establish the baseline sandbox scope at all. Without a
+            // baseline, SandboxDiff.Compute(null, new) treats the old side as "unsandboxed",
+            // so EVERY transition looks like a narrowing and Broadened is never set — even a
+            // genuine broadening. This is true regardless of whether the new version enables
+            // a sandbox: old could have been a narrow sandbox (e.g. home/ro) while new is a
+            // broad one (host/rw + network), and the null baseline would hide it. Likewise a
+            // sandboxed→unsandboxed drop would pass silently. Since no baseline means no
+            // diff can be trusted, the gate fails closed for any missing/unreadable baseline
+            // and requires explicit --accept-new-permissions to proceed.
+            if (!previousDescriptorAvailable && !options.AcceptNewPermissions)
             {
                 _logger.LogWarning(
-                    "Update of {Name}: previous descriptor cache is missing or unreadable and " +
-                    "the new version declares no active sandbox; cannot verify whether a sandbox " +
-                    "is being dropped. Re-run with `--accept-new-permissions` to proceed.",
+                    "Update of {Name}: previous descriptor cache is missing or unreadable, so the " +
+                    "sandbox permission baseline cannot be established and a broadening cannot be " +
+                    "ruled out. Re-run with `--accept-new-permissions` to proceed.",
                     name);
                 return new UpdateResult
                 {

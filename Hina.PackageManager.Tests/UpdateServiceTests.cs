@@ -465,22 +465,40 @@ namespace Hina.PackageManager.Tests
             Assert.Equal("1.1.0", reg.Apps["demo"].InstalledVersion);
         }
 
-        // BUG-006 (no false positive): when the cache is missing but the new version keeps
-        // its sandbox enabled, the gate must NOT block — enabling/maintaining a sandbox is
-        // strictly narrowing and cannot broaden access regardless of the old baseline.
+        // Residual BUG-006 hole (found verifying the "DA CONFERMARE" list): the earlier fix
+        // only failed closed when the NEW version had no sandbox, assuming "sandbox on = always
+        // narrowing". That is false: a narrow sandbox can be replaced by a broader one. With the
+        // baseline cache missing, SandboxDiff.Compute(null, broadSpec) treats old as unsandboxed
+        // and reports Broadened=false, so a real broadening (home/ro -> home/rw) slipped through
+        // without consent. The gate now fails closed for ANY missing baseline.
         [Fact]
-        public async Task Update_NewSandboxEnabled_NoCachedDescriptor_ProceedsWithoutConsent()
+        public async Task Update_BroadenedSandbox_NoCachedDescriptor_WithoutConsent_IsRefused()
         {
             await InstallSandboxedV1(Sandbox("home", "ro"));
             string cachePath = _paths.DescriptorCache("demo");
             if (File.Exists(cachePath)) File.Delete(cachePath);
 
-            // v2 has sandbox enabled (rw) — this cannot be broadening (sandbox=on is narrowing),
-            // so the gate must not require consent even without a cached baseline.
+            // v2 keeps a sandbox but widens it (ro -> rw). Without the baseline the diff cannot
+            // see the broadening, so the gate must block rather than fail open.
             UpdateResult result = await UpdateToSandboxed(Sandbox("home", "rw"), acceptNewPerms: false);
 
-            // The SandboxDiff broadening check with null old-spec and enabled new-spec falls
-            // into the "was unrestricted, now restricted" branch → Broadened=false, proceeds.
+            Assert.Equal(UpdateStatus.Failed, result.Status);
+            Assert.Contains("missing or unreadable", result.Message, StringComparison.OrdinalIgnoreCase);
+
+            Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
+            Assert.Equal("1.0.0", reg.Apps["demo"].InstalledVersion);
+        }
+
+        // Same scenario but with explicit consent: the update must proceed.
+        [Fact]
+        public async Task Update_BroadenedSandbox_NoCachedDescriptor_WithConsent_Proceeds()
+        {
+            await InstallSandboxedV1(Sandbox("home", "ro"));
+            string cachePath = _paths.DescriptorCache("demo");
+            if (File.Exists(cachePath)) File.Delete(cachePath);
+
+            UpdateResult result = await UpdateToSandboxed(Sandbox("home", "rw"), acceptNewPerms: true);
+
             Assert.Equal(UpdateStatus.Updated, result.Status);
             Registry.Registry reg = new RegistryStore(_paths.RegistryFile).Load();
             Assert.Equal("1.1.0", reg.Apps["demo"].InstalledVersion);
@@ -714,6 +732,7 @@ namespace Hina.PackageManager.Tests
         public Task<Hina.Core.Patching.VerifyResult> VerifyAsync(string rootDir, CancellationToken ct)
             => Task.FromResult(new Hina.Core.Patching.VerifyResult { Success = true });
         public Task RollbackAsync(string rootDir, CancellationToken ct) => Task.CompletedTask;
+        public void Dispose() { }
     }
 
     // Simulates Ctrl+C arriving while the descriptor fetch is in flight.
@@ -750,6 +769,7 @@ namespace Hina.PackageManager.Tests
         public Task<Hina.Core.Patching.VerifyResult> VerifyAsync(string rootDir, CancellationToken ct)
             => Task.FromResult(new Hina.Core.Patching.VerifyResult { Success = true });
         public Task RollbackAsync(string rootDir, CancellationToken ct) => Task.CompletedTask;
+        public void Dispose() { }
     }
 
     // Multi-URL stub fetcher so UpdateAllAsync can map descriptorUrl → descriptor.
@@ -783,5 +803,6 @@ namespace Hina.PackageManager.Tests
         public Task<Hina.Core.Patching.VerifyResult> VerifyAsync(string rootDir, CancellationToken ct)
             => Task.FromResult(new Hina.Core.Patching.VerifyResult { Success = true });
         public Task RollbackAsync(string rootDir, CancellationToken ct) => Task.CompletedTask;
+        public void Dispose() { }
     }
 }

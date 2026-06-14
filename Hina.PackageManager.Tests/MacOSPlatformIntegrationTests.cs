@@ -269,9 +269,11 @@ namespace Hina.PackageManager.Tests
 
             string plist = File.ReadAllText(Path.Combine(bundlePath, "Contents", "Info.plist"));
             // CFBundleName must be the human-readable display name, not the id-suffixed unique stem.
-            Assert.Contains("<string>Pretty Name</string>", plist);
-            // The id suffix must NOT appear in CFBundleName.
-            Assert.DoesNotContain("<string>Pretty Name my-id</string>", plist);
+            // Scope the checks to the CFBundleName element: the id-suffixed stem legitimately
+            // appears elsewhere (CFBundleExecutable mirrors the on-disk exec filename), so a
+            // plist-wide DoesNotContain on the stem would wrongly fail.
+            Assert.Contains("<key>CFBundleName</key>\n    <string>Pretty Name</string>", plist);
+            Assert.DoesNotContain("<key>CFBundleName</key>\n    <string>Pretty Name my-id</string>", plist);
         }
 
         // ---- BUG-007 regression: MIME/URL handler bundles must not collide when two entries share the same type/scheme ----

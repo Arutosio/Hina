@@ -41,7 +41,14 @@ namespace Hina.Builder.Init
             foreach (DirectoryInfo dir in root.EnumerateDirectories("*.app", SearchOption.AllDirectories))
             {
                 string? innerExec = FindBundleExec(dir);
-                string rel = ToRel(root, innerExec ?? dir.FullName);
+                // If the bundle has no Contents/MacOS executable, treat it as unrecognised:
+                // do not add the directory path as a candidate and do not consume the inner
+                // files, so any Mach-O inside remains visible to the flat scan below.
+                if (innerExec == null)
+                {
+                    continue;
+                }
+                string rel = ToRel(root, innerExec);
                 found.Add(new DetectedExecutable { RelPath = rel, Os = TargetOs.Macos, IsBundle = true, Rank = 100 });
                 foreach (FileInfo f in dir.EnumerateFiles("*", SearchOption.AllDirectories))
                 {

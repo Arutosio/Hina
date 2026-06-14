@@ -59,12 +59,15 @@ namespace Hina.PackageManager.Tests
 
             string plist = File.ReadAllText(Path.Combine(bundlePath, "Contents", "Info.plist"));
             Assert.Contains("<key>CFBundleName</key>", plist);
-            Assert.Contains("Demo App", plist);
+            // CFBundleName must be the human-readable display name, not the id-suffixed stem.
+            Assert.Contains("<string>Demo App</string>", plist);
             Assert.Contains("<key>CFBundleExecutable</key>", plist);
             Assert.Contains("X-Hina-Managed", plist);
 
             // Bundle's MacOS/<exec> symlinks to the real exec.
-            string bundleExec = Path.Combine(bundlePath, "Contents", "MacOS", "Demo App");
+            // The exec filename is derived from the unique bundleName ("Demo App main"),
+            // not the display name, so Finder still sees "Demo App" via CFBundleName.
+            string bundleExec = Path.Combine(bundlePath, "Contents", "MacOS", "Demo App main");
             Assert.NotNull(new FileInfo(bundleExec).LinkTarget);
         }
 
@@ -82,7 +85,9 @@ namespace Hina.PackageManager.Tests
             string launchOverride = "\"/usr/local/bin/hina\" run boxed \"main\"";
             string bundlePath = await _platform.CreateMenuShortcut(entry, appDir, launchOverride, CancellationToken.None);
 
-            string bundleExec = Path.Combine(bundlePath, "Contents", "MacOS", "Boxed App");
+            // The exec filename is derived from the unique bundleName ("Boxed App main"),
+            // not the display name.
+            string bundleExec = Path.Combine(bundlePath, "Contents", "MacOS", "Boxed App main");
             // A sandboxed app must launch via `hina run`, so the bundle exec is a
             // script that invokes the override — NOT a symlink to the raw binary
             // (which would bypass the sandbox).
@@ -200,6 +205,103 @@ namespace Hina.PackageManager.Tests
             Assert.False(File.Exists(evidence));
 
             await _platform.UnregisterAutostart(evidence, CancellationToken.None);
+        }
+
+        // ---- BUG-016 regression: two entries with the same Name must produce distinct bundle paths ----
+
+        [Fact]
+        public async Task CreateMenuShortcut_SameName_DifferentId_ProducesDistinctBundlePaths()
+        {
+            if (!_supportsSymlinks) return;
+
+            string appDir = Path.Combine(_tempDir, "payload-samename");
+            string execAbs = Path.Combine(appDir, "bin", "demo");
+            Directory.CreateDirectory(Path.GetDirectoryName(execAbs)!);
+            File.WriteAllText(execAbs, "#!/bin/sh\necho hi\n");
+
+            // Two entries share the same Name but have different Ids.
+            ShellEntry entryA = new ShellEntry { Id = "entry-a", Name = "My App", Exec = "bin/demo" };
+            ShellEntry entryB = new ShellEntry { Id = "entry-b", Name = "My App", Exec = "bin/demo" };
+
+            string pathA = await _platform.CreateMenuShortcut(entryA, appDir, CancellationToken.None);
+            string pathB = await _platform.CreateMenuShortcut(entryB, appDir, CancellationToken.None);
+
+            // Paths must be distinct — no clobbering.
+            Assert.NotEqual(pathA, pathB);
+            Assert.True(Directory.Exists(pathA));
+            Assert.True(Directory.Exists(pathB));
+        }
+
+        [Fact]
+        public async Task CreateMenuShortcut_SameName_DifferentId_RemovingOneDoesNotAffectOther()
+        {
+            if (!_supportsSymlinks) return;
+
+            string appDir = Path.Combine(_tempDir, "payload-samename-remove");
+            string execAbs = Path.Combine(appDir, "bin", "demo");
+            Directory.CreateDirectory(Path.GetDirectoryName(execAbs)!);
+            File.WriteAllText(execAbs, "#!/bin/sh\necho hi\n");
+
+            ShellEntry entryA = new ShellEntry { Id = "alpha", Name = "Shared Name", Exec = "bin/demo" };
+            ShellEntry entryB = new ShellEntry { Id = "beta",  Name = "Shared Name", Exec = "bin/demo" };
+
+            string pathA = await _platform.CreateMenuShortcut(entryA, appDir, CancellationToken.None);
+            string pathB = await _platform.CreateMenuShortcut(entryB, appDir, CancellationToken.None);
+
+            // Removing A must leave B untouched.
+            await _platform.RemoveMenuShortcut(pathA, CancellationToken.None);
+            Assert.False(Directory.Exists(pathA));
+            Assert.True(Directory.Exists(pathB));
+        }
+
+        [Fact]
+        public async Task CreateMenuShortcut_PlistCFBundleName_IsDisplayNameNotStem()
+        {
+            if (!_supportsSymlinks) return;
+
+            string appDir = Path.Combine(_tempDir, "payload-displayname");
+            string execAbs = Path.Combine(appDir, "bin", "demo");
+            Directory.CreateDirectory(Path.GetDirectoryName(execAbs)!);
+            File.WriteAllText(execAbs, "#!/bin/sh\necho hi\n");
+
+            ShellEntry entry = new ShellEntry { Id = "my-id", Name = "Pretty Name", Exec = "bin/demo" };
+            string bundlePath = await _platform.CreateMenuShortcut(entry, appDir, CancellationToken.None);
+
+            string plist = File.ReadAllText(Path.Combine(bundlePath, "Contents", "Info.plist"));
+            // CFBundleName must be the human-readable display name, not the id-suffixed unique stem.
+            Assert.Contains("<string>Pretty Name</string>", plist);
+            // The id suffix must NOT appear in CFBundleName.
+            Assert.DoesNotContain("<string>Pretty Name my-id</string>", plist);
+        }
+
+        // ---- BUG-007 regression: MIME/URL handler bundles must not collide when two entries share the same type/scheme ----
+
+        [Fact]
+        public async Task RegisterMimeType_SameMime_DifferentEntry_ProducesDistinctBundlePaths()
+        {
+            MimeTypeHook hookA = new MimeTypeHook { MimeType = "application/x-shared", Extensions = { ".shared" }, EntryId = "entry-a" };
+            MimeTypeHook hookB = new MimeTypeHook { MimeType = "application/x-shared", Extensions = { ".shared" }, EntryId = "entry-b" };
+
+            string pathA = await _platform.RegisterMimeType(hookA, "/apps/demo", null, CancellationToken.None);
+            string pathB = await _platform.RegisterMimeType(hookB, "/apps/demo", null, CancellationToken.None);
+
+            Assert.NotEqual(pathA, pathB);
+            Assert.True(Directory.Exists(pathA));
+            Assert.True(Directory.Exists(pathB));
+        }
+
+        [Fact]
+        public async Task RegisterUrlScheme_SameScheme_DifferentEntry_ProducesDistinctBundlePaths()
+        {
+            UrlSchemeHook hookA = new UrlSchemeHook { Scheme = "myapp", EntryId = "entry-a" };
+            UrlSchemeHook hookB = new UrlSchemeHook { Scheme = "myapp", EntryId = "entry-b" };
+
+            string pathA = await _platform.RegisterUrlScheme(hookA, "/apps/demo", null, CancellationToken.None);
+            string pathB = await _platform.RegisterUrlScheme(hookB, "/apps/demo", null, CancellationToken.None);
+
+            Assert.NotEqual(pathA, pathB);
+            Assert.True(Directory.Exists(pathA));
+            Assert.True(Directory.Exists(pathB));
         }
     }
 }

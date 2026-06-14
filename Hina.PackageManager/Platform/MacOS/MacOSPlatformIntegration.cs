@@ -267,7 +267,10 @@ $@"<?xml version=""1.0"" encoding=""UTF-8""?>
             Directory.CreateDirectory(macosDir);
 
             // Stub or symlinked executable so Launch Services treats the bundle as launchable.
-            string execName = SanitizeFileName(bundleName);
+            // Use the display name (not the Id-suffixed stem) for the exec filename / CFBundleExecutable:
+            // the .app directory already carries the Id for on-disk uniqueness, so the inner exec name
+            // stays clean and the Id never leaks into the plist. Falls back to bundleName when no display name.
+            string execName = SanitizeFileName(displayName ?? bundleName);
             string execPath = Path.Combine(macosDir, execName);
             if (launchOverride != null)
             {

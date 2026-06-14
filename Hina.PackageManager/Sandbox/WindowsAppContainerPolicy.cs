@@ -74,10 +74,10 @@ namespace Hina.PackageManager.Sandbox
             // case-insensitive), no trailing directory separator — ensures the same
             // physical directory always hashes identically regardless of how the caller
             // spells it.
-            string canon = anchorPath.TrimEnd(
-                System.IO.Path.DirectorySeparatorChar,
-                System.IO.Path.AltDirectorySeparatorChar)
-                .ToLowerInvariant();
+            // Windows paths always use '\' (and tolerate '/'); trim both literally
+            // rather than relying on the host platform's separator chars, so the
+            // canonicalisation is identical when this logic/tests run on non-Windows CI.
+            string canon = anchorPath.TrimEnd('\\', '/').ToLowerInvariant();
 
             uint hash = Fnv1a32(canon);
             string hashSuffix = "." + hash.ToString("x8"); // e.g. ".a1b2c3d4"

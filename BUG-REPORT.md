@@ -1513,3 +1513,807 @@ Impatto concreto della (presunta) finestra: nullo (eccezione catturata). Difetto
 - **[PM/Sandbox-win+plan] Handle di processo/thread leak se GetExitCodeProcess non e' il problema ma TerminateProcess fallisce silenziosamente** (Hina.PackageManager/Sandbox/WindowsSandbox.cs:407-412) — Il percorso di cancellazione (righe 407-412) E raggiungibile in produzione: RunCommand.cs:93 passa ctx.Ct, originato da cts.Token che viene cancellato dal Ctrl-C in Program.cs:39-45. Tuttavia lo specifico fallimento ipotizzato (TerminateProcess fallisce silenziosamente -> WaitForSingleObject(INFINITE) blocca per sempre -> leak hProcess/hThread) non e realizzabile: (1) pi.hProcess e l'handle del creatore restituito da CreateProcessW e porta PROCESS_TERMINATE, quindi TerminateProcess non puo fallire per mancanza di diritti; l'unico fallimento realistico e su un processo gia uscito, nel qual caso l'handle e gia segnalato e WaitForSingleObject(INFINITE) ritorna immediatamente (nessun hang, nessun leak) - esattamente la race che il commento '/* race */' documenta. (2) Il catch vuoto e ortogonale: la wait INFINITE viene eseguita comunque; il leak richiederebbe un processo user-mode che non si termina MAI, condizione kernel-level senza alcun trigger controllabile dal chiamante. (3) Il blocco finally (417-421) chiude sempre entrambi gli handle su ogni uscita normale dalla wait. (4) NEUTRALIZZAZIONE DECISIVA: Program.cs:34-46 implementa un escape hatch col secondo Ctrl-C - il primo imposta e.Cancel=true e chiama cts.Cancel(), il secondo lascia che l'handler di default del runtime forzi l'uscita dell'intero processo ('escape hatch if cancellation is stuck'). Qualsiasi hang ipotetico e quindi limitato dal secondo Ctrl-C che termina il processo host, e il teardown del processo da parte dell'OS reclama automaticamente tutti gli handle: un leak persistente e impossibile. Nessun test *.Tests copre il percorso (solo Hina.Core.Tests/RetryTests.cs ha matchato, non correlato), ma l'assenza di test non rende il sospetto un bug reale.
 - **[PM/Hooks+Net+Diag+SelfUpdate] ReferencedArtifactPaths tratta i segmenti di evidence dei font come path nudi, ignorando il separatore <US> di Windows** (Hina.PackageManager/Diagnostics/RegistryVerifier.cs:160-166) — La premessa e fattualmente corretta: su Windows l'evidence dei font e 'destPath<US>fontName' (EvidenceSeparator = (char)0x1F, WindowsPlatformIntegration.cs:247/268), mentre HookExecutor.cs:70 unisce i segmenti con '|', e ReferencedArtifactPaths (RegistryVerifier.cs:154-168) splitta solo su '|' aggiungendo il segmento intero. Quindi su Windows il set 'referenced' conterrebbe 'path<US>nome' invece del path nudo. MA il percorso difettoso e irraggiungibile in pratica: l'unico sink che potrebbe cancellare un font (FindOrphanArtifacts/RepairOrphanArtifactsAsync, righe 118-150) classifica come orfano SOLO i path restituiti da _platform.EnumerateManagedArtifacts(). Grep su tutto il repo (*.cs) conferma che SOLO Linux fa l'override di EnumerateManagedArtifacts; la classe WindowsPlatformIntegration NON lo implementa e usa il default di interfaccia IPlatformIntegration.cs:61 che ritorna Array.Empty<string>(). Su Windows quindi il foreach non itera mai: nessun font viene mai classificato orfano ne cancellato, e il mismatch nel set 'referenced' e inerte perche confrontato solo contro un set vuoto. Dove il bug potrebbe manifestarsi (Linux/macOS) non si verifica perche li l'evidence font e gia path nudo (LinuxPlatformIntegration.cs:186/194), coincidendo con EnumerateManagedArtifacts. I test (OrphanArtifactsTests) usano solo la piattaforma Linux con evidence di shell-entry .desktop, non toccano il path Windows US-separato. La descrizione stessa ammette che e 'latente solo perche Windows non implementa EnumerateManagedArtifacts': questa e esattamente la condizione che neutralizza il difetto. E una mina latente che si attiverebbe SOLO se Windows in futuro implementasse EnumerateManagedArtifacts per scansionare font hina-*, ma quello e codice futuro ipotetico, non un bug attuale con impatto concreto.
 - **[PM/Hooks+Net+Diag+SelfUpdate] Font hook evidence mismatch puo cancellare un font ancora referenziato in repair-orphans** (Hina.PackageManager/Diagnostics/RegistryVerifier.cs:154-168, 142-149) — Difetto latente ma non raggiungibile oggi. Il mismatch richiede simultaneamente (a) evidence font con suffisso US (destPath+EvidenceSeparator+fontName) e (b) uno scanner EnumerateManagedArtifacts non vuoto sullo stesso OS. Nessun platform soddisfa entrambe le condizioni. Verificato: SOLO WindowsPlatformIntegration.cs:268 appende il suffisso (destPath + EvidenceSeparator + fontName), ma Windows NON sovrascrive EnumerateManagedArtifacts e usa il default dell'interfaccia (IPlatformIntegration.cs:61 -> Array.Empty<string>()). Quindi i loop in RegistryVerifier righe 124/142 iterano su sequenza vuota su Windows: nessun path viene mai classificato orfano ne cancellato (no-op). L'unico platform con scanner reale e Linux (LinuxPlatformIntegration.cs:277), ma il suo InstallFont (riga 194) e quello macOS (riga 151) ritornano il destPath NUDO senza suffisso, quindi referenced==enumerated combaciano correttamente; lo split su '|' serve solo a separare evidence multi-file, comportamento corretto. Grep su tutti i .cs conferma che solo LinuxPlatformIntegration override EnumerateManagedArtifacts. Caller reale: Hina.CLI/Commands/VerifyCommand.cs:35 e :150 chiamano FindOrphanArtifacts/RepairOrphanArtifactsAsync incondizionatamente su ogni OS, ma su Windows il loop interno e vuoto -> no-op. I test (OrphanArtifactsTests.cs) esercitano solo evidence Linux a path nudo (.desktop), mai il caso font suffissato: ne innescano ne fanno da guardia, restano nel regime sicuro. Conclusione: il percorso difettoso esiste in teoria ma e codice morto/dormiente oggi; nessun input reale lo raggiunge con dati non vuoti, quindi non puo cancellare un font referenziato. Diventera un bug REALE solo se/quando Windows otterra uno scanner di artefatti — landmine futura, non bug attuale.
+
+
+---
+
+# GIRO 2 — Bug Hunt (caccia massiva multi-agente)
+
+> Generato da revisione multi-agente round 2 (find -> verifica avversariale x3 scettici -> classify -> critico completezza -> giro gap).
+> NON sono state applicate fix. Solo trovati, verificati avversarialmente, documentati.
+> Engine: Workflow `wf_1fe13438-94e` (id task w1nkg4s76) · 226 agenti · 17 moduli + 4 gap probe · pipeline 3 stadi · ~10.8M token.
+> Numerazione: continua da BUG-030 -> nuovi BUG-031..BUG-048 (18 bug unici).
+
+## STATO AVANZAMENTO (giro 2)
+
+Tutti i 17 moduli completati ✅ (find -> verify -> classify). Critico completezza: NON dry -> 4 gap probe eseguite (nessun nuovo bug unico; il gap-probe Builder ha ri-confermato BUG-037, fuso). 0 falsi positivi e 0 gia-fixato sopravvissuti alla classify (i sospetti scartati sono stati eliminati in fase di verifica avversariale: vedi colonna "scartati in verify").
+
+- ✅ Core/Manifest — REALE 0 · scartati in verify 2
+- ✅ Core/Rsync+Chunking+Compression — REALE 1 (BUG-031) · scartati 2
+- ✅ Core/Net — REALE 0 · scartati 3
+- ✅ Core/Patching — REALE 1 (BUG-032) · scartati 2
+- ✅ Core/Crypto+Hashing+IO+Config+Inputs+Cli+Json — REALE 0 · scartati 3
+- ✅ CLI/Commands — REALE 3 (BUG-033, BUG-034, BUG-035) · scartati 2
+- ✅ CLI/Routing — REALE 1 (BUG-036) · scartati 2
+- ✅ Builder — REALE 2 (BUG-037, BUG-038) · scartati 2
+- ✅ Host — REALE 2 (BUG-039, BUG-040) · scartati 1
+- ✅ PM/Descriptor — REALE 1 (BUG-041) · scartati 0
+- ✅ PM/Install-core — REALE 1 (BUG-042) · scartati 2
+- ✅ PM/Install-update — REALE 3 (BUG-043, BUG-044, BUG-045) · scartati 2
+- ✅ PM/Platform — REALE 2 (BUG-046, BUG-047) · scartati 2
+- ✅ PM/Registry+Io+Paths — REALE 0 · scartati 3
+- ✅ PM/Sandbox-unix — REALE 0 · scartati 4
+- ✅ PM/Sandbox-win — REALE 1 (BUG-048) · scartati 3
+- ✅ PM/Hooks+Diag+SelfUpdate — REALE 0 · scartati 0
+- ✅ GAP probe (4): cross-module descriptor-cache->run->sandbox · PM/Json non assegnato · Builder recheck (-> ri-conferma BUG-037) · PM/Registry controprova — nuovi unici: 0
+
+## RIEPILOGO (giro 2)
+
+- **Nuovi bug REALI (DA CONFERMARE)**: 18 (BUG-031..BUG-048)
+  - **Alto: 2** — BUG-039 (Host: --config inesistente ignorato silenziosamente), BUG-043 (update: shell entry aggiunte bypassano la sandbox)
+  - **Medio: 4** — BUG-031 (rsync CDC amplificazione I/O), BUG-032 (patch swap non atomico via File.Copy), BUG-041 (DescriptorFetcher non ritenta 429/408), BUG-046 (Windows PATH REG_EXPAND_SZ->REG_SZ data loss)
+  - **Basso: 12** — BUG-033..038, BUG-040, BUG-042, BUG-044, BUG-045, BUG-047, BUG-048
+- **Falsi positivi / scartati in verifica avversariale**: ~38 sospetti refutati dagli scettici (maggioranza refutata o irraggiungibili) prima della classify.
+- **Stato**: tutti DA CONFERMARE. NESSUNA fix applicata in questo giro (codice invariato).
+- **Nota metodologia**: ogni sospetto sopravvive solo con maggioranza di 3 scettici non-refutanti E almeno un percorso raggiungibile da ingresso esterno. Nessun cap silenzioso sui find; cap dichiarato: gap probe limitate a 12 (ne sono emerse 4).
+- **Regola d'oro**: ogni blocco BUG-xxx sotto e auto-sufficiente per applicare la fix senza ri-analisi.
+
+---
+
+### [BUG-031] RsyncMatchLocalAsync ri-scorre l'intero file una volta per ogni dimensione di chunk distinta (amplificazione I/O+CPU su manifest CDC)
+
+- Modulo: Core/Rsync+Chunking+Compression
+- File:linea: Hina.Core/Patching/PatchClient.cs:449-550 (loop a 499, File.OpenRead a 510, slide full-file 531-545); radice nel design di Hina.Core/Rsync/ContentDefinedChunker.cs:69-120
+- Severita: Medio
+- Stato: DA CONFERMARE
+- Lente: risorse/leak (performance/risorse)
+- Verdetto avversariale: REALE
+
+**Descrizione (cosa, perche)**
+`RsyncMatchLocalAsync` raggruppa i chunk del manifest per dimensione (`chunk.Size`) distinta in `perSizeWeakMaps` (righe 459-483) e poi esegue UNA passata indipendente di rolling-window per OGNI dimensione distinta (foreach a riga 499). Dentro ogni iterazione riapre il file locale (`File.OpenRead(localPath)` a riga 510) e fa una scansione byte-per-byte dell'INTERO file (loop 531-545), con un `TryMatchWindow` (SHA256 sul prefisso linearizzato) ad ogni weak-hit. Costo totale = O(numDimensioniDistinte * lunghezzaFile) sia in I/O (una rilettura completa per dimensione) sia in CPU (un rolling-checksum completo per dimensione). Non c'e' alcun cap sul numero di dimensioni distinte (l'unico filtro a riga 465 e' `sz>MaxChunkSize`, che non limita il CONTEGGIO) e non c'e' early-exit dopo che i chunk sono stati tutti matchati.
+
+Per il chunker a dimensione fissa (`RsyncChunker`) le dimensioni distinte sono <=2 (tutti i chunk = chunkSize tranne l'ultimo parziale) -> 1-2 passate, nessun problema. Ma `ContentDefinedChunker` (opt-in via `--chunking cdc`) produce chunk di lunghezza variabile in `[minSize, maxSize]` (default 2048..65536, avg 8192): il boundary scatta quando `(hash & mask)==0` con `chunkLen` che assume centinaia/migliaia di valori distinti su file grandi. Il numero di dimensioni distinte cresce ~linearmente col numero di chunk; su un file grande (es. 1 GB, ~128K chunk @ avg 8KB) si avvicina alle decine di migliaia. Risultato: il delta-matching, che dovrebbe ACCELERARE l'update, fa migliaia/decine di migliaia di riletture complete del file e diventa molto piu' lento di un semplice ri-download dei chunk, bruciando CPU e I/O e vanificando lo scopo della feature CDC proprio sul caso (file grandi) per cui esiste.
+
+**Verifica (raggiungibilita/caller) — catena ingresso->sink**
+1. Publisher esegue `hina-builder build --chunking cdc` (Hina.Builder/BuildCommand.cs:143-146 instanzia `ContentDefinedChunker` con default min=2048/max=65536/avg=8192). CDC e' un mode documentato e pienamente supportato (NB: il DEFAULT e' invece "fixed", BuildCommand.cs:28 e :53 — quindi il bug non colpisce il default, solo i build CDC).
+2. Il manifest firmato contiene `ManifestChunk.Size` eterogenei (centinaia/migliaia di valori distinti su file grandi).
+3. Il client esegue update/install: `PatchClient.PatchAsync` (PatchClient.cs:89) -> per ogni `ManifestFile` esistente localmente che necessita patch, riga 153 chiama `RsyncMatchLocalAsync(localPath, file, ct)`.
+4. Sink: PatchClient.cs:499 foreach su ogni dimensione distinta -> riga 510 `File.OpenRead` + righe 531-545 rilettura/slide completa del file locale, eseguita una volta per ciascuna delle migliaia di dimensioni distinte CDC -> O(numDistinte * lunghezzaFile).
+Ingresso esterno = file/CLI del publisher + manifest distribuito di rete + file locale; nessun attaccante remoto necessario, lo innesca ogni client che applica un delta verso un manifest CDC. Non e' un DoS remoto (manifest firmato dal publisher) ma una regressione di risorse reale e raggiungibile dal flusso normale.
+
+**Coperto da test**
+No. I test esistenti in Hina.Core.Tests/BugFixTests.cs (BUG002_* alle righe 57 e 106, FixedSize_* a 185) usano file minuscoli (CDC con minSize 512/maxSize 4096 su contenuto piccolo) e asseriscono SOLO la correttezza dell'output (`PatchResult.Success` e `matches.Count > 0` / byte-identici), mai il numero di passate full-file ne' il costo. Nessun test rileva l'amplificazione.
+
+**Fix proposta — concreta**
+Eliminare la rilettura ripetuta del file: fare UNA SOLA passata sul file locale mantenendo in parallelo tutte le finestre/rolling-checksum per le dimensioni distinte, oppure limitare il numero di passate.
+Opzione raccomandata (singola passata multi-size) in `RsyncMatchLocalAsync` (PatchClient.cs:498-547):
+- Determinare `minW = min(perSizeWeakMaps.Keys)` e `maxW = max(...)`.
+- Aprire il file UNA volta (`File.OpenRead`), leggere a blocchi in un buffer scorrevole di almeno `maxW` byte (es. ring buffer di dimensione `maxW`).
+- Per ogni dimensione distinta `w` mantenere il proprio `uint weak_w` aggiornato con `RollingChecksum.Roll(weak_w, byteUscente_w, byteEntrante, w)` ad ogni avanzamento di un byte (il byte uscente per la finestra `w` e' quello a `offset-w`).
+- Ad ogni posizione, per ogni `w` con `offset >= w`, se `weakMap[w]` contiene `weak_w` chiamare `TryMatchWindow` linearizzando i `w` byte terminanti in quella posizione.
+Costo risultante O(lunghezzaFile * numDimensioniDistinte) in CPU sul solo rolling (nessun SHA256 senza weak-hit) ma O(lunghezzaFile) in I/O (una sola lettura). Per ridurre anche il fattore CPU si puo' tenere i `weak_w` solo per dimensioni effettivamente presenti e saltare le posizioni < w.
+Opzione MINIMA (cap + log) se la singola passata e' troppo invasiva: dopo aver costruito `perSizeWeakMaps`, se `perSizeWeakMaps.Count` supera una soglia (es. 64), emettere un warning e degradare a download puro per quel file (svuotare `matches`) invece di fare migliaia di passate; preserva la correttezza (i chunk mancanti vengono scaricati) ed evita l'esplosione di costo.
+
+**Impatto della fix — caller toccati, compat, thread-safety, edge case**
+- Caller toccati: solo `RsyncMatchLocalAsync`, chiamato unicamente da `PatchClient.PatchAsync` (PatchClient.cs:153). Nessun cambiamento di firma pubblica.
+- Compat wire/schema: nessuna. Non cambia il formato del manifest ne' la canonicalizzazione firmata; cambia solo l'algoritmo di matching locale lato client.
+- Thread-safety: invariata. `RsyncMatchLocalAsync` opera su stato locale per-invocazione; PatchClient itera i file in sequenza (foreach a 117). La singola passata aggiunge solo strutture locali (array di weak per size), nessuno stato condiviso.
+- Edge case: (a) file piu' corto della finestra `w` -> quella `w` non produce match (gia' gestito a 505); con la singola passata: saltare le posizioni con `offset < w`. (b) Ultimo chunk parziale / size uniche: continuano a matchare perche' ogni `w` presente ha la sua finestra. (c) `maxW` molto grande (fino a MaxChunkSize=256MB): il ring buffer va dimensionato su `maxW` reale presente, non su MaxChunkSize; tenere il fallback attuale (skip se `fileLength < w`).
+
+**Rischio regressione**: Medio. La logica di matching viene riscritta; bisogna preservare ESATTAMENTE la semantica weak->strong di `TryMatchWindow` (linearizzazione del ring) per non reintrodurre BUG-002/BUG-010. L'opzione MINIMA (cap+degrade) e' a rischio Basso ma riduce i match (non la correttezza) sopra soglia.
+
+**Test coinvolti**
+- Da NON rompere: Hina.Core.Tests/BugFixTests.cs BUG002_CdcManifest_RsyncMatchFindsChunks_WhenLocalFileHasSameContent (riga 57), BUG002_CdcManifest_RsyncMatchProducesMatchesGreaterThanZero (106), il test sull'ultimo chunk parziale (147), FixedSize_RsyncMatch_BehaviorUnchanged_AfterRefactor (185), i due round-trip multi-versione (227, 261), e i guard BUG011 (328, 361).
+- Nuovo test di regressione (fallisce PRIMA come correttezza-equivalenza, e/o misura le aperture): costruire un manifest CDC su un file di dimensione media con molte dimensioni distinte e (a) asserire che `matches` prodotti dalla nuova singola passata sono identici a quelli della vecchia multi-passata (oracolo di equivalenza), e (b) contare le aperture del file (via un wrapper di FileStream o un contatore iniettato) asserendo che e' 1, non `perSizeWeakMaps.Count`. Prima della fix (b) fallisce (N aperture); dopo passa.
+
+**Alternative**
+- Minima: cap sul numero di dimensioni distinte con degrade a download (Basso rischio, ma sacrifica i match oltre soglia su CDC, riducendo il risparmio di banda).
+- Robusta: singola passata multi-size con rolling-checksum paralleli (elimina sia il fattore I/O sia le riletture, mantiene tutti i match; Medio rischio per la riscrittura). Trade-off: la robusta richiede attenzione alla correttezza del byte uscente per ogni finestra; la minima e' semplice ma peggiora il rapporto di dedup su CDC.
+
+---
+### [BUG-032] Lo "swap atomico" del patcher usa File.Copy (non atomico): crash a meta-copia corrompe il file gia in produzione
+
+- **Modulo**: Core/Patching
+- **File:linea**: Hina.Core/Patching/PatchClient.cs:285
+- **Severita**: Medio
+- **Stato**: DA CONFERMARE
+- **Lente**: correttezza / durabilita
+- **Verdetto avversariale**: REALE
+
+- **Descrizione (cosa, perche)**: Dopo aver ricostruito il file nuovo in `tempPath` (= `localPath + ".hina.tmp"`, sibling di `localPath`, riga 144), lo "swap" sul path finale e `File.Copy(tempPath, localPath, overwrite: true)` (riga 285). I commenti del codice affermano atomicita -- riga 143 "then swap atomically", righe 178-179 "the atomic swap is unchanged", righe 286-288 trattano la cancellazione del temp come mera pulizia di un file "now swapped in" -- ma `File.Copy(overwrite:true)` NON e atomico: apre `localPath` in modalita truncate-and-write e ne riscrive i byte in loop in-place. Un crash, power-loss o errore I/O a meta copia lascia `localPath` (il binario di produzione gia esistente, gia verificato) troncato o parzialmente sovrascritto = corrotto. `tempPath` e nella stessa directory di `localPath` (stesso volume), quindi un vero rename atomico via `File.Move(tempPath, localPath, overwrite:true)` (MoveFileEx MOVEFILE_REPLACE_EXISTING su Windows .NET 5+, rename(2) su POSIX) o `File.Replace` darebbe lo swap all-or-nothing che il commento promette: o c'e il file vecchio integro, o c'e quello nuovo integro, mai un ibrido troncato. E' lo stesso pattern gia adottato/approvato altrove nel progetto (RegistryStore.SaveAsync, AtomicFile.WriteAllText) e prescritto per BUG-003 (ChunkStoreWriter): PatchClient e l'unico punto che usa Copy dove servirebbe Move/Replace -- incoerenza reale con lo standard del progetto.
+
+- **Verifica (raggiungibilita/caller)**: Ingresso esterno A (`hina update`): Hina.PackageManager/Install/UpdateService.cs:266-267 costruisce PatcherConfig via NetworkOptions.ToPatchConfig(..., backup:true) -> UpdateService.cs:272 `patcher.PatchAsync(app.InstallPath, ct)` -> PatchClient.PatchAsync:92 GetManifestAsync (rete) -> riga 117 foreach manifest.Files -> riga 144 tempPath -> riga 285 `File.Copy(tempPath, localPath, overwrite:true)` [SINK]. Ingresso esterno B (`hina install`): InstallService.cs:176-177 ToPatchConfig(..., backup:false) -> InstallService.cs:179 PatchAsync(appDir) -> stesso sink (qui pero appDir e tipicamente fresco, non sovrascrive produzione esistente). Ingresso esterno C (`hina dev patch`): Hina.CLI/Commands/DevCommand.cs:97 PatchAsync(root) -> stesso sink. Il manifest scaricato dalla rete determina quali `localPath` esistenti vengono sovrascritti; un'interruzione del processo (kill/crash/power/errore I/O) durante la copia in-place corrompe il file. Raggiungibile a ogni `hina update` su un file che necessita patch.
+
+- **Coperto da test**: No. Hina.Core.Tests contiene PatchVerifyTests (verifica hash post-patch, non l'atomicita dello swap), PatchCancellationTests (cancellazione iniettata lato download HTTP, non a meta swap), PatchJournalTests/PatchJournalCorruptionTests/PatchCleanupTests/PatchConcurrencyTests. Nessuno simula un'interruzione durante lo swap del file finale ne asserisce che lo swap sia un rename. La proprieta "crash mid-swap non corrompe il file vecchio" non e coperta.
+
+- **Fix proposta**: In PatchClient.cs sostituire la riga 285 `File.Copy(tempPath, localPath, overwrite: true);` con un rename atomico `File.Move(tempPath, localPath, overwrite: true);`. Precondizione gia soddisfatta: il FileStream di lettura su `localPath` (srcFs, righe 169) e gia chiuso prima dello swap (il commento righe 162-164 documenta proprio che il handle DEVE essere rilasciato prima dello swap), quindi non c'e sharing violation. Dopo il Move il temp non esiste piu, quindi il blocco di cleanup `try { File.Delete(tempPath); } catch ...` (righe 289-290) diventa un no-op innocuo (File.Delete su path inesistente non lancia) -- puo restare invariato o essere rimosso; lasciarlo e piu sicuro. Aggiornare i commenti righe 143/178-179 restano corretti (ora sono veri). Variante equivalente: `File.Replace(tempPath, localPath, destinationBackupFileName: null);` ma File.Replace richiede che il target esista gia (lancia se assente) e che non sia lockato; `File.Move(overwrite:true)` copre uniformemente sia il caso target-assente (file net-new) sia target-presente, quindi e preferibile e non richiede branch condizionali sul `existedBefore` gia calcolato a riga 268.
+
+- **Impatto della fix**: Caller toccati: nessuna firma cambia, modifica interna a PatchClient.PatchAsync; UpdateService/InstallService/DevCommand invariati. Compat wire/schema: nessuna (non tocca manifest ne journal ne formato file). Thread-safety: invariata (il loop e sequenziale per file; lo swap di un singolo file e ora atomico a livello FS, migliorando la durabilita). Edge case: (1) File net-new (existedBefore=false): File.Move(overwrite:true) crea il file -- equivalente al Copy attuale. (2) Backup ON con file esistente (righe 269-278): il .hina.bak e il journal InProgress sono scritti PRIMA dello swap, quindi un crash a meta resta recuperabile via RollbackAsync al prossimo avvio; con Move il file vecchio resta integro anche senza rollback. (3) Volume diverso: impossibile, tempPath e sibling di localPath (stesso volume) -> rename atomico garantito. (4) AV/indexer che tiene il handle su localPath: il Move puo fallire con IOException -> gestito dal catch esistente (riga 307) -> rollback, esattamente come oggi un Copy fallirebbe. (5) Cleanup temp (riga 289): dopo Move il temp non c'e piu, Delete no-op.
+
+- **Rischio regressione**: Basso. Sostituzione one-liner di una primitiva (Copy->Move) con semantica piu forte; tutti i percorsi di errore esistenti (catch -> rollback) restano validi. L'unico cambiamento osservabile e che il temp non sopravvive allo swap (gia inteso come cleanup).
+
+- **Test coinvolti**: Da NON rompere: PatchVerifyTests (verifica hash post-patch -- lo swap atomico non cambia i byte finali), PatchCancellationTests, PatchJournalTests, PatchCleanupTests, PatchConcurrencyTests, ZeroByteFileTests, IntegrationTests in Hina.Core.Tests. Nuovo test di regressione (FALLISCE prima, PASSA dopo): in un nuovo file (es. PatchAtomicSwapTests.cs) verificare che lo swap sia un rename e non una copia in-place. Approccio concreto: (a) creare un localPath con contenuto vecchio noto; preparare manifest+chunk store cosi che il file vada patchato; mettere un FileSystemWatcher o un test che apra localPath con FileShare.Read durante lo swap NON e affidabile cross-platform -- preferire un test deterministico: dopo una PatchAsync riuscita, asserire che `File.Exists(tempPath)` sia false (il rename lo consuma) E che nessun file resti scritto a meta; (b) test piu mirato all'atomicita: esporre/iniettare un hook prima del rename che lancia (es. un IFileSwapper iniettabile o, in mancanza, simulare lockando localPath in sola lettura su POSIX dove Move non e bloccato) e verificare che dopo il fallimento localPath conservi ESATTAMENTE i byte vecchi (mai troncato). Il test (a) gia oggi fallirebbe perche File.Copy lascia tempPath in vita fino al Delete -- ma il Delete lo rimuove subito dopo; per un fail-before-fix robusto, asserire la durabilita: scrivere un test che con Copy potrebbe osservare un file parziale (es. patchare due file e far fallire il secondo dopo che il primo e gia stato swappato, verificando che il primo sia integro -- gia integro col Copy che completa, quindi non discrimina). Il discriminante reale e l'atomicita su interruzione, difficile da forzare in xUnit senza injection: pertanto il test di regressione minimo affidabile e introdurre un seam (un delegate `Func swap = File.Move`) e iniettare una versione che lancia DOPO aver scritto 0 byte, asserendo che localPath resta col contenuto vecchio. In assenza di seam, documentare il test come "asserisce tempPath consumato dal rename".
+
+- **Alternative**: Opzione minima (preferita): `File.Move(tempPath, localPath, overwrite:true)` -- one-liner, cross-platform, atomico same-volume, copre net-new e overwrite, allineato a RegistryStore/AtomicFile/BUG-003; trade-off: nessuno significativo, il temp non sopravvive (gia inteso). Opzione robusta: introdurre un seam iniettabile (`internal Func<string,string,bool,Task> SwapFile`) per rendere lo swap testabile a fault-injection e poter scrivere un test di atomicita deterministico, piu eventuale `File.Replace` con backup esplicito su Windows; trade-off: piu codice e superficie di test per un guadagno di sola testabilita, lo swap atomico vero arriva gia con l'opzione minima. Opzione scartata: lasciare File.Copy e affidarsi solo a backup+journal -- non rende lo swap atomico, lascia una finestra in cui il binario live e corrotto fino al prossimo avvio, e con Backup OFF (bool configurabile, PatcherConfig.Backup) la corruzione e irrecuperabile.
+
+---
+### [BUG-033] Integer overflow nella conversione secondi->ms di --connect-timeout/--request-timeout
+
+- **Modulo**: CLI/Commands
+- **File:linea**: Hina.CLI/Commands/NetworkArgs.cs:18-19,26-27 (validazione: ParseInt riga 47)
+- **Severita**: Basso
+- **Stato**: DA CONFERMARE
+- **Lente**: correttezza
+- **Verdetto avversariale**: REALE
+
+- **Descrizione**: ParseInt (NetworkArgs.cs:47) valida solo `int.TryParse(raw, out parsed) && parsed > 0`: accetta qualunque positivo fino a Int32.MaxValue, senza limite superiore. FromArgs poi calcola `connectSec * 1000` (riga 26) e `requestSec * 1000` (riga 27) come moltiplicazione int*int NON checked (nessun `CheckForOverflowUnderflow` nel progetto: grep negativo su tutta la solution; default C# = unchecked). Per `connectSec >= 2_147_484` il prodotto supera Int32.MaxValue e wrappa. Due esiti:
+  1. Wrap negativo (dominante): es. `--connect-timeout 3000000` -> 3_000_000_000 wrappa a -1_294_967_296. Il negativo confluisce in NetworkOptions.ConnectTimeoutMs -> ToPatchConfig (NetworkOptions.cs:38-39) -> PatcherConfig -> PatchClient.BuildHttpClient dove `SocketsHttpHandler.ConnectTimeout = TimeSpan.FromMilliseconds(-...)` (PatchClient.cs:49) / `HttpClient.Timeout = TimeSpan.FromMilliseconds(-...)` (PatchClient.cs:55). I setter .NET rifiutano TimeSpan <= 0 (eccetto InfiniteTimeSpan) con ArgumentOutOfRangeException, catturata dal catch generico del comando -> "Install failed: ..." exit 2, con messaggio fuorviante che non spiega che il valore era troppo grande. (Nota: TimeSpan.FromMilliseconds NON lancia; e il setter del handler a lanciare.)
+  2. Wrap positivo-piccolo (subdolo, banda stretta): es. `--connect-timeout 4294968` -> 4_294_968_000 mod 2^32 = 704, cioe un timeout di 704ms invece dei ~4.29 miliardi di secondi richiesti. Comportamento OPPOSTO all'intento, SENZA alcun errore.
+  Mentre ogni altro input e validato e fallisce loud, l'assenza di un limite superiore + aritmetica unchecked produce o un errore criptico o un valore silenziosamente sbagliato.
+
+- **Verifica (raggiungibilita/caller)**: Input esterno CLI -> InstallCommand.cs:48 (`NetworkArgs.FromArgs(args)`, fuori dal try ma non lancia in caso di overflow) / UpdateCommand.cs:60 / VerifyCommand.cs:187 (--deep). Il valore positivo grande NON inizia con '-', quindi Args.FirstUnknownFlag (InstallCommand.cs:34) non lo intercetta; e un valore valido di flag valorizzato. ParseInt (NetworkArgs.cs:47) accetta -> `connectSec * 1000` overflow (riga 26) -> NetworkOptions.ConnectTimeoutMs/RequestTimeoutMs -> ToPatchConfig (NetworkOptions.cs:38-39) -> PatcherConfig -> PatchClient.BuildHttpClient (Hina.Core/Patching/PatchClient.cs:49,55) TimeSpan.FromMilliseconds -> setter SocketsHttpHandler.ConnectTimeout / HttpClient.Timeout. Wrap negativo -> ArgumentOutOfRangeException -> catch comando -> exit 2. Wrap positivo -> timeout minuscolo silenzioso.
+
+- **Coperto da test**: NO. Hina.CLI.Tests/NetworkArgsTests.cs prova solo `abc`/`0`/`-5` (riga 29-37) e flag mancante/senza valore. Nessun test di limite superiore ne di overflow.
+
+- **Fix proposta**: In NetworkArgs.cs ParseInt, aggiungere un limite superiore sensato espresso in secondi, in modo che `sec * 1000` resti entro Int32 con margine. Concretamente, dopo la validazione `parsed > 0` (riga 47) introdurre:
+  ```csharp
+  // I flag --connect-timeout/--request-timeout sono in SECONDI e vengono convertiti in ms
+  // (sec*1000). Senza un tetto, sec >= 2_147_484 overflowa int e produce un timeout
+  // negativo (ArgumentOutOfRange a valle) o, in banda stretta, un valore positivo minuscolo.
+  const int MaxTimeoutSeconds = 86_400; // 24h: piu che sufficiente, sec*1000 = 86.4M << Int32.Max
+  if (flag != "--retries" && parsed > MaxTimeoutSeconds)
+  {
+      throw new System.FormatException($"Value for {flag} is too large: '{raw}'. Expected 1..{MaxTimeoutSeconds} seconds.");
+  }
+  ```
+  In alternativa minima e piu mirata: lasciare ParseInt generico e fare il clamp/check solo per i due flag timeout in FromArgs prima di moltiplicare. Per --retries (che NON viene moltiplicato per 1000) il tetto non e necessario ma un limite ragionevole (es. 1000) e comunque sano. Mantenere il messaggio che NOMINA il flag, coerente con gli altri errori di ParseInt.
+
+- **Impatto della fix**: Caller toccati: nessuna firma cambia (FromArgs/ParseInt restano internal static con stessa signature). Compat wire/schema: nessuna (sono flag CLI, non serializzati). Thread-safety: nessun impatto (parsing puro, nessuno stato condiviso). Edge case: valori legittimi grandi ma ragionevoli (es. --request-timeout 600 = 10 min) restano sotto il tetto e funzionano; solo input assurdi (>24h) vengono rifiutati con messaggio chiaro invece di overfloware.
+
+- **Rischio regressione**: Basso. Il solo comportamento che cambia e per input gia rotti (overflow); i valori realistici sono invariati.
+
+- **Test coinvolti**: Non rompere i test esistenti in NetworkArgsTests.cs (abc/0/-5/assente/trailing). Nuovo test di regressione (fallisce PRIMA, passa DOPO): `FromArgs_ConnectTimeoutTooLarge_Throws` con `{ "install","https://e.com/a.json","--connect-timeout","3000000" }` -> Assert.Throws<FormatException>; analogo per `--request-timeout 4294968` (caso wrap-positivo). Prima della fix il primo non lancia in FromArgs (lancia solo a valle in PatchClient) e il secondo non lancia affatto; dopo la fix entrambi lanciano FormatException in FromArgs.
+
+- **Alternative**: Opzione minima: solo `checked(connectSec * 1000)` / `checked(requestSec * 1000)` alle righe 26-27 -> trasforma l'overflow silenzioso in OverflowException, ma il messaggio resta poco chiaro e va comunque catturato/tradotto; non risolve l'assenza di un tetto semantico. Opzione robusta (consigliata): tetto esplicito in ParseInt/FromArgs con messaggio che nomina il flag -> errore attuabile per l'utente, coerente con gli altri diagnostici di ParseInt, e nessun affidamento sul comportamento dei setter .NET a valle.
+
+---
+### [BUG-034] DevCommand sandbox-run: --allow di soli ':rw'/':ro' produce path vuoto -> ArgumentException criptica
+
+- **Modulo**: CLI/Commands
+- **File:linea**: Hina.CLI/Commands/DevCommand.cs:179-183
+- **Severita**: Basso
+- **Stato**: DA CONFERMARE
+- **Lente**: correttezza
+- **Verdetto avversariale**: REALE
+
+- **Descrizione**: Nel ciclo di parsing di `--allow <spec>` (DevCommand.cs:174-184), se spec e esattamente ":rw" o ":ro" (lunghezza 3), allora `spec.EndsWith(":rw")` (o ":ro") e true e `p = spec[..^3]` (riga 181-182) restituisce stringa vuota. `Path.GetFullPath("")` (riga 183) lancia ArgumentException("The path is empty.") NON gestita in RunSandbox. L'eccezione risale al catch-all di CommandRouter (CommandRouter.cs:28-31) che logga solo ex.Message ("The path is empty.") e ritorna exit 2: il messaggio NON nomina --allow ne il comando. Il comando gemello PermsCommand.ParseGrant (PermsCommand.cs:159-164) gestisce ESATTAMENTE questo caso con `if (string.IsNullOrWhiteSpace(pathPart)) throw new ArgumentException("--grant '<spec>' is missing the path part...")`, un errore esplicito che nomina il flag; sandbox-run non ha la guardia equivalente -> incoerenza interna confermata. (Un --allow con path valido seguito da :ro/:rw funziona correttamente; il difetto e solo nel caso degenere suffisso-senza-path.)
+
+- **Verifica (raggiungibilita/caller)**: CLI esterno `hina dev sandbox-run --app-dir d --allow :rw -- exec` -> CommandRouter.DispatchCoreAsync case "dev" (CommandRouter.cs:78) -> DevCommand.RunAsync -> subcommand=="sandbox-run" (DevCommand.cs:50-52) -> RunSandbox (DevCommand.cs:147) -> ciclo for i<sep (DevCommand.cs:174-184) -> spec=":rw" -> EndsWith(":rw")==true -> p=spec[..^3]="" (riga 181-182) -> Path.GetFullPath("") (riga 183) lancia ArgumentException -> nessun handler locale -> CommandRouter catch (Exception) (CommandRouter.cs:28-31) -> LogError(ex.Message) -> exit 2.
+
+- **Coperto da test**: NO. Non esiste alcun DevCommandTests (glob negativo). Il path --allow non e coperto da test.
+
+- **Fix proposta**: In DevCommand.cs, dopo aver calcolato `p` (riga 181-182) e prima di `rules.Add(new ResolvedFsRule(Path.GetFullPath(p), rw))` (riga 183), aggiungere la stessa guardia di ParseGrant:
+  ```csharp
+  if (string.IsNullOrWhiteSpace(p))
+  {
+      logger.LogError("--allow '{Spec}' is missing the path part. Expected --allow <path>[:ro|:rw].", spec);
+      return 2;
+  }
+  rules.Add(new ResolvedFsRule(Path.GetFullPath(p), rw));
+  ```
+  (RunSandbox ha gia `logger` in scope e ritorna int, quindi il fail-loud con exit 2 e coerente con gli altri rami del metodo, es. righe 152-153, 160-161.)
+
+- **Impatto della fix**: Caller toccati: nessuno (RunSandbox e private static, firma invariata). Compat wire/schema: nessuna. Thread-safety: nessun impatto (parsing sequenziale). Edge case: --allow con path valido (con o senza suffisso :ro/:rw) resta invariato; solo lo spec degenere ":rw"/":ro" (o vuoto) ora produce un errore che nomina --allow ed exit 2 invece di un'eccezione criptica.
+
+- **Rischio regressione**: Basso. Cambia solo un caso che oggi gia fallisce (con messaggio peggiore).
+
+- **Test coinvolti**: Nessun test esistente da non rompere su questo path (nessun DevCommandTests). Nuovo test di regressione (fallisce PRIMA, passa DOPO): invocare DevCommand.RunAsync con `{ "dev","sandbox-run","--app-dir",<tmpdir>,"--allow",":rw","--","exec" }` e verificare return == 2 senza ArgumentException non gestita e con log che nomina --allow. Prima della fix l'eccezione risale al router (o, se testato direttamente RunSandbox, propaga ArgumentException); dopo la fix ritorna 2 con messaggio chiaro. (Se i test girano solo su Linux per il Landlock, basta testare il ramo di parsing che ritorna 2 prima del launch.)
+
+- **Alternative**: Opzione minima: avvolgere Path.GetFullPath in try/catch ArgumentException e tradurre il messaggio. Trade-off: meno preciso (cattura anche altri ArgumentException da path malformati) e non distingue il caso "path vuoto". Opzione robusta (consigliata): la guardia esplicita su IsNullOrWhiteSpace(p) prima di GetFullPath, identica al pattern gia collaudato in PermsCommand.ParseGrant -> coerenza interna e diagnostica attuabile.
+
+---
+### [BUG-035] RunCommand non rifiuta flag sconosciuti e scarta silenziosamente i positional extra
+
+- **Modulo**: CLI/Commands
+- **File:linea**: Hina.CLI/Commands/RunCommand.cs:21-37 (parsing), 96-117 (ResolveExecRel)
+- **Severita**: Basso
+- **Stato**: DA CONFERMARE
+- **Lente**: correttezza
+- **Verdetto avversariale**: REALE
+
+- **Descrizione**: RunCommand.RunAsync costruisce a mano positionals/appArgs nel loop righe 24-28 (ogni token prima di "--" diverso da "--" finisce in positionals) e usa SOLO positionals[0]=name (riga 36) e positionals[1]=entryId (riga 37). Conseguenze, entrambe verificate:
+  1. Positional extra silenziosamente scartati: `hina run app extra1 extra2` -> positionals=[app,extra1,extra2]; extra2 (positionals[2]) e ignorato senza alcuna diagnostica.
+  2. Flag sconosciuti NON rifiutati: RunCommand non chiama mai Args.FirstUnknownFlag (grep su RunCommand.cs: nessun match per KnownFlags/FirstUnknownFlag; i caller di FirstUnknownFlag sono solo Install/Update/Uninstall/Perms/Reinstall). `hina run app --jobs 5` -> "--jobs" != "--" quindi entra in positionals -> entryId="--jobs" (e "5" pure scartato) -> ResolveExecRel (righe 99-106) non matcha alcuna ShellEntry -> err "entry '--jobs' is not defined by this app." (exit 1): errore fuorviante invece di un chiaro rifiuto di flag sconosciuto.
+  A differenza di install/update/uninstall/perms/reinstall, che rifiutano i flag ignoti (lavoro del primo giro), run e fuori da quel pattern: dando errori fuorvianti (typo dell'entryId indistinguibile da un flag) e azioni silenziosamente diverse (token droppati).
+
+- **Verifica (raggiungibilita/caller)**: Input esterno CLI -> CommandRouter.DispatchCoreAsync case "run" (CommandRouter.cs:56-57 `return RunCommand.RunAsync(ctx, args)`) -> RunCommand.RunAsync (RunCommand.cs:19) loop di parsing righe 24-28 -> usa solo positionals[0]/[1] (righe 36-37), nessun Args.FirstUnknownFlag -> token extra scartati / flag ignoto trattato come entryId -> ResolveExecRel righe 99-106 -> err fuorviante exit 1. Percorso diretto, nessun gating. Nota: NON c'e bypass di sicurezza: l'eseguibile e risolto strettamente dalla tabella entry del descriptor firmato (ResolveExecRel) e il sandbox plan (righe 88-93) si applica comunque; il path descriptor-mancante/corrotto fa fail-closed (righe 56-73).
+
+- **Coperto da test**: NO. Non esiste alcun RunCommandTests (glob negativo). La validazione argomenti di run non e coperta.
+
+- **Fix proposta**: Allineare RunCommand al pattern degli altri comandi. In RunCommand.cs:
+  1. Aggiungere un set KnownFlags (run non ha flag propri oltre il separatore '--', quindi il set e vuoto) e chiamare FirstUnknownFlag PRIMA del '--', sui soli token positional:
+  ```csharp
+  private static readonly HashSet<string> NoFlags = new(StringComparer.Ordinal);
+  // ... in RunAsync, dopo aver separato positionals/appArgs:
+  // run non ha flag propri; qualunque token con prefisso '-' prima di '--' e un errore.
+  foreach (string tok in positionals)
+  {
+      if (tok.StartsWith('-'))
+      {
+          ctx.Logger.LogError("Unknown flag '{Flag}'. Usage: hina run <app> [entryId] [-- args...]", tok);
+          return 2;
+      }
+  }
+  ```
+  (Si itera sui soli positionals gia separati, cosi i veri appArgs dopo '--' restano intatti — pass-through verbatim al launcher, contratto documentato.)
+  2. Rifiutare positional in eccesso: dopo aver letto name/entryId, se `positionals.Count > 2`, loggare un errore ("too many arguments") ed exit 2, invece di scartare silenziosamente.
+
+- **Impatto della fix**: Caller toccati: nessuno (RunCommand.RunAsync firma invariata). Compat wire/schema: nessuna. Thread-safety: nessun impatto. Edge case CRITICO da preservare: gli appArgs DOPO '--' devono restare verbatim e POSSONO iniziare con '-' (es. `hina run app -- --verbose`): la guardia va applicata SOLO ai positionals (pre-'--'), mai agli appArgs (BUG-REPORT.md:1176 tratta `hina run app -- ...` come comportamento corretto da preservare). entryId legittimo che inizia con '-' non esiste (gli Id delle ShellEntry non hanno prefisso '-').
+
+- **Rischio regressione**: Basso/Medio. Basso per la sostanza, ma attenzione a NON intercettare appArgs dopo '--' (sarebbe una regressione del contratto di launch). La fix deve operare esclusivamente sulla lista positionals gia separata.
+
+- **Test coinvolti**: Nessun test esistente su RunCommand da rompere. Verificare che i test di integrazione che usano `hina run app -- <args con trattino>` (se presenti) continuino a passare. Nuovi test di regressione (falliscono PRIMA, passano DOPO): (a) `RunCommand` con `{ "run","app","--jobs","5" }` -> return 2 e log "Unknown flag '--jobs'" (prima: prosegue fino a "entry '--jobs' is not defined" exit 1); (b) `{ "run","app","e1","e2" }` -> return 2 "too many arguments" (prima: e2 droppato silenziosamente); (c) GUARD-test che `{ "run","app","--","--verbose" }` NON viene rifiutato (appArgs verbatim) — deve continuare a passare DOPO la fix.
+
+- **Alternative**: Opzione minima: solo rifiutare i flag sconosciuti (guardia sui positionals con prefisso '-'), lasciando il drop dei positional extra com'e. Trade-off: chiude il caso piu fuorviante (flag-come-entryId) con poco rischio, ma lascia il drop silenzioso di token. Opzione robusta (consigliata): rifiutare sia flag ignoti sia positional in eccesso, allineando run pienamente al pattern di install/update/uninstall/perms/reinstall -> diagnostica coerente in tutta la CLI.
+
+---
+### [BUG-036] BUG-024 fix incompleta: il facade FirstUnknownFlag non inietta ValuedFlags nel Core
+
+- **Modulo**: CLI/Routing (parsing argomenti)
+- **File:linea**: Hina.CLI/Args.cs:28-29 (facade); sink reale Hina.Core/Cli/Args.cs:54; manifestazione Hina.CLI/Commands/InstallCommand.cs:34-38 (e UpdateCommand.cs:21, ReinstallCommand.cs:17, PermsCommand.cs:29)
+- **Severita**: Basso
+- **Stato**: DA CONFERMARE
+- **Lente**: correttezza (qualita diagnostica / UX; nessun impatto sicurezza)
+- **Verdetto avversariale**: REALE
+
+- **Descrizione**: Il fix di BUG-024 (commit 5ec99e6) ha aggiunto a `Hina.Core.Cli.Args.FirstUnknownFlag` un 4o parametro opzionale `HashSet<string>? valuedFlags = null` (Hina.Core/Cli/Args.cs:44-45) e una guardia che, quando `valuedFlags != null` e il token corrente e un flag valorizzato noto, salta il token-valore successivo (riga 54). Tuttavia il facade `Hina.CLI.Args.FirstUnknownFlag` (Hina.CLI/Args.cs:28-29) continua a chiamare `CoreArgs.FirstUnknownFlag(args, known, startIndex)` passando `startIndex` come 3o argomento POSIZIONALE e NON passa mai il set `ValuedFlags` (che pure e definito e in scope nello stesso file, righe 14-20, e contiene `--retries/--connect-timeout/--request-timeout/--jobs/--grant/--revoke`). Risultato: nel Core `valuedFlags` resta `null`, la guardia di riga 54 e codice morto sul percorso reale, e in produzione il comportamento e identico al bug originale BUG-024. Esempio: `hina install <url> --request-timeout -5` produce ancora il fuorviante `Unknown flag '-5'` invece di lasciar emettere a NetworkArgs.ParseInt il messaggio corretto `Invalid value for --request-timeout: '-5'. Expected a positive integer.`
+
+- **Verifica (raggiungibilita/caller)**: Catena ingresso->sink concreta. Input esterno: argv CLI utente `hina install <url> --request-timeout -5` -> Program.Main -> CommandRouter.DispatchCoreAsync (case install) -> InstallCommand.RunAsync (Hina.CLI/Commands/InstallCommand.cs:19). Riga 21 `FirstPositional(args, startIndex:1)` restituisce correttamente l'URL (salta i valued flag). Riga 34 `Args.FirstUnknownFlag(args, KnownFlags, startIndex:1)` -> facade Hina.CLI/Args.cs:28-29 -> `CoreArgs.FirstUnknownFlag(args, known, startIndex)` con `valuedFlags=null` -> Hina.Core/Cli/Args.cs:47-56: i=2 `--request-timeout` e in KnownFlags ma il ramo skip (riga 54) non parte perche `valuedFlags==null`; i=3 `-5` inizia con '-' (riga 50) e non e in KnownFlags (riga 51) -> ritorna `-5`. InstallCommand.cs:35-38 logga `Unknown flag '-5'` ed esce 2, PRIMA che NetworkArgs.FromArgs (riga 48 -> NetworkArgs.cs:51) possa emettere il messaggio corretto. Identico percorso per UpdateCommand.cs:21 (`--jobs/--retries/--connect-timeout/--request-timeout -5`), ReinstallCommand.cs:17, PermsCommand.cs:29 (`--grant/--revoke` con valore che inizia con '-', es. un path che inizia con '-'). git show 5ec99e6 --stat conferma che il commit di fix ha toccato SOLO Hina.Core/Cli/Args.cs e Hina.Core.Tests/ArgsTests.cs: Hina.CLI/Args.cs NON e stato modificato.
+
+- **Coperto da test**: No (sul percorso reale). I test del Core (Hina.Core.Tests/ArgsTests.cs:139/149/159/169/179/190/218) passano `valuedFlags: valued` ESPLICITAMENTE, quindi sono verdi ma non esercitano il default null del facade. I test del facade (Hina.CLI.Tests/ArgsTests.cs:48-68) chiamano la firma a 3 argomenti e non coprono mai il caso valore-negativo via facade. Nessun test end-to-end su InstallCommand/UpdateCommand.RunAsync con `--request-timeout -5`.
+
+- **Fix proposta**: Iniettare `ValuedFlags` dal facade, come prescritto in BUG-REPORT.md:1063. In Hina.CLI/Args.cs:28-29 sostituire:
+  ```csharp
+  public static string? FirstUnknownFlag(string[] args, HashSet<string> known, int startIndex = 0)
+      => CoreArgs.FirstUnknownFlag(args, known, startIndex);
+  ```
+  con (passando ValuedFlags come 4o argomento NOMINATO per evitare ambiguita posizionale):
+  ```csharp
+  public static string? FirstUnknownFlag(string[] args, HashSet<string> known, int startIndex = 0)
+      => CoreArgs.FirstUnknownFlag(args, known, startIndex, valuedFlags: ValuedFlags);
+  ```
+  Nessun call-site di comando cambia firma (continuano a chiamare `Args.FirstUnknownFlag(args, KnownFlags, startIndex: 1)`). La firma del Core resta invariata. Opzionale (robustezza): rendere `valuedFlags` parametro obbligatorio nel Core per eliminare il default-null silenzioso (Opzione A in BUG-REPORT.md:1090), ma richiede aggiornare l'unico consumatore (il facade) e i test Core che oggi chiamano la firma corta.
+
+- **Impatto della fix**: Caller toccati: solo Hina.CLI/Args.cs (l'unico consumatore di CoreArgs.FirstUnknownFlag; Hina.Builder usa solo HasFlag/GetValue, grep negativo su FirstUnknownFlag). Nessun cambio wire/schema (parsing argv puro, nessun byte canonico firmato coinvolto). Thread-safety: invariata (metodi statici puri, ValuedFlags e readonly e mai mutato). Edge case: dopo la fix, per i flag in ValuedFlags il token-valore successivo viene saltato durante lo scan unknown-flag; un eventuale flag sconosciuto piazzato DOPO un valore valorizzato e comunque rilevato al giro di loop successivo. I valori negativi restano comunque rifiutati a valle (NetworkArgs.ParseInt richiede >0), quindi la fix migliora solo il messaggio, non altera l'esito (exit 2 in entrambi i casi).
+
+- **Rischio regressione**: Basso
+
+- **Test coinvolti**: Da non rompere: Hina.CLI.Tests/ArgsTests.cs:48 (FirstUnknownFlag_DetectsTypo), :61 (FirstUnknownFlag_AllKnown_ReturnsNull), :83/:95 (varianti BUG-025 perms case), e tutti i Hina.Core.Tests/ArgsTests.cs (che passano valuedFlags esplicito o testano il path legacy null direttamente sul Core, righe 199/208). Nuovo test di regressione (fallisce PRIMA, passa DOPO) in Hina.CLI.Tests/ArgsTests.cs, chiamando il FACADE (firma a 3 argomenti):
+  ```csharp
+  [Theory]
+  [InlineData("--request-timeout")]
+  [InlineData("--retries")]
+  [InlineData("--connect-timeout")]
+  public void FirstUnknownFlag_NegativeValueOfValuedFlag_NotReportedAsUnknown(string flag)
+  {
+      var known = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+      { "--allow-insecure", "--retries", "--connect-timeout", "--request-timeout" };
+      string[] args = { "install", "https://example.com/a.json", flag, "-5" };
+      Assert.Null(Args.FirstUnknownFlag(args, known, startIndex: 1));
+  }
+  ```
+  Questo test fallisce con il codice attuale (il facade passa valuedFlags=null -> ritorna "-5") e passa dopo la fix.
+
+- **Alternative**: Opzione minima (consigliata, una riga): iniettare `valuedFlags: ValuedFlags` dal facade come sopra. Trade-off: mantiene il parametro opzionale null nel Core, ma copre l'unico percorso reale; rischio nullo per altri consumatori (non esistono). Opzione robusta: rendere `valuedFlags` obbligatorio nel Core (Hina.Core/Cli/Args.cs:44-45) per eliminare il default-null che ha causato proprio questa regressione (avvertenza a BUG-REPORT.md:1092). Trade-off: cambia la firma interna del Core, va aggiornato il facade e i test Core che usano la firma corta (righe 100/108/117/125/208); piu sicuro contro futuri dimenticamenti, piu invasivo ora.
+
+---
+### [BUG-037] FindBundleExec ritorna un file arbitrario/non-eseguibile (files[0]) quando Contents/MacOS esiste ma non contiene Mach-O
+
+- **Modulo:** Builder
+- **File:linea:** Hina.Builder/Init/ExecutableDetector.cs:94-97 (e relativo consumo a :51-52; reachability InitCommand.cs:257-263 e :362-377)
+- **Severita:** Basso
+- **Stato:** DA CONFERMARE
+- **Lente:** correttezza
+- **Verdetto avversariale:** REALE
+
+**Descrizione (cosa, perche)**
+`FindBundleExec` cerca il Mach-O dentro `<bundle>/Contents/MacOS`. Quando la directory esiste ma NON contiene alcun Mach-O classificabile (`machO == null`), la riga 97 esegue il fallback `return machO ?? (files.Length > 0 ? files[0] : null)`, cioe' ritorna `files[0]` — il PRIMO file restituito da `Directory.GetFiles(macOsDir)`. Due difetti:
+(a) `Directory.GetFiles` NON garantisce un ordine deterministico (e' filesystem-dependent): se Contents/MacOS contiene piu' file (es. uno script wrapper + risorse), la scelta di `files[0]` e' arbitraria e non riproducibile tra esecuzioni/sistemi.
+(b) Il file scelto puo' NON essere un eseguibile (es. un `.plist`, un file dati, un launcher di testo). Viene comunque aggiunto a riga 52 come `DetectedExecutable { Os = Macos, IsBundle = true, Rank = 100 }` con Rank HARDCODED — quindi NON passa per `ClassifyByMagic`/`RankFor` che potrebbero declassarlo. Risultato: un candidato top-rank che punta a un file non lanciabile per macOS, proposto come default e potenzialmente scritto in `exec.Macos` / `PlatformVariant.Exec` e firmato nel descriptor (il descriptor resta firmato correttamente, ma punta al target sbagliato — non e' un bypass firma).
+
+E' il ramo OPPOSTO rispetto a BUG-1359 / commit 1dcfac9 (che gestisce il caso `machO == null` per ASSENZA di Contents/MacOS, dove ora si fa `continue` senza consumare i file). Qui Contents/MacOS ESISTE: il corpo di `FindBundleExec` e in particolare il fallback `files[0]` non e' mai stato toccato.
+
+**Verifica (raggiungibilita/caller)**
+Ingresso esterno: CLI `hina-builder init [--input <dir>]` (wizard interattivo). Catena single-payload:
+Program.cs:42-43 (guard: rifiuta `init` se `Console.IsInputRedirected`; richiede terminale interattivo) -> InitCommand.RunAsync:39 `ExecutableDetector.Detect(input)` -> Detect:41 `EnumerateDirectories("*.app", AllDirectories)` -> FindBundleExec:87 -> Contents/MacOS esiste, nessun Mach-O -> riga 97 `return files[0]` -> Detect:52 `found.Add({Os=Macos, IsBundle=true, Rank=100})` -> CollectExecutables (InitCommand.cs):257 `best = detected.FirstOrDefault(d => d.Os == Macos)` -> :261 `prompt.Confirm("Use '<files[0]>' as the macos executable?", default=true)` -> se accettato :263 `SetExec(exec, Macos, best.RelPath)` -> DescriptorScaffolder.Build -> DescriptorSigner.AttachSignature -> descriptor firmato con `exec.Macos` che punta al file sbagliato.
+Ramo variant analogo: InitCommand.cs:362 `Detect(vd.Dir)` -> :366-369 `best` filtrato per `OsString(d.Os) == vd.Os` (per token os==macos il candidato Macos passa) -> :375 `Confirm(default=true)` -> `PlatformVariant.Exec`.
+Mitigazione che abbassa la severita: il path errato e' VISIBILE nel prompt di Confirm e l'utente puo' declinare (digitando `n`) e inserire il path corretto a mano (InitCommand.cs:268); il guard Program.cs:43 esclude CI/pipe, quindi non c'e' auto-accettazione scriptata; lo scenario richiede un .app malformato (Contents/MacOS senza Mach-O) prodotto dallo stesso packager.
+
+**Coperto da test:** NO. `Hina.Builder.Tests/ExecutableDetectorTests.cs` copre solo il ramo `null`: `Detect_AppBundleWithoutContentsMacOS_DoesNotSuppressMachOInside` (:82-98) e `Detect_AppBundleWithoutContentsMacOS_DirectoryPathNotProposedAsExecutable` (:100-116). Quest'ultimo asserisce solo che ogni candidato e' un File esistente — `files[0]` E' un file esistente, quindi passerebbe anche se non eseguibile. Nessun test esercita il ramo `files[0]` con Contents/MacOS presente e senza Mach-O.
+
+**Fix proposta**
+In `FindBundleExec` (ExecutableDetector.cs:94-97) eliminare il fallback indiscriminato a `files[0]`: accettare solo un Mach-O reale, altrimenti ritornare `null` (cosi' il ramo a Detect:47-49 fa `continue` senza creare un candidato bogus, e gli eventuali file interni restano visibili al flat scan come per BUG-1359). Sostituire:
+```csharp
+string[] files = Directory.GetFiles(macOsDir);
+string? machO = files.FirstOrDefault(f => ClassifyByMagic(f) == TargetOs.Macos);
+return machO ?? (files.Length > 0 ? files[0] : null);
+```
+con:
+```csharp
+string[] files = Directory.GetFiles(macOsDir);
+// Only accept a real Mach-O as the bundle exec. If Contents/MacOS contains no Mach-O
+// (malformed bundle: only data/plist/text), treat the bundle as unrecognised rather
+// than proposing an arbitrary, possibly non-executable, non-deterministic files[0].
+return files.FirstOrDefault(f => ClassifyByMagic(f) == TargetOs.Macos);
+```
+Variante robusta (se si vuole comunque proporre uno script-launcher di testo come fallback ma in modo DETERMINISTICO): ordinare i file prima di scegliere, p.es. `files.OrderBy(Path.GetFileName, StringComparer.Ordinal).FirstOrDefault()`, ed eventualmente filtrare via i `.plist`/risorse note. Tuttavia la variante minima (solo Mach-O) e' preferibile: e' coerente con BUG-1359 e non introduce default lanciabili-solo-forse.
+
+**Impatto della fix**
+Caller toccati: solo `Detect` (interno). Quando `FindBundleExec` torna `null`, Detect:47-49 esegue gia' `continue` (comportamento gia' previsto e testato). Nessun cambiamento di firma. Nessun impatto wire/schema (non tocca i byte canonici firmati ne' lo schema descriptor). Thread-safety invariata (metodo statico puro su FS). Edge case: un bundle che conteneva SOLO uno script di testo lanciabile in Contents/MacOS non verra' piu' auto-proposto come exec Macos — l'utente dovra' inserirlo a mano (InitCommand.cs:268); accettabile e piu' sicuro che proporre un default arbitrario.
+
+**Rischio regressione:** Basso
+
+**Test coinvolti**
+- Da non rompere: `Detect_AppBundleWithoutContentsMacOS_DoesNotSuppressMachOInside`, `Detect_AppBundleWithoutContentsMacOS_DirectoryPathNotProposedAsExecutable`, e il test del bundle valido (`MyGame.app/Contents/MacOS/MyGame`, :75-79) che continua a passare perche' il Mach-O reale e' ancora scelto.
+- Nuovo test di regressione (fallisce PRIMA, passa DOPO): `Detect_AppBundleWithContentsMacOSButNoMachO_DoesNotProposeArbitraryFile`. Setup: creare `App.app/Contents/MacOS/Info.txt` (contenuto NON-Mach-O, es. testo) ed eventualmente un secondo file dati nella stessa cartella. Assert: `Detect` NON ritorna alcun candidato con `IsBundle == true` e non ritorna candidati `Os == Macos` che puntino a `Info.txt`. PRIMA della fix il test fallisce (viene proposto `files[0]`); DOPO passa.
+
+**Alternative**
+- Minima: ritornare solo il Mach-O (`null` altrimenti) — vedi sopra. Trade-off: perde la capacita' di proporre script-launcher di testo, ma elimina default arbitrari/non deterministici.
+- Robusta: deterministic-order + filtro estensioni risorsa per consentire fallback a un launcher reale. Trade-off: piu' codice ed euristiche fragili (distinguere uno script lanciabile da un file dati senza magic affidabile), per un caso patologico raro.
+
+> NOTA: confermato due volte (find Builder + gap round). Dettaglio extra dal gap round: la fix dovrebbe validare il magic Mach-O (0xFEEDFACE/0xFEEDFACF/0xCAFEBABE) o almeno il bit eseguibile, non solo prendere files[0].
+
+---
+### [BUG-038] Messaggio d'errore --sign-key cita 'ed25519.priv.b64', un nome file che keygen non produce mai
+
+- **Modulo:** Builder
+- **File:linea:** Hina.Builder/BuildCommand.cs:205
+- **Severita:** Basso
+- **Stato:** DA CONFERMARE
+- **Lente:** correttezza
+- **Verdetto avversariale:** REALE
+
+**Descrizione (cosa, perche)**
+Quando `--sign-key` punta a un file il cui contenuto non e' base64 valido, BuildCommand.cs:205 emette: `--sign-key '{KeyPath}' is not a base64 private key. Pass the ed25519.priv.b64 file generated by \`hina-builder keygen\`.` Il messaggio afferma esplicitamente che `hina-builder keygen` GENERA un file chiamato `ed25519.priv.b64`. Ma `KeygenCommand.Generate` (KeygenCommand.cs:20-21) scrive SEMPRE `Path.Combine(outDir, $"{name}.key.b64")` e `$"{name}.pub.b64"`, con `name` di default = `"hina"` (KeygenCommand.cs:33) -> quindi produce `hina.key.b64` / `hina.pub.b64`. Nessun percorso produce mai `ed25519.priv.b64` ne' `priv.b64`. `InitCommand.FindOrGenerateKey` cerca `*.key.b64` (InitCommand.cs:453) e tutta la documentazione (README, Builder-Guide, Quick-Start, ecc.) usa `.key.b64`. Il messaggio diagnostico indirizza quindi l'utente verso un nome file inesistente, ostacolando il recupero dall'errore. E' un difetto di CORRETTEZZA del testo diagnostico (asserisce un fatto falso sul comportamento del tool), non un bug di logica: il rifiuto dell'input non-base64 e l'exit code 2 sono corretti. Nessun impatto di sicurezza (strumento publisher-side, nessun input remoto/untrusted, nessun confine di fiducia attraversato).
+Nota: `DevCommand.cs` usa `<ed25519.priv.b64>` come placeholder convenzionale `<...>` nelle usage-string; NON afferma che keygen lo generi, quindi NON e' un gemello difettoso: il difetto reale e' isolato a BuildCommand.cs:205.
+
+**Verifica (raggiungibilita/caller)**
+Ingresso esterno: CLI `hina-builder build --sign-key <file>` con file esistente ma contenuto non-base64.
+Program dispatch (build) -> BuildCommand.RunAsync:191 `!string.IsNullOrWhiteSpace(options.SignKeyPath)` -> :193 `File.Exists(options.SignKeyPath)` true (file presente) -> :201 `Convert.FromBase64String(File.ReadAllText(options.SignKeyPath).Trim())` lancia `FormatException` -> :203 `catch (FormatException)` -> :205 `logger.LogError("...ed25519.priv.b64 file generated by hina-builder keygen...")` -> return 2. Input esterno (file di chiave fornito dall'utente) raggiunge direttamente il sink del messaggio.
+
+**Coperto da test:** NO (nessun test asserisce il testo di questo messaggio diagnostico).
+
+**Fix proposta**
+In BuildCommand.cs:205 correggere il nome file citato per riflettere l'output reale di keygen. Sostituire:
+```csharp
+logger.LogError("--sign-key '{KeyPath}' is not a base64 private key. Pass the ed25519.priv.b64 file generated by `hina-builder keygen`.", options.SignKeyPath);
+```
+con:
+```csharp
+logger.LogError("--sign-key '{KeyPath}' is not a base64 private key. Pass the <name>.key.b64 file generated by `hina-builder keygen`.", options.SignKeyPath);
+```
+(In alternativa citare l'esempio concreto del default: `hina.key.b64`.)
+
+**Impatto della fix**
+Solo testo di un log di errore. Nessun caller toccato, nessun cambiamento di comportamento/exit code, nessun impatto wire/schema/firma, nessuna thread-safety. Edge case: nessuno.
+
+**Rischio regressione:** Basso
+
+**Test coinvolti**
+- Da non rompere: nessun test asserisce il testo attuale; la modifica e' isolata.
+- Nuovo test di regressione (fallisce PRIMA, passa DOPO): test che invoca il percorso `build --sign-key <file-non-base64>` con un logger di cattura (es. fake/list logger) e asserisce che il messaggio NON contenga `ed25519.priv.b64` e contenga invece `.key.b64`. PRIMA della fix fallisce (il messaggio contiene `ed25519.priv.b64`); DOPO passa. Asserire anche return code 2 per fissare il contratto.
+
+**Alternative**
+- Minima: correggere la stringa a `<name>.key.b64` (sopra). Trade-off: zero rischio, allinea il messaggio al naming reale.
+- Robusta: estrarre il nome file di esempio in una costante condivisa (es. `KeygenCommand.DefaultPrivateKeyFileName = "hina.key.b64"`) e referenziarla sia in keygen sia nel messaggio, evitando futura deriva. Trade-off: tocca piu' file per un guadagno minore; non necessario data la bassa probabilita' di cambio naming.
+
+---
+### [BUG-039] Path --config esplicito ma inesistente viene ignorato silenziosamente, applicando default di hardening non voluti
+- **Modulo**: Host
+- **File**: Hina.Host/HostOptions.cs:26-29
+- **Severita**: Alto
+- **Stato**: DA CONFERMARE
+- **Lente**: sicurezza
+- **Verdetto avversariale**: REALE
+- **Descrizione**: `HostOptions.Load` risolve il file di config con `string? jsonPath = configPath is not null && File.Exists(configPath) ? configPath : (File.Exists("hina.host.json") ? "hina.host.json" : null)` (righe 27-29). Se l'operatore passa `--config /percorso/errato.json` (typo, path relativo rispetto a una cwd di servizio diversa, file non montato nel container), `File.Exists(configPath)` e' falso e il codice NON segnala alcun errore: ripiega silenziosamente su `./hina.host.json` se presente nella cwd, altrimenti su `jsonPath=null` -> il blocco di parsing JSON (righe 31-106) e' interamente saltato -> vengono applicati tutti i default hard-coded: `Root="patch"`, `RequestsPerMinutePerIp=600`, `AbuseThresholdPerMinute=300`, `StatsEnabled=true`, `TrustedProxies` vuoto, `Cors` vuoto, `Apps` vuoto. L'host parte 'verde' con una postura di hardening completamente diversa da quella richiesta (statsEnabled=false, trustedProxies, CORS ristretto, rate limit personalizzato, apps), e nessun log di avvio indica quale file sia stato caricato (Program.cs:150-152 non logga il path del config). Questo e' incoerente con il resto del modulo, che fa fail-fast su OGNI altro input esplicito invalido: `--port` invalido (HostOptions.cs:128-129), `--rate-limit` (134-135), JSON corrotto (38-45), root non-oggetto (49-57), abuseThreshold/summaryInterval/requestsPerMinutePerIp negativi (62/69/75), nomi app invalidi (98-102), trustedProxies invalidi (162-166). Un `--config` esplicitamente nominato dall'operatore dovrebbe esistere o far fallire l'avvio, non degradare silenziosamente la sicurezza.
+- **Verifica (raggiungibilita/caller)**: Catena ingresso->sink: argv `Hina.Host --config /percorso/inesistente.json` (CLI / systemd unit / container command, stdin redirected) -> Program.cs:17 `GetArgTop(args,"--config")` -> Program.cs:18 `defaultConfigPath = explicitConfig` -> Program.cs:22 guard wizard `if (forceSetup || (!Console.IsInputRedirected && SetupWizard.IsConfigMissingOrEmpty(defaultConfigPath)))`: in modalita servizio/container `Console.IsInputRedirected==true`, quindi il secondo operando della AND e' falso e il wizard NON parte (nessuna rete di sicurezza, anche se IsConfigMissingOrEmpty tornerebbe true) -> Program.cs:36 `HostOptions.Load(args, builder.Configuration)` -> HostOptions.cs:26 `configPath="/percorso/inesistente.json"` -> :27 `File.Exists(configPath)==false` -> :29 fallback a `hina.host.json` (se presente in cwd) o `null` -> blocco JSON saltato -> `opt` con default hard-coded -> Program.cs:65-117 builder/rate-limiter/forwarded-headers/stats configurati con la postura di default insicura -> `app.Run()`. Nessun `InvalidDataException`, nessun exit code != 0, nessun log della discrepanza. In TTY interattivo + `--config` mancante il difetto e' mascherato (il wizard parte e scrive il file al path indicato), quindi il percorso reale del bug e' l'avvio non-interattivo (il caso di deploy documentato in docs/Host-Guide.md: `dotnet Hina.Host.dll --config /etc/hina/production.json`).
+- **Coperto da test**: no. Hina.Host.Tests/HostOptionsTests.cs usa sempre un file temp REALE quando passa `--config` (es. righe 51, 68, 99, 140, 166, 191, 210); nessun test asserisce che un `--config` inesistente debba fallire. AccessStatsTests/SetupWizardTests non toccano la risoluzione del path.
+- **Fix proposta**: In `Hina.Host/HostOptions.cs`, sostituire la risoluzione silenziosa (righe 26-29) con una che fa fail-fast quando `--config` e' esplicitamente passato ma il file non esiste, riusando lo stesso tipo di eccezione (`InvalidDataException`) gia usato per gli altri errori di config (cosi Program.cs:38-43 lo cattura e stampa `Configuration error: ...` con exit 1, senza stack trace). Codice concreto:
+```csharp
+string? configPath = GetArg(args, "--config");
+if (configPath is not null && !File.Exists(configPath))
+{
+    throw new InvalidDataException(
+        $"--config '{configPath}' does not exist (resolved to '{Path.GetFullPath(configPath)}'). " +
+        "Provide an existing config file, or omit --config to use ./hina.host.json or built-in defaults.");
+}
+string? jsonPath = configPath ?? (File.Exists("hina.host.json") ? "hina.host.json" : null);
+```
+Nota: dopo il guard, `configPath` se non-null e' garantito esistente, quindi `jsonPath = configPath ?? ...` e' corretto. Il fallback su `hina.host.json`/null resta SOLO quando `--config` non e' stato passato affatto (comportamento invariato per chi non usa il flag).
+- **Impatto della fix**: Caller unico di `HostOptions.Load`: Program.cs:36, gia avvolto in `try/catch (InvalidDataException)` (Program.cs:38-44) che stampa il messaggio ed esce con 1 — quindi nessun nuovo percorso di gestione errori da aggiungere. Nessun cambiamento wire/schema (il config non e' firmato; la fix-rule anti-bypass-firma BUG-001 non si applica). Comportamento osservabile: avvii che oggi partono 'verdi' con `--config` errato ora falliranno con un messaggio chiaro — questo e' esattamente l'intento (allineato al fix `--port`). Avvii senza `--config` o con `--config` valido: invariati byte-per-byte. Thread-safety: invariata (Load e' single-threaded, precede il build dell'host). Edge case: (a) `--config` con valore vuoto/whitespace — `File.Exists("")` e' false, quindi verrebbe rigettato; se si vuole tollerare il flag con stringa vuota come 'non passato', aggiungere `!string.IsNullOrWhiteSpace(configPath)` al guard (raccomandato per non rompere usi degeneri); (b) race TOCTOU tra il check e la lettura a riga 36 — gia presente oggi, irrilevante (al massimo un secondo errore actionable dal parse).
+- **Rischio regressione**: Basso
+- **Test coinvolti**: Test esistenti da non rompere: tutti gli HostOptionsTests che passano `--config <file-temp-reale>` (Load_FromJsonFile_ReadsAllFields, Load_CliFlags_OverrideJson, Load_CorruptJsonConfig_*, Load_RootIsNotAnObject_*, Load_TrustedProxies*_FromJson, Load_InvalidAppName_*, Load_NegativeRateLimitInJson_*) — tutti usano file esistenti, quindi superano il nuovo guard invariati. Load_NoConfigNoArgs_UsesDefaults (riga 23) non passa `--config`, invariato. Nuovo test di regressione (fallisce PRIMA, passa DOPO): `Load_NonexistentConfigPath_ThrowsActionableError` — chiamare `HostOptions.Load(new[]{"--config", Path.Combine(_tempDir, "does-not-exist.json")}, EmptyConfig())` e asserire `Assert.Throws<InvalidDataException>` con messaggio contenente `--config` e il path. Importante: il test DEVE girare con una cwd priva di `hina.host.json` (o passare un `--config` con path assoluto inesistente) per non mascherare il fallback; HostOptionsTests usa gia `_tempDir`, quindi usare un path assoluto sotto `_tempDir` evita interferenze con la cwd del test runner.
+- **Alternative**: Opzione A (minima, raccomandata): fail-fast con `InvalidDataException` solo quando `--config` e' passato e il file manca (sopra). Trade-off: poche righe, coerente con tutti gli altri errori del modulo, nessuna regressione per chi non usa il flag. Opzione B (robusta): loggare a livello WARNING quale file di config e' stato effettivamente caricato (o 'nessuno, default applicati') in Program.cs:150-152, IN AGGIUNTA al fail-fast — fornisce visibilita anche per il caso legittimo senza flag e aiuta a diagnosticare fallback su hina.host.json inatteso. Trade-off: piu informativo ma tocca anche il path felice; consigliata come complemento, non sostituto, della Opzione A.
+
+---
+### [BUG-040] Valori esterni (path/User-Agent) loggati a INFO senza sanitizzazione: log injection via percent-decode del path
+- **Modulo**: Host
+- **File**: Hina.Host/Program.cs:165-168
+- **Severita**: Basso
+- **Stato**: DA CONFERMARE
+- **Lente**: sicurezza
+- **Verdetto avversariale**: REALE
+- **Descrizione**: Il middleware per-richiesta logga a livello INFO ogni richiesta il cui path contiene 'manifest' (case-insensitive) e finisce in '.json', includendo path grezzo e User-Agent grezzo: `logger.LogInformation("Update check: app={App} ip={Ip} path={Path} ua={UserAgent}", appName, ip, path, ctx.Request.Headers.UserAgent.ToString())` (righe 167-168). Sia `path` (`ctx.Request.Path.Value`, riga 161) sia lo User-Agent sono controllati dal client remoto e finiscono nel sink senza troncamento ne sanitizzazione. Sink confermato: appsettings.json non configura alcun provider strutturato (solo `LogLevel Default=Information`), quindi e' attivo il console logger di default di ASP.NET Core (SimpleConsoleFormatter) che rende i valori dei parametri in testo piano scrivendo CR/LF embedded verbatim su stdout. Decomposizione dei due sotto-vettori: (1) LOG FLOODING — non significativo: ogni richiesta e' comunque loggata (a DEBUG, riga 172) e il volume e' gia limitato a monte da `UseRateLimiter` (riga 155, PermitLimit per (IP,App)); il ramo manifest cambia solo il livello Debug->Info, 1 richiesta = 1 riga. (2) LOG INJECTION via User-Agent — neutralizzato: Kestrel rifiuta valori di header contenenti CR/LF durante il parsing HTTP (RFC 7230), quindi un newline grezzo nell'header UA non raggiunge il sink. (3) LOG INJECTION via path — REALE: Kestrel rifiuta CR/LF grezzi nel request-target, MA il percent-encoding `%0A`/`%0D` viene decodificato in `ctx.Request.Path.Value`. Un path come `/manifest%0A2026-01-01_INFO_riga-falsa.json` (contiene 'manifest', finisce in '.json') inserisce un newline letterale nel valore loggato; con il formatter Simple la 'riga' forgiata appare come una vera riga di log su console/tail/grep dell'operatore. Inoltre l'UA non e' troncato (DoS minore sulla dimensione del log). Il claim centrale del sospetto ('valore esterno non sanitizzato loggato') regge per la componente path; la componente UA-CRLF e' refutata.
+- **Verifica (raggiungibilita/caller)**: Catena ingresso->sink: GET non autenticato (bind default 0.0.0.0:49876, Program.cs:57) -> Kestrel (decodifica %0A/%0D del path; rifiuta CR/LF grezzi negli header) -> Program.cs:154 `UseForwardedHeaders` -> :155 `UseRateLimiter` (sotto soglia la richiesta procede) -> middleware `app.Use` registrato per primo a Program.cs:158 (prima della guardia 404 unknown-prefix a riga 184) -> :161 `path = ctx.Request.Path.Value` (es. `/manifest%0Afoo.json` decodificato con newline letterale) -> :165 condizione vera (`path.Contains("manifest", OrdinalIgnoreCase) && path.EndsWith(".json", OrdinalIgnoreCase)`) -> :167-168 `logger.LogInformation(...{Path}...{UserAgent}...)` con valori grezzi -> console logger di default (SimpleConsoleFormatter, appsettings.json riga 4 Default=Information) che scrive il newline verbatim = riga di log forgiata. Nessuna autenticazione richiesta. La variante UA-CRLF e' BLOCCATA da Kestrel a monte.
+- **Coperto da test**: no. Nessun test in Hina.Host.Tests asserisce sul contenuto loggato del middleware (HostOptionsTests/AccessStatsTests/SetupWizardTests coprono parsing config, conteggi e wizard, non il logging delle richieste).
+- **Fix proposta**: In `Hina.Host/Program.cs`, sanitizzare e troncare i valori attacker-controlled prima del log, e restringere il match del path. Concretamente: (1) aggiungere un piccolo helper statico (es. in fondo a Program.cs o in una classe di utility Host) `static string SanitizeForLog(string? s, int max = 256) => string.IsNullOrEmpty(s) ? "" : new string(s.Take(max).Select(c => char.IsControl(c) ? '_' : c).ToArray());` (rimpiazza TUTTI i caratteri di controllo, inclusi CR/LF e tab, con '_', e tronca a 256 char). (2) Alla riga 167-168 passare i valori sanitizzati: `logger.LogInformation("Update check: app={App} ip={Ip} path={Path} ua={UserAgent}", appName, ip, SanitizeForLog(path), SanitizeForLog(ctx.Request.Headers.UserAgent.ToString()));`. (3) (Opzionale ma consigliato) restringere il match a riga 165 da `path.Contains("manifest")` a `path.EndsWith("manifest.json", StringComparison.OrdinalIgnoreCase)` per evitare che path arbitrari finiscano nel ramo INFO; valutare la coerenza con OnPrepareResponse a riga 226 che usa lo stesso pattern Contains per il Cache-Control (se si restringe qui, valutare se restringere anche la' per coerenza — ma non e' necessario per la sicurezza). `appName` deriva da `Routing.ExtractApp(path, options)` e per difesa-in-profondita potrebbe a sua volta passare per SanitizeForLog, anche se in multi-app e' vincolato ai nomi noti.
+- **Impatto della fix**: Tocca solo il middleware di logging (Program.cs:158-181), nessun caller esterno (logica inline). Nessun cambiamento wire/schema/HTTP: i valori sanitizzati sono usati SOLO per il log, non per routing/serving (lo static file middleware usa `ctx.Context.Request.Path` originale, non la stringa loggata). Thread-safety: l'helper e' puro/stateless, nessuno stato condiviso. Edge case: (a) UA assente -> stringa vuota, OK; (b) path con caratteri unicode legittimi non di controllo -> preservati; (c) troncamento a 256 char puo' nascondere la coda di path/UA molto lunghi nel log — accettabile e desiderabile (anti-flood del log). Se si restringe il match (passo 3), path 'manifest' intermedi (es. `/x-manifest.json`) cadrebbero nel ramo DEBUG invece di INFO: cambiamento di livello di log osservabile ma benigno (l'access-logging resta a DEBUG).
+- **Rischio regressione**: Basso
+- **Test coinvolti**: Nessun test esistente asserisce sul testo loggato, quindi nulla da non rompere lato logging. Nuovo test di regressione (fallisce PRIMA, passa DOPO): usando `WebApplicationFactory<Program>` (gia esposto via `public partial class Program {}` a Program.cs:314) con un `ILogger`/provider di log catturato in memoria, inviare una GET a `/manifest%0Ainjected.json` e asserire che il record di log emesso per quella richiesta NON contenga caratteri '\n'/'\r' nel valore di `{Path}` (e che il valore contenga il '_' di sostituzione). Un secondo test puo' inviare uno User-Agent molto lungo e asserire il troncamento a 256 char. Nota harness: serve un fake ILogger provider registrato nel builder di test; se non gia presente in Hina.Host.Tests, aggiungerlo nella factory di test.
+- **Alternative**: Opzione A (minima): solo sostituire CR/LF (e opzionalmente tutti i control char) nei valori loggati a riga 167-168, senza troncamento ne restringimento del match — chiude il vettore di injection con il footprint piu piccolo. Trade-off: non mitiga il log-bloat da UA/path lunghi e lascia il match permissivo. Opzione B (robusta, raccomandata): helper SanitizeForLog con sostituzione control-char + troncamento + match ristretto a `EndsWith("manifest.json")` — chiude injection, flooding del singolo record e riduce il rumore INFO. Trade-off: piu righe e un cambiamento di livello di log per i path 'manifest' non canonici (benigno). Data la severita Bassa, la Opzione B e' comunque a basso rischio e preferibile come fix unica e duratura.
+
+---
+### [BUG-041] DescriptorFetcher.IsTransient non ritenta HTTP 429/408: hina install/update/reinstall aborta al primo rate-limit del CDN
+
+- **Modulo**: PM/Descriptor
+- **File:linea**: Hina.PackageManager/Descriptor/DescriptorFetcher.cs:109-118 (in particolare riga 115 `return (int)code >= 500;`)
+- **Severita**: Medio (disponibilita/resilienza; NON un bypass firma — la verifica Ed25519 del descriptor resta intatta)
+- **Stato**: DA CONFERMARE
+- **Lente**: correttezza / resilienza di rete
+- **Verdetto avversariale**: REALE
+
+- **Descrizione**: `IsTransient(HttpRequestException)` classifica come transitori solo gli status `>= 500` (ramo con `StatusCode` valorizzato, riga 113-116) e i casi senza status code (DNS/TCP, riga 117 `return true`). HTTP 429 (Too Many Requests) e 408 (Request Timeout) hanno `StatusCode` valorizzato e cadono nel ramo 4xx -> `(int)code >= 500` e' false -> NON transitori. In `FetchOnceAsync` la riga 96 `response.EnsureSuccessStatusCode()` lancia, su un CDN rate-limited, una `HttpRequestException` con `StatusCode=429`. Il `catch` in `FetchAsync` (riga 64) e' gated da `when (IsTransient(ex))`, quindi su 429/408 il filtro non scatta: l'eccezione propaga al PRIMO tentativo, ignorando completamente `_maxRetries` (default 5) e il backoff esponenziale gia' implementato (righe 49-58). Risultato: `hina install` (e update/reinstall) fallisce immediatamente su un 429, che e' invece il caso piu' tipicamente transitorio (burst di installazioni, rate-limit dell'edge). Questa e' una SECONDA copia, separata, della stessa logica difettosa gia' corretta in Hina.Core per BUG-021: il fix cc07080 ('fix(core): retry HTTP 429 with Retry-After hint') ha toccato SOLO 3 file di Hina.Core (RetryPolicy.cs, HttpChunkClient.cs, RetryTests.cs) e NON DescriptorFetcher, che non usa RetryPolicy ma una propria IsTransient inline. BUG-REPORT.md righe 909 e 912 avevano esplicitamente avvisato di correggere questa copia 'in parallelo, altrimenti il bug resta vivo su quel percorso'; non e' stato fatto.
+
+- **Verifica (raggiungibilita/caller)**: Ingresso esterno = status HTTP della risposta del CDN remoto del publisher (controllabile da rete/operatore CDN sotto carico). Catena ingresso->sink concreta:
+  - `hina install <url>` -> InstallCommand.RunAsync (arg posizionale utente -> descriptorUrl, Hina.CLI/Commands/InstallCommand.cs:21,28) -> `service.InstallAsync(descriptorUrl, ...)` (InstallCommand.cs:80) -> `InstallService.InstallAsync(Uri)` (InstallService.cs:50) -> `_fetcher.FetchAsync(url)` (InstallService.cs:56) -> `DescriptorFetcher.FetchAsync` (DescriptorFetcher.cs:37) -> `FetchOnceAsync` (riga 62/79) -> `_http.GetAsync` sul CDN (riga 81) -> CDN risponde 429 -> `EnsureSuccessStatusCode()` (riga 96) lancia `HttpRequestException(StatusCode=429)` -> `catch when (IsTransient(ex))` (riga 64) -> `IsTransient` (riga 109-118) ritorna false per code<500 -> nessun retry -> eccezione propaga -> install abortita al primo 429.
+  - Stesso sink raggiungibile anche da `UpdateService` (UpdateService.cs:84 `_fetcher.FetchAsync`) via `hina update`, e da `ReinstallService` (ReinstallService.cs:66) via `hina reinstall`.
+
+- **Coperto da test**: NO. I test esistenti su DescriptorFetcher coprono solo: 503 transitorio (Round2AuditTests.cs:68 `DescriptorFetcher_RetriesOn503_ThenSucceeds`), 404 non-transitorio (Round2AuditTests.cs:82 `DescriptorFetcher_DoesNotRetryOn404`), e il cap di retry su 503 (NetworkResilienceTests.cs:60 `DescriptorFetcher_RetriesWithCapBeforeGivingUp`). Nessuno asserisce il retry su 429/408. Il `FlakyHandler` (Round2AuditTests.cs:287-309) hardcoda `HttpStatusCode.ServiceUnavailable` (riga 308) nel ramo di fallimento, quindi non puo' simulare 429 senza essere parametrizzato sullo status.
+
+- **Fix proposta**: In Hina.PackageManager/Descriptor/DescriptorFetcher.cs, sostituire la riga 115 `return (int)code >= 500;` con:
+  ```csharp
+  // 429 (Too Many Requests) e 408 (Request Timeout) sono richieste esplicite
+  // del server di ritentare: transitori. 5xx restano transitori. Altri 4xx no.
+  return code == HttpStatusCode.TooManyRequests   // 429
+      || code == HttpStatusCode.RequestTimeout    // 408
+      || (int)code >= 500;
+  ```
+  Allinea esattamente la copia gia' corretta in Hina.Core/Net/RetryPolicy.cs:112 (`return code == 429 || code == 408 || code >= 500;`). NOTA Retry-After: `EnsureSuccessStatusCode()` lancia una `HttpRequestException` che porta solo lo `StatusCode`, NON gli header, quindi l'header `Retry-After` non e' onorabile senza un refactoring piu' ampio (catturare la `HttpResponseMessage` prima di EnsureSuccessStatusCode e propagarne il delay). La fix a scope ridotto e' semplicemente classificare 429/408 come transitori e ritentare col backoff esponenziale gia' presente (righe 49-58); onorare Retry-After va tenuto FUORI da questa fix.
+
+- **Impatto della fix**: Caller toccati: tutti e tre i percorsi via DescriptorFetcher.FetchAsync — InstallService.cs:56, UpdateService.cs:84, ReinstallService.cs:66. Effetto osservabile: un 429/408 che prima falliva subito ora consuma fino a `_maxRetries` tentativi con backoff prima di propagare (peggior caso: fallimento piu' tardivo su 429 persistente, cap a `_maxRetryDelay`=15s — coerente col 5xx persistente gia' gestito). Compat wire/schema: nessuna — nessuna firma pubblica cambia, nessun formato wire/descriptor toccato; `IsTransient` e' `private static`. Thread-safety: invariata — `IsTransient` e' funzione pura sui campi dell'eccezione, nessuno stato condiviso. Edge case: 429 senza body/senza Retry-After gestito (ritenta col backoff esistente); 429 che esaurisce i retry propaga la `HttpRequestException` wrappata ('Descriptor fetch failed after N attempts', riga 75-76) esattamente come il 5xx esaurito; cancellazione utente invariata (il ramo `TaskCanceledException when (!ct.IsCancellationRequested)` riga 68 e il check `await Task.Delay(delay, ct)` riga 57 restano validi).
+
+- **Rischio regressione**: Basso
+
+- **Test coinvolti**:
+  - Test ESISTENTI da non rompere: `DescriptorFetcher_RetriesOn503_ThenSucceeds` (Round2AuditTests.cs:68), `DescriptorFetcher_DoesNotRetryOn404` (Round2AuditTests.cs:82 — 404 resta non-transitorio, invariato), `DescriptorFetcher_RetriesWithCapBeforeGivingUp` (NetworkResilienceTests.cs:60), `DescriptorFetcher_DefaultMaxRetries_Is5` (NetworkResilienceTests.cs:54). Nessuno asserisce attualmente che 429 sia non-transitorio, quindi nessuna rottura diretta.
+  - Nuovo test di regressione (fallisce PRIMA, passa DOPO): parametrizzare `FlakyHandler` sullo status di fallimento (oggi hardcoda `ServiceUnavailable` a Round2AuditTests.cs:308 — aggiungere un campo opzionale `failStatus = HttpStatusCode.ServiceUnavailable` usato al posto del literal), poi aggiungere in Round2AuditTests.cs o NetworkResilienceTests.cs:
+    ```csharp
+    [Fact]
+    public async Task DescriptorFetcher_RetriesOn429_ThenSucceeds()
+    {
+        // 2 x 429 poi OK; con maxRetries:3 deve succedere alla 3a chiamata.
+        FlakyHandler handler = new FlakyHandler(failBefore: 2, failStatus: HttpStatusCode.TooManyRequests);
+        HttpClient client = new HttpClient(handler);
+        DescriptorFetcher fetcher = new DescriptorFetcher(client, maxRetries: 3, retryBaseDelay: TimeSpan.FromMilliseconds(5));
+        AppDescriptor d = await fetcher.FetchAsync(new Uri("https://example.com/x.json"), CancellationToken.None);
+        Assert.Equal("demo", d.Name);
+        Assert.Equal(3, handler.Calls);  // PRIMA del fix: Calls==1 e ThrowsAsync -> fallisce
+    }
+    ```
+    (Opzionale, simmetrico per 408: identico con `HttpStatusCode.RequestTimeout`.)
+
+- **Alternative**: Opzione minima (perimetro stretto, solo il bug confermato): `return code == HttpStatusCode.TooManyRequests || (int)code >= 500;` — corregge esattamente il 429 segnalato, diff minimo, ma lascia il 408 (stessa classe semantica 'ritenta') nello stesso ramo difettoso, incoerenza che potrebbe ripresentarsi. Opzione robusta (raccomandata, allineata a RetryPolicy.cs:112): includere sia 429 che 408 col backoff esistente, senza onorare Retry-After (rimandato a lavoro dedicato che richiederebbe di catturare la response prima di EnsureSuccessStatusCode). Trade-off: copre tutta la classe 'richiesta esplicita di retry' e mantiene parita' di comportamento con la copia gia' corretta in Hina.Core, al costo di una riga in piu'; rischio comunque Basso.
+
+---
+### [BUG-042] App legacy senza exec per l'OS corrente scarica l'intero payload prima di fallire
+
+- **Modulo:** PM/Install-core
+- **File:linea:** `Hina.PackageManager/Install/PlatformResolver.cs:32-34` (causa) / `Hina.PackageManager/Install/InstallService.cs:161-194` (effetto) / `Hina.PackageManager/Install/InstallService.cs:294-300` (ExecForCurrentOs) / `Hina.PackageManager/Descriptor/DescriptorValidator.cs:83-91` (perche passa la validazione)
+- **Severita:** Basso
+- **Stato:** DA CONFERMARE
+- **Lente:** risorse/leak (efficienza/coerenza)
+- **Verdetto avversariale:** REALE
+
+**Descrizione (cosa, perche)**
+Nel ramo legacy di `PlatformResolver.ForCurrentMachine` (descriptor.Platforms.Count==0), il metodo ritorna sempre `new PlatformResolution { ExecRelative = InstallService.ExecForCurrentOs(descriptor), ManifestToken = null }` senza MAI impostare `NoBuildForPlatform = true`, anche quando `ExecForCurrentOs(descriptor)` ritorna null. `ExecForCurrentOs` (InstallService.cs:294-300) ritorna null se la mappa `Exec` non copre l'OS corrente (es. descriptor legacy con solo `exec.windows` definito, installato su Linux: ritorna `descriptor.Exec.Linux == null`). Un tale descriptor passa la validazione perche `DescriptorValidator.cs:83` imposta `hasExecMap = true` se ANCHE solo uno tra windows/linux/macos e' non-null, quindi il controllo "exec must define at least one platform" (riga 85-88) non scatta, e `ValidateRelativePath(descriptor.Exec.Linux=null, ...)` e' no-op. Cosi in `InstallService.InstallAsync`: la guardia fail-fast `if (resolution.NoBuildForPlatform)` (riga 162) NON scatta (e' false), quindi si procede a creare appDir (155), costruire `PatcherConfig` ed eseguire `patcher.PatchAsync(appDir, ct)` (riga 179) che SCARICA l'intero manifest.json legacy su disco; solo DOPO, a riga 187, `if (execRelative == null) throw` fallisce, attivando il rollback. L'esito finale e' corretto (rollback completo, nessun leak persistente), ma si effettua un download completo + scritture su disco inutili PRIMA di accorgersi che non esiste alcun exec per questo OS. Il ramo multi-variant invece (PlatformResolver.cs:39-41) imposta `NoBuildForPlatform = true` quando `PlatformSelector.Select` ritorna null, attivando il throw a riga 162 PRIMA di PatchAsync (zero download). Asimmetria reale: multi-variant fail-fast pre-download, legacy fail-slow post-download.
+
+**Verifica (raggiungibilita/caller)**
+Catena ingresso->sink concreta: `hina install <url>` -> `InstallService.InstallAsync(Uri,...)` (InstallService.cs:50-57) -> `DescriptorFetcher.FetchAsync` (descriptor legacy firmato: Platforms vuoto, Exec map con solo `exec.windows`) -> `InstallAsync(descriptor,...)` (65) -> `DescriptorValidator.Validate(...).EnsureValid()` (70) PASSA (hasExecMap=true a DescriptorValidator.cs:83 perche exec.windows!=null; il blocco 85-88 non scatta; `ValidateRelativePath(exec.linux=null)` no-op a riga ~328) -> firma Ed25519 verificata (85, modello TOFU self-signed valido) -> dentro `try`: `Directory.CreateDirectory(appDir)` (155) + `tx.RecordAppDirCreated` (156) -> `PlatformResolver.ForCurrentMachine(descriptor)` (161) su host Linux ritorna `{ ExecRelative = ExecForCurrentOs = descriptor.Exec.Linux = null, NoBuildForPlatform = false }` (PlatformResolver.cs:32-34) -> guardia `if (resolution.NoBuildForPlatform)` (162) NON scatta -> `patcher.PatchAsync(appDir, ct)` (179) **[SINK: download completo del manifest.json su disco/rete]** -> `if (execRelative == null) throw new InvalidOperationException(...)` (187-189) -> `catch` (241) -> `tx.RollbackAsync(...)` (243) elimina appDir. Input esterno (descriptor di rete, controllato dal publisher in modello TOFU) raggiunge il sink prima del controllo exec mancante. Scenario realistico: app legacy windows-only, utente su Linux/macOS.
+
+**Coperto da test:** NO. `Hina.PackageManager.Tests/PlatformResolverTests.cs` ha `Legacy_UsesExecMap_NullToken` (riga 11-23) ma usa un ExecMap COMPLETO (`Windows="g.exe", Linux="g", Macos="g.app"`), quindi `ExecRelative` non e' mai null e `NoBuildForPlatform` e' sempre false: il caso "legacy con exec mancante per l'OS corrente" non e' esercitato. `Multi_NoVariantForOs_FlagsNoBuild` (41-52) copre solo il ramo multi-variant.
+
+**Fix proposta (concreta)**
+In `Hina.PackageManager/Install/PlatformResolver.cs:32-35`, rendere il ramo legacy simmetrico al multi-variant: impostare `NoBuildForPlatform = true` quando l'exec per l'OS corrente e' assente. Sostituire:
+```csharp
+if (descriptor.Platforms.Count == 0)
+{
+    return new PlatformResolution { ExecRelative = InstallService.ExecForCurrentOs(descriptor), ManifestToken = null };
+}
+```
+con:
+```csharp
+if (descriptor.Platforms.Count == 0)
+{
+    string? legacyExec = InstallService.ExecForCurrentOs(descriptor);
+    return new PlatformResolution
+    {
+        ExecRelative = legacyExec,
+        ManifestToken = null,
+        NoBuildForPlatform = legacyExec == null
+    };
+}
+```
+Cosi la guardia `if (resolution.NoBuildForPlatform)` a InstallService.cs:162 scatta PRIMA di `PatchAsync` (179), con messaggio coerente "has no build for this platform", evitando il download. NOTA: applicare lo stesso pattern anche al ramo legacy di `ForInstalledToken` (PlatformResolver.cs:57-60) per coerenza, ma li' il problema e' meno rilevante (update/run su app gia installata che dichiara exec per l'OS corrente); valutare se l'app era installata su quell'OS deve aver avuto un exec, quindi un descriptor aggiornato che lo rimuove e' il caso di interesse.
+
+**Impatto della fix**
+- Caller toccati: `InstallService.InstallAsync` (gia gestisce `NoBuildForPlatform` a 162-166, throw con messaggio). `UpdateService`/`RunService`/`VerifyService` che usano `ForInstalledToken`/`ForCurrentMachine` devono tollerare `NoBuildForPlatform=true` con `ExecRelative=null` — verificare che non leggano `ExecRelative` senza prima controllare la guardia (per install gia' lo fanno).
+- Compat wire/schema: NESSUNA. `PlatformResolution` e' un tipo interno di runtime, non serializzato; nessun campo del descriptor cambia; i byte canonici firmati non sono toccati.
+- Thread-safety: invariata (metodo statico puro, nessuno stato condiviso).
+- Edge case: cambia il MESSAGGIO di errore per il caso legacy-no-exec da "Descriptor has no exec entry for the current OS" (InstallService.cs:189) a "has no build for this platform (...)" (165). Comportamento osservabile identico (throw -> rollback). Se qualche test asserisce sul testo del primo messaggio, va aggiornato (vedi sotto).
+
+**Rischio regressione:** Basso. Cambio localizzato a un solo ramo di un metodo statico puro; l'esito (throw+rollback) resta identico, cambia solo l'ORDINE (prima del download) e il testo del messaggio.
+
+**Test coinvolti**
+- Da non rompere: `PlatformResolverTests.Legacy_UsesExecMap_NullToken` (usa exec completo, resta verde: `NoBuildForPlatform` resta false perche legacyExec!=null). `Legacy_UsesExecMap_NullToken` e gli altri ForInstalledToken restano validi.
+- Cercare eventuali test che asseriscono il messaggio "Descriptor has no exec entry for the current OS" e aggiornarli al nuovo messaggio.
+- NUOVO test di regressione (fallisce PRIMA, passa DOPO) in `PlatformResolverTests.cs`:
+```csharp
+[Fact]
+public void Legacy_NoExecForCurrentOs_FlagsNoBuild()
+{
+    // ExecMap che NON copre l'OS del test host -> deve segnalare NoBuildForPlatform.
+    bool isWin = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows);
+    AppDescriptor d = new AppDescriptor
+    {
+        // copri solo un OS diverso dall'host corrente
+        Exec = isWin ? new ExecMap { Linux = "g" } : new ExecMap { Windows = "g.exe" }
+    };
+    PlatformResolution r = PlatformResolver.ForCurrentMachine(d);
+    Assert.True(r.NoBuildForPlatform);   // PRIMA: false (fallisce) — DOPO: true
+    Assert.Null(r.ExecRelative);
+}
+```
+Opzionale: test a livello InstallService che verifica che `PatchAsync` NON venga chiamato (es. con un `IPatchClient` fittizio che incrementa un contatore) quando l'exec manca per l'OS corrente, dimostrando il fail-fast pre-download.
+
+**Alternative**
+- Minima (consigliata): la fix sopra in `PlatformResolver.cs` ramo legacy (3 righe). Trade-off: zero rischio wire/schema, ripristina la simmetria con il ramo multi-variant a costo nullo.
+- Robusta: spostare il controllo `execRelative == null` in `InstallService.InstallAsync` PRIMA di `PatchAsync` (riempire la guardia a riga 162 con un controllo combinato `NoBuildForPlatform || ExecRelative == null`). Trade-off: copre il sintomo a valle anche se altri ramo dimenticano `NoBuildForPlatform`, ma duplica la logica in InstallService invece di centralizzarla nel resolver; meno pulito. Si puo combinare con la minima come difesa in profondita.
+
+---
+### [BUG-043] Le shell entry aggiunte da un update di un'app sandboxed bypassano la sandbox (manca il launchOverride `hina run`)
+- **Modulo**: PM/Install-update
+- **File**: Hina.PackageManager/Install/UpdateService.cs:350 (variante rollback: UpdateService.cs:509)
+- **Severita**: Alto
+- **Stato**: DA CONFERMARE
+- **Lente**: sicurezza
+- **Verdetto avversariale**: REALE
+- **Descrizione**: A install time InstallService instrada le shell entry di un'app sandboxed via `hina run`, il chokepoint che installa la sandbox (Landlock/AppContainer/seatbelt) prima di lanciare il binario. InstallService.cs:203-218 calcola `bool sandboxRequested = descriptor.Sandbox?.Enabled == true; bool sandboxEnforceable = (Linux||OSX||Windows); bool routeThroughHina = sandboxRequested && sandboxEnforceable;` e per OGNI entry passa `launchOverride = routeThroughHina ? "\"<hinaExe>\" run <name> \"<entry.Id>\"" : null` all'overload a 4 argomenti CreateMenuShortcut(entry, appDir, launchOverride, ct). UpdateService NON calcola MAI routeThroughHina/launchOverride (grep su UpdateService.cs per `launchOverride|routeThroughHina` = ZERO match; `Sandbox` compare solo per SandboxDiff a riga 231). Nel loop step [7] (UpdateService.cs:348-354) per ogni ShellEntry in entriesToAdd chiama l'overload a 3 argomenti `_platform.CreateMenuShortcut(entry, app.InstallPath, ct)`. La default-interface impl (IPlatformIntegration.cs:21-22) inoltra con launchOverride=null. Su Linux LinuxPlatformIntegration.cs:64 scrive `execLine = launchOverride != null ? StripControl(launchOverride) : QuoteExec(execAbs)` -> con null si genera `Exec=<binario assoluto>`, quindi il .desktop lancia l'eseguibile DIRETTAMENTE senza passare per `hina run` (RunCommand.cs:14-16 e :88-90 sono l'unico punto in cui SandboxPlan viene costruito e applicato). Risultato: una nuova shell entry introdotta da un update di un'app sandboxed ottiene un percorso di avvio NON isolato mentre l'utente crede sia sandboxed. Stesso difetto in RollbackFailedAddAsync (UpdateService.cs:509) che ricrea entry rimosse via lo stesso overload a 3 argomenti.
+- **Verifica (raggiungibilita/caller)**: Ingresso esterno = descriptor firmato fetchato dall'URL del publisher. CLI `hina update <name>` -> UpdateCommand.RunAsync (UpdateCommand.cs:77) -> UpdateService.UpdateAsync -> _fetcher.FetchAsync(app.DescriptorUrl) (UpdateService.cs:84) -> DescriptorSigner.Verify contro la chiave pinnata (UpdateService.cs:128; dopo la fix BUG-001 il blocco Sandbox entra nei byte canonici firmati, quindi descriptor.Sandbox.Enabled e attendibile) -> UpdateDiff.Compute mette una entry con Id non gia installato in entriesToAdd (UpdateDiff.cs:65-69) -> step [7] loop UpdateService.cs:348-350 chiama l'overload a 3 argomenti -> IPlatformIntegration.cs:21-22 default forward launchOverride=null -> LinuxPlatformIntegration.cs:64 scrive Exec=<binario diretto> -> sandbox mai installata al click dell'icona. Threat model gia assunto (BUG-001/BUG-008): descriptor firmato ma ostile/over-broad. Un'app sandboxed che in v2 dichiara una entry aggiuntiva guadagna un launch non isolato.
+- **Coperto da test**: No. LinuxSandboxShortcutTests.cs copre il MECCANISMO a livello di LinuxPlatformIntegration (LaunchOverride_SetsExecToOverride e NullOverride_PointsAtAppBinary), ma nessun test esercita il percorso UpdateService (entriesToAdd -> CreateMenuShortcut). UpdateServiceTests.cs copre solo il gate SandboxDiff (broadening/consent/fail-closed), non il routing del lancio.
+- **Fix proposta**: In UpdateService.UpdateAsync, prima del loop step [7] (UpdateService.cs:348), replicare il calcolo di InstallService: `bool sandboxRequested = descriptor.Sandbox?.Enabled == true; bool sandboxEnforceable = RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || RuntimeInformation.IsOSPlatform(OSPlatform.Windows); bool routeThroughHina = sandboxRequested && sandboxEnforceable; string hinaExe = Environment.ProcessPath ?? "hina";`. Poi cambiare la riga 350 da `string evidence = await _platform.CreateMenuShortcut(entry, app.InstallPath, ct);` a costruire `string? launchOverride = routeThroughHina ? $"\"{hinaExe}\" run {descriptor.Name} \"{entry.Id}\"" : null;` e chiamare l'overload a 4 argomenti `await _platform.CreateMenuShortcut(entry, app.InstallPath, launchOverride, ct)`. Applicare lo stesso fix al re-create di rollback (UpdateService.cs:509) usando previousDescriptor.Sandbox per il calcolo di routeThroughHina (le entry rimosse appartengono alla versione precedente; usare previousDescriptor?.Sandbox?.Enabled). Aggiungere `using System.Runtime.InteropServices;` a UpdateService.cs. Per ridurre duplicazione, estrarre un helper statico condiviso (es. in InstallService o in un nuovo LaunchRouting) `static string? BuildLaunchOverride(AppDescriptor desc, ShellEntry entry)` e usarlo sia in InstallService.cs:215 sia in UpdateService.
+- **Impatto della fix**: Caller toccati: solo UpdateService (due call site). Nessun cambiamento wire/schema: launchOverride non e persistito nel registry (si persiste solo l'evidence path). Thread-safety invariata (il loop e sequenziale, valori readonly). Edge case: descriptor.Sandbox null o Enabled=false -> launchOverride=null come oggi (corretto, nessun cambiamento). Su OS senza backend enforceable il comportamento e identico a InstallService (override ignorato). Per il rollback, se previousDescriptor e null (cache assente) non si puo calcolare routeThroughHina; in quel caso il fail-closed gate BUG-006 a riga 213 ha gia bloccato l'update prima di arrivare al rollback delle add, quindi previousDescriptor e non-null nel percorso normale; comunque difendersi con `previousDescriptor?.Sandbox?.Enabled == true`.
+- **Rischio regressione**: Basso. Il cambiamento allinea UpdateService al comportamento gia consolidato e testato di InstallService; le app non-sandboxed restano invariate (launchOverride=null).
+- **Test coinvolti**: Non rompere: LinuxSandboxShortcutTests.cs (entrambi i Fact), UpdateServiceTests.cs (gate SandboxDiff). Nuovo test di regressione (fallisce PRIMA, passa DOPO): in UpdateServiceTests installare un'app sandboxed v1 con una sola entry, poi update a v2 (sandbox invariata) che AGGIUNGE una seconda entry, e con un IPlatformIntegration fake/spy verificare che la CreateMenuShortcut per la nuova entry riceva un launchOverride non-null contenente `run <name>`; in alternativa, su Linux, leggere il .desktop generato e asserire che la riga Exec contenga `run` e NON il path del binario diretto.
+- **Alternative**: Opzione minima: duplicare il calcolo routeThroughHina/launchOverride nei due call site di UpdateService (rapido, ma duplica la logica gia in InstallService — rischio di drift). Opzione robusta: estrarre un helper condiviso BuildLaunchOverride(descriptor, entry) usato da InstallService e UpdateService (single source of truth, evita la divergenza che ha causato questo bug). Trade-off: l'opzione robusta tocca anche InstallService (refactor minimo) ma previene future regressioni dello stesso tipo.
+
+---
+### [BUG-044] Routing del lancio disaccoppiato dal gate SandboxDiff: una entry aggiunta in update resta non sandboxed anche quando il gate approva l'update
+- **Modulo**: PM/Install-update
+- **File**: Hina.PackageManager/Install/UpdateService.cs:231 (gate) vs :350 (routing)
+- **Severita**: Basso
+- **Stato**: DA CONFERMARE
+- **Lente**: sicurezza
+- **Verdetto avversariale**: REALE
+- **Descrizione**: Variante dal lato del gate dello stesso root cause del bug primario (UpdateService non ricalcola mai routeThroughHina). Il gate dei permessi SandboxDiff.Compute (UpdateService.cs:231-245) valuta SOLO l'ampliamento dello scope: se la nuova versione e sandboxed con scope invariato o ristretto (permDiff.Broadened == false), l'update procede SENZA --accept-new-permissions. Tuttavia la nuova entry (entriesToAdd) creata a UpdateService.cs:350 con l'overload a 3 argomenti riceve comunque un launcher diretto/non-sandboxed (vedi bug primario). Quindi un update giudicato 'permission-safe' dal gate produce comunque un launcher che bypassa la sandbox dichiarata per la stessa app: gate (decisione open/closed sui permessi) e routing (instradamento via `hina run`) sono effettivamente disaccoppiati. Il punto distinto: una fix che indurisse SOLO il gate SandboxDiff (come ha fatto BUG-006 per il fail-open) NON chiuderebbe questo buco, perche il difetto e nel routing, non nella decisione del gate.
+- **Verifica (raggiungibilita/caller)**: CLI `hina update <name>` -> UpdateService.UpdateAsync -> _fetcher.FetchAsync (UpdateService.cs:84, input rete) -> firma verificata vs chiave pinnata (UpdateService.cs:128) -> UpdateDiff.Compute mette la nuova entry.Id in entriesToAdd (UpdateDiff.cs:65-69) -> gate SandboxDiff.Compute (UpdateService.cs:231) ritorna Broadened=false per sandbox invariata/ristretta -> l'update committa -> foreach entriesToAdd UpdateService.cs:348-350 chiama l'overload a 3 argomenti (launchOverride=null) -> LinuxPlatformIntegration.cs:64 scrive Exec=<binario diretto> -> click sull'icona NON passa per RunCommand.cs:88-90 (unico punto di applicazione SandboxPlan/Landlock). Il verdetto del gate (Broadened=false) e irrilevante per il routing.
+- **Coperto da test**: No. UpdateServiceTests.cs verifica i verdetti del gate (Update_BroadenedSandbox_* / Update_DroppedSandbox_*) ma nessun test asserisce che, con gate=approvato, una entry aggiunta sia instradata via `hina run`.
+- **Fix proposta**: La stessa fix del bug primario chiude anche questa variante: instradare le entry di entriesToAdd via launchOverride quando descriptor.Sandbox.Enabled && enforceable (UpdateService.cs:348-350). Nessuna modifica aggiuntiva al gate e necessaria. Questo blocco e elencato separatamente per garantire che la fix NON sia limitata a indurire il gate SandboxDiff: il criterio di accettazione e che, indipendentemente dal verdetto Broadened, ogni entry aggiunta di un'app sandboxed parta via `hina run`.
+- **Impatto della fix**: Identico al bug primario (stessi due call site UpdateService.cs:350 e :509). Nessun impatto su wire/schema. Nessun nuovo stato concorrente.
+- **Rischio regressione**: Basso (coperta dalla stessa fix del bug primario).
+- **Test coinvolti**: Non rompere: UpdateServiceTests.cs gate tests. Nuovo test di regressione (fallisce PRIMA, passa DOPO): installare app sandboxed v1; update a v2 con sandbox RISTRETTA (es. da home/rw a home/ro, cosi Broadened=false e l'update procede senza consenso) che AGGIUNGE una nuova entry; verificare che il gate approvi l'update E che la nuova entry sia instradata con launchOverride non-null (`run <name>`). Questo isola il decoupling: gate=ok ma routing corretto.
+- **Alternative**: Opzione minima/robusta coincidono con il bug primario (fix sul routing). NON e un'alternativa valida indurire solo SandboxDiff: lascerebbe il buco aperto. Mantenere questo blocco come criterio di accettazione esplicito della fix routing.
+
+---
+### [BUG-045] update con casing diverso dell'app: DescriptorCache(name) usa il name CLI grezzo e su FS case-sensitive trova/scrive il file sbagliato
+- **Modulo**: PM/Install-update
+- **File**: Hina.PackageManager/Install/UpdateService.cs:60 (mancata canonicalizzazione di `name`), con sink a :608 (TryLoadCachedDescriptor) e :469 (RefreshDescriptorCacheBestEffort)
+- **Severita**: Basso
+- **Stato**: DA CONFERMARE
+- **Lente**: cross-platform
+- **Verdetto avversariale**: REALE
+- **Descrizione**: UpdateAsync riceve `name` dalla CLI senza normalizzazione (UpdateCommand.cs:28 Args.FirstPositional restituisce il token grezzo) e il lookup nel registry e case-insensitive perche Registry.Apps usa StringComparer.OrdinalIgnoreCase (Registry.cs:15). Quindi `hina update Demo` risolve la riga installata come `demo`. Tuttavia dopo il lookup (UpdateService.cs:60) la variabile `name` NON viene MAI riassegnata a app.Name/found.Name: tutti gli usi successivi mantengono il casing digitato. DescriptorCache(name) = Path.Combine(root, name + ".json") (InstallPaths.cs:27) mette il casing LETTERALMENTE nel nome file. InstallService ha scritto la cache sotto descriptor.Name (InstallService.cs:235), che per l'update e imposto == app.Name in Ordinal (UpdateService.cs:100). Su filesystem case-sensitive (Linux, macOS default), TryLoadCachedDescriptor("Demo") (UpdateService.cs:197->608) fa File.Exists("descriptors/Demo.json")=false mentre la cache reale sta in "descriptors/demo.json" -> previousDescriptorAvailable=false. Il gate fail-closed post-BUG-006 (UpdateService.cs:213) allora fa FALLIRE un update legittimo chiedendo --accept-new-permissions. Se l'utente passa il flag, RefreshDescriptorCacheBestEffort("Demo") (UpdateService.cs:450->469) scrive un SECONDO file cache "descriptors/Demo.json" lasciando "descriptors/demo.json" stale -> cache duplicata/divergente che run/perms/info (che usano anch'essi il name CLI grezzo) leggono in modo incoerente. Nota di correzione al sospetto originale: la write registry a :404 NON crea una seconda chiave (il comparer OrdinalIgnoreCase sovrascrive la riga `demo`); e comunque non viene raggiunta nel ramo fail-closed. Il difetto reale e solo il mismatch del path del file cache e il fallimento spurio.
+- **Verifica (raggiungibilita/caller)**: `hina update Demo` (app installata come `demo`, FS case-sensitive) -> UpdateCommand.cs:28 Args.FirstPositional ritorna "Demo" grezzo -> :77 service.UpdateAsync("Demo") -> UpdateService.cs:60 registry.Apps.TryGetValue("Demo") hit via OrdinalIgnoreCase (Registry.cs:15), app.Name="demo" -> gate identita :100 (descriptor.Name vs app.Name, Ordinal demo==demo) passa, NON confronta il name digitato -> :197 TryLoadCachedDescriptor("Demo") -> :608 DescriptorCache("Demo")=descriptors/Demo.json -> File.Exists=false (cache reale descriptors/demo.json scritta da InstallService.cs:235) -> previousDescriptorAvailable=false -> :213 fail-closed: UpdateStatus.Failed. Con --accept-new-permissions: :469 scrive descriptors/Demo.json duplicato.
+- **Coperto da test**: No. BUG-REPORT.md tratta case-sensitivity per i flag CLI (BUG-025) e per /health-/stats dell'host, non questo mismatch di path della cache descriptor. Nessun test in UpdateServiceTests.cs usa un casing del name diverso da quello di install.
+- **Fix proposta**: Canonicalizzare `name` subito dopo il lookup riuscito. In UpdateService.cs:60-64 cambiare il blocco da `app = found;` aggiungendo `name = found.Name;` cosi tutti gli usi successivi (DescriptorCache, registry write, messaggi) usano il casing canonico su disco. In alternativa, usare `app.Name` esplicitamente in tutti i punti che oggi usano `name` per costruire path della cache: TryLoadCachedDescriptor(app.Name) a :197, RefreshDescriptorCacheBestEffort(app.Name) a :450, e registry.Apps[app.Name] a :404. La prima opzione (riassegnare `name = found.Name`) e minima e copre tutti i call site in un punto solo.
+- **Impatto della fix**: Caller toccati: nessuno esterno (cambiamento interno a UpdateAsync). I messaggi di errore useranno il casing canonico anziche quello digitato (miglioramento, non regressione). Nessun cambiamento wire/schema. Thread-safety invariata. Edge case: il gate identita a :100 resta invariato e protegge ancora contro il rename del descriptor (Ordinal). Su Windows (FS case-insensitive) il comportamento e gia corretto e resta tale. Nessun bypass di sicurezza introdotto: e una correzione fail-closed->corretto.
+- **Rischio regressione**: Basso.
+- **Test coinvolti**: Non rompere: UpdateServiceTests.cs esistenti (usano casing coerente). Nuovo test di regressione (fallisce PRIMA su FS case-sensitive, passa DOPO; su Windows passa comunque ma e neutro): installare `demo` con un descriptor sandboxed, poi chiamare UpdateAsync("Demo") (casing diverso) verso una v2 valida con permessi invariati e SENZA --accept-new-permissions; asserire Status==Updated (non Failed) e che esista un solo file cache in descriptors/. Per renderlo deterministico cross-platform si puo testare direttamente che dopo l'update il path DescriptorCache risolto sia quello canonico (app.Name) e non quello digitato.
+- **Alternative**: Opzione minima: `name = found.Name;` dopo il lookup (una riga, copre tutti i path/chiavi). Opzione robusta: introdurre un campo locale `string canonicalName = found.Name;` e usarlo ovunque per cache/registry, lasciando `name` solo per i messaggi rivolti all'utente — piu esplicito ma piu invasivo. Trade-off: la minima e sufficiente e a basso rischio; la robusta documenta meglio l'intento ma tocca piu righe.
+
+---
+### [BUG-046] Windows: l'edit della user PATH degrada REG_EXPAND_SZ a REG_SZ congelando l'indirezione %VAR% (data loss)
+
+- **Modulo**: PM/Platform (Windows)
+- **File:linea**: Hina.PackageManager/Platform/Windows/WindowsPlatformIntegration.cs:451-467 (`EnsureBinDirOnUserPath`)
+- **Severita**: Medio
+- **Stato**: DA CONFERMARE
+- **Lente**: cross-platform / correttezza (data-loss su impostazione condivisa)
+- **Verdetto avversariale**: REALE
+
+**Descrizione (cosa, perche)**
+`EnsureBinDirOnUserPath` esegue un read-modify-write della PATH utente:
+- read: `Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User)` (riga 453)
+- write: `Environment.SetEnvironmentVariable("PATH", current + ";" + _userBinDir, EnvironmentVariableTarget.User)` (riga 466), e analogo `SetEnvironmentVariable("PATH", _userBinDir, User)` quando `current == null` (riga 456).
+
+Comportamento documentato del runtime .NET su Windows: per i target User/Machine, il getter legge `HKCU\Environment` e, se il valore e' `REG_EXPAND_SZ`, lo restituisce GIA' espanso (usa `RegistryValueOptions.None`, NON `DoNotExpandEnvironmentNames`); il setter scrive INCONDIZIONATAMENTE come `REG_SZ` (`RegistryValueKind.String`), senza preservare ne' rilevare `REG_EXPAND_SZ`. La user PATH di default di Windows e' creata come `REG_EXPAND_SZ` e contiene tipicamente segmenti indiretti come `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps` o `%SystemRoot%\...`.
+
+Conseguenza: al primo append del bin dir, l'intera user PATH viene riscritta come `REG_SZ` con tutti i `%VAR%` gia' espansi a letterali, e il tipo viene degradato `EXPAND_SZ -> SZ`. L'indirezione e' distrutta in modo permanente e silenzioso. Se in seguito la variabile sottostante cambia (profilo roaming, profilo rilocato, `SystemRoot` spostato) quei segmenti diventano errati/rotti. E' una mutazione persistente di un setting condiviso che l'utente non ha chiesto a Hina di riscrivere oltre all'append del proprio bin.
+
+Nota correlata (secondaria): il read-modify-write non e' atomico (TOCTOU teorico tra processi che scrivono la user PATH). Il punto centrale resta la conversione EXPAND_SZ->SZ.
+
+**Verifica (raggiungibilita/caller)**
+Catena ingresso->sink concreta:
+1. Descriptor JSON (input esterno firmato/scaricato) con `postInstall` contenente un `AddToPathHook` (`{ "action":"addToPath", name, target }`).
+2. `DescriptorValidator.ValidateHook` (Hina.PackageManager/Descriptor/DescriptorValidator.cs:219-222, `case AddToPathHook a`): valida solo `name` non-vuoto e `target` path relativo; nessuna restrizione che blocchi il flusso.
+3. `InstallService.InstallAsync` (Hina.PackageManager/Install/InstallService.cs:224-226): `foreach (HookAction hook in descriptor.PostInstall) { ... hooks.ApplyAsync(hook, appDir, ...); }`.
+4. `HookExecutor.ApplyAsync` (Hina.PackageManager/Hooks/HookExecutor.cs:37-41, `case AddToPathHook a`): `await _platform.AddToPath(a.Name, targetAbs, ct)`.
+5. `WindowsPlatformIntegration.AddToPath` (WindowsPlatformIntegration.cs:100-103): chiama `EnsureBinDirOnUserPath()`.
+6. `EnsureBinDirOnUserPath` (451-467): get PATH/User (espande REG_EXPAND_SZ, riga 453) + set PATH/User (scrive REG_SZ, riga 456/466).
+
+Trigger: prima installazione su Windows di qualunque app che dichiara `addToPath`; nessun input speciale necessario. Colpisce utenti reali con user PATH che usa `%VARS%` (il default di Windows). Anche via UpdateService/ReinstallService (install/rollback) che eseguono gli stessi PostInstall hook.
+
+**Coperto da test**: NO. L'unico test che tocca questo path e' `WindowsPlatformIntegrationTests.AddToPath_WritesCmdShimWithExecForwarding` (Hina.PackageManager.Tests/WindowsPlatformIntegrationTests.cs:45-69), che e' gated `if (!IsWindows) return;` e verifica SOLO il contenuto del file `.cmd`, mai la mutazione/tipo della variabile di registro PATH. Nessun test verifica la preservazione di REG_EXPAND_SZ.
+
+**Fix proposta (concreta)**
+Sostituire l'uso di `Environment.Get/SetEnvironmentVariable(..., User)` in `EnsureBinDirOnUserPath` con accesso diretto al registro che preserva kind e valore raw non espanso:
+```csharp
+private void EnsureBinDirOnUserPath()
+{
+    using RegistryKey env = Registry.CurrentUser.CreateSubKey("Environment", writable: true);
+    object? rawObj = env.GetValue("PATH", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+    string? raw = rawObj as string;
+    RegistryValueKind kind = raw == null ? RegistryValueKind.ExpandString : env.GetValueKind("PATH");
+
+    if (string.IsNullOrEmpty(raw))
+    {
+        env.SetValue("PATH", _userBinDir, RegistryValueKind.ExpandString);
+        BroadcastEnvChange();
+        return;
+    }
+    foreach (string segment in raw.Split(';'))
+    {
+        // NB: confronto sul valore RAW (non espanso); per match piu' robusto si potrebbe
+        // espandere ogni segmento con Environment.ExpandEnvironmentVariables prima del confronto.
+        if (string.Equals(segment.TrimEnd('\\'), _userBinDir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+            return;
+    }
+    string updated = raw.TrimEnd(';') + ";" + _userBinDir;
+    env.SetValue("PATH", updated, kind); // preserva REG_EXPAND_SZ
+    BroadcastEnvChange();
+}
+```
+Punti chiave: (a) leggere con `RegistryValueOptions.DoNotExpandEnvironmentNames` per ottenere il raw; (b) riscrivere con lo stesso `RegistryValueKind` ottenuto da `GetValueKind` (di norma `ExpandString`), facendo l'append solo sul valore raw; (c) opzionale ma consigliato: notificare la modifica con `SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE, ...)` (`BroadcastEnvChange`) per propagare il cambiamento — Environment.SetEnvironmentVariable lo faceva implicitamente. Richiede `using Microsoft.Win32;` (gia' usato come alias `Reg` nel file — riusare `Reg.CurrentUser`).
+
+**Impatto della fix**
+- Caller toccati: solo `EnsureBinDirOnUserPath` (privato), invocato da `AddToPath`. Nessuna firma pubblica cambia.
+- Compat wire/schema: nessuna (nessun cambiamento al descriptor o allo schema).
+- Thread-safety: invariata (read-modify-write resta non atomico; `CreateSubKey` apre la chiave per la durata dell'op). Si puo' migliorare ma fuori scope.
+- Edge case: PATH assente (raw null/empty) -> scrive ExpandString; segmento gia' presente (match su raw) -> no-op; trailing `;` gestito con TrimEnd.
+- `WM_SETTINGCHANGE`: se non si implementa il broadcast, i processi gia' avviati non vedranno la PATH aggiornata finche' non si rilegge (comportamento gia' tipico; la fix base senza broadcast NON regredisce rispetto a SetEnvironmentVariable solo se quest'ultimo broadcastava — quindi includere il broadcast per parita').
+
+**Rischio regressione**: Basso. Il comportamento di append e dedup resta identico; cambia solo il modo di leggere/scrivere il registro preservando il kind. Marcare i nuovi metodi `[SupportedOSPlatform("windows")]` (registry diretto e' Windows-only, come gia' lo era Get/SetEnvironmentVariable User).
+
+**Test coinvolti**
+- Da non rompere: `AddToPath_WritesCmdShimWithExecForwarding` (gated Windows) continua a passare (non tocca la nuova logica oltre alla chiamata).
+- Nuovo test di regressione (Windows-gated, `[SupportedOSPlatform("windows")]`): in un sandbox di registro (oppure salvando/ripristinando `HKCU\Environment\PATH`), pre-impostare `PATH` come `REG_EXPAND_SZ` con un valore tipo `%USERPROFILE%\bin;C:\fixed`; invocare `AddToPath`; verificare con `RegistryValueOptions.DoNotExpandEnvironmentNames` che il valore raw contenga ANCORA `%USERPROFILE%\bin` (non espanso) e che `GetValueKind("PATH") == RegistryValueKind.ExpandString`, oltre alla presenza del bin dir. PRIMA della fix il test fallisce (valore espanso + kind String); DOPO passa.
+
+**Alternative**
+- Minima: leggere con DoNotExpand e riscrivere con `GetValueKind` preservato, senza broadcast (rischia che le shell aperte non vedano la modifica — ma e' meglio del data-loss attuale).
+- Robusta: aggiungere anche `WM_SETTINGCHANGE` broadcast per parita' con `Environment.SetEnvironmentVariable`, e fare il dedup confrontando segmenti ESPANSI (Environment.ExpandEnvironmentVariables) per evitare duplicati quando il bin e' gia' presente in forma indiretta. Trade-off: piu' codice P/Invoke e piu' superficie da testare, ma comportamento corretto end-to-end.
+
+---
+### [BUG-047] Linux/macOS: AddToPath aborta l'install se il path dello shim e' occupato da una directory reale
+
+- **Modulo**: PM/Platform (Linux + macOS)
+- **File:linea**: Hina.PackageManager/Platform/Linux/LinuxPlatformIntegration.cs:97-102 (`AddToPath`); Hina.PackageManager/Platform/MacOS/MacOSPlatformIntegration.cs:88-92 (`AddToPath`)
+- **Severita**: Basso
+- **Stato**: DA CONFERMARE
+- **Lente**: correttezza / robustezza
+- **Verdetto avversariale**: REALE
+
+**Descrizione (cosa, perche)**
+Entrambe le implementazioni usano la stessa guardia per ripulire una voce preesistente prima di creare il symlink:
+```csharp
+string linkPath = Path.Combine(_userBinDir, name);
+if (File.Exists(linkPath) || new FileInfo(linkPath).LinkTarget != null)
+    TryDeleteFile(linkPath, _logger);
+File.CreateSymbolicLink(linkPath, targetExec);
+```
+La guardia copre solo (a) file regolare (`File.Exists` true) e (b) symlink (`FileInfo.LinkTarget != null`). Se `linkPath` (`~/.local/bin/<name>`) e' gia' una DIRECTORY reale (non un symlink): `File.Exists` ritorna `false` (semantica .NET: false sulle directory) e `new FileInfo(dir).LinkTarget` e' `null` per una directory non-symlink. Quindi la condizione e' falsa, `TryDeleteFile` NON viene eseguito, e `File.CreateSymbolicLink(linkPath, targetExec)` lancia `IOException` ("file exists"/"is a directory"). L'intento dichiarato della guardia ("azzera qualunque target preesistente prima di creare il symlink") fallisce per il ramo directory. Nota: un symlink che punta a una directory verrebbe gestito (LinkTarget != null); solo una directory REALE cade nel buco.
+
+**Verifica (raggiungibilita/caller)**
+Catena ingresso->sink concreta:
+1. Descriptor (file/URL, firmato) con `postInstall` `AddToPathHook` (Name).
+2. `DescriptorValidator.ValidateHook` (DescriptorValidator.cs:219-222): richiede solo `Name` non-whitespace e `Target` relativo; non impedisce la collisione con una directory esistente.
+3. `InstallService.InstallAsync` (InstallService.cs:224-226): `foreach (... descriptor.PostInstall) hooks.ApplyAsync(...)`.
+4. `HookExecutor.ApplyAsync` (HookExecutor.cs:37-41, `case AddToPathHook`): `_platform.AddToPath(a.Name, targetAbs, ct)` (riga 40).
+5. `LinuxPlatformIntegration.AddToPath:97-102` (o `MacOSPlatformIntegration.AddToPath:88-92`): la guardia salta la directory preesistente -> `File.CreateSymbolicLink` (riga 102 / 92) lancia `IOException`.
+6. L'eccezione NON e' catturata in `HookExecutor.ApplyAsync` (nessun try/catch attorno al case); risale a `InstallService.cs:241-244` `catch { await tx.RollbackAsync(...); throw; }` -> install abortita con rollback spurio invece di un overwrite pulito. (Idem nel flusso update via HookExecutor.)
+
+Precondizione: una directory esistente a `~/.local/bin/<name>` (stato locale del filesystem, attacker-independent ma plausibile: residuo, creazione utente, stato precedente). Descriptor legittimo + stato locale benigno => fallimento install. Non e' bypass firma ne' corruzione silenziosa: fallisce rumorosamente.
+
+**Coperto da test**: NO per il caso directory. I test esistenti `LinuxPlatformIntegrationTests.AddToPath_CreatesSymlinkAtUserBinDir` (LinuxPlatformIntegrationTests.cs:86) e `AddToPath_OverwritesPreexistingSymlink` (riga 106-119) coprono solo file/symlink, mai una directory al path dello shim. Analogo lato macOS.
+
+**Fix proposta (concreta)**
+In `LinuxPlatformIntegration.AddToPath:97-102` e `MacOSPlatformIntegration.AddToPath:88-92`, estendere la guardia per gestire anche la directory preesistente. Esempio:
+```csharp
+string linkPath = Path.Combine(_userBinDir, name);
+if (Directory.Exists(linkPath) && new FileInfo(linkPath).LinkTarget == null)
+{
+    // directory reale (non symlink-a-directory): rimuovila ricorsivamente in modo fail-soft
+    try { Directory.Delete(linkPath, recursive: true); }
+    catch (Exception ex) { _logger.LogDebug(ex, "Fail-soft: could not delete dir at shim path {Path}", linkPath); }
+}
+else if (File.Exists(linkPath) || new FileInfo(linkPath).LinkTarget != null)
+{
+    TryDeleteFile(linkPath, _logger);
+}
+File.CreateSymbolicLink(linkPath, targetExec);
+```
+Nota di cautela: `Directory.Delete(recursive:true)` su una directory utente arbitraria e' distruttivo; in alternativa piu' conservativa, NON cancellare ma lanciare un'eccezione con messaggio chiaro ("shim path occupied by a directory: <path>") cosi' il fallimento e' diagnosticabile invece che criptico. Vedi Alternative.
+
+**Impatto della fix**
+- Caller toccati: solo `AddToPath` di Linux e macOS (firma invariata). Windows usa `File.WriteAllText` su `.cmd` (path diverso, non interessato; fallirebbe comunque su directory ma e' fuori scope di questo bug).
+- Compat wire/schema: nessuna.
+- Thread-safety: invariata.
+- Edge case: symlink-a-directory (LinkTarget != null) deve continuare a passare per il ramo `TryDeleteFile`/delete-symlink, NON per `Directory.Delete` (l'ordine `Directory.Exists && LinkTarget == null` lo garantisce). Directory non vuota: gestita con recursive. Permessi insufficienti: con la variante distruttiva fail-soft si ricade comunque sull'IOException di CreateSymbolicLink (nessuna regressione rispetto a oggi).
+
+**Rischio regressione**: Basso (con la variante che lancia eccezione chiara) / Medio (con la variante `Directory.Delete recursive` che e' distruttiva su stato utente). Preferire la variante che fallisce con messaggio chiaro se non si vuole rischiare cancellazioni indesiderate.
+
+**Test coinvolti**
+- Da non rompere: `AddToPath_CreatesSymlinkAtUserBinDir`, `AddToPath_OverwritesPreexistingSymlink` (Linux e analoghi macOS) devono continuare a passare.
+- Nuovo test di regressione (Linux e macOS, symlink-guarded per girare solo dove i symlink/Directory ops sono affidabili): creare una directory a `Path.Combine(_userBinDir, "demo")`, poi invocare `AddToPath("demo", target, ct)`. Variante "overwrite": assertare che il risultato sia un symlink valido che punta a target. Variante "fail chiaro": assertare che venga lanciata un'eccezione con messaggio che cita il path. PRIMA della fix: `IOException` criptica da CreateSymbolicLink (test fallisce/diverge); DOPO: comportamento deterministico atteso.
+
+**Alternative**
+- Minima (conservativa, consigliata): non cancellare la directory; lanciare un'eccezione esplicita (`new IOException($"Cannot add '{name}' to PATH: '{linkPath}' is an existing directory")`) cosi' il fallimento e' chiaro e diagnosticabile, senza rischio di cancellazioni distruttive. Trade-off: l'install fallisce comunque, ma con causa evidente invece di IOException generica.
+- Robusta: rimuovere la directory con `Directory.Delete(recursive:true)` (overwrite pulito come per file/symlink). Trade-off: ripristina il comportamento di overwrite atteso ma e' distruttivo su stato utente; va loggato e fail-soft.
+
+---
+### [BUG-048] La cancellazione del processo AppContainer non termina l'albero dei discendenti (orfani)
+
+- **Modulo**: PM/Sandbox-win
+- **File:linea**: Hina.PackageManager/Sandbox/WindowsSandbox.cs:437-442 (ramo cancellazione di CreateAndWait)
+- **Severita**: Basso
+- **Stato**: DA CONFERMARE
+- **Lente**: risorse/leak (correttezza, parita comportamentale tra backend)
+- **Verdetto avversariale**: REALE (3/3 scettici non-refutato, 3/3 raggiungibile)
+
+- **Descrizione**:
+  Alla cancellazione (Ctrl+C), il backend AppContainer in `CreateAndWait` esegue `TerminateProcess(pi.hProcess, 1)` (riga 439), che per semantica Win32 termina SOLO il processo identificato dall'handle, non i suoi discendenti. Non esiste alcun Job Object in tutto il repo (grep su `CreateJobObject`/`AssignProcessToJobObject`/`JOBOBJECT` = 0 risultati) ne `CREATE_NEW_PROCESS_GROUP` (i `dwCreationFlags` sono solo `EXTENDED_STARTUPINFO_PRESENT`, riga 417), quindi nessuna mitigazione OS-level. Per contrasto, gli altri due backend di launch usano `proc.Kill(entireProcessTree: true)`: `SpawnDirect` (WindowsSandbox.cs:92) e `MacOsSandbox` (MacOsSandbox.cs:123). Il commento a riga 431-432 ("mirrors the kill-on-cancel behaviour of the other backends") e quindi FALSO: gli altri rami uccidono l'intero albero, questo solo la radice. Un'app sandboxata AppContainer che ha generato sottoprocessi, se cancellata, lascia i discendenti vivi e orfani: incoerenza comportamentale reale + leak di processi. Mitigante: i figli ereditano il token lowbox, quindi restano confinati a livello di sicurezza (nessun breakout/escalation), ma continuano a girare consumando risorse -> difetto di correttezza/risorse, non di sicurezza.
+
+- **Verifica (raggiungibilita/caller)**:
+  Ingresso esterno CLI `hina run <app>` -> `RunCommand.RunAsync` (Hina.CLI/Commands/RunCommand.cs). Se `desc.Sandbox?.Enabled == true` viene costruito un `SandboxPlan` ristretto (RunCommand.cs:88-90), altrimenti unrestricted. Poi `launcher = SandboxLauncherFactory.Current(ctx.Logger)` e `launcher.Launch(execAbs, appArgs, plan, ctx.Ct)` (RunCommand.cs:92-93). `ctx.Ct` e il token realmente cancellabile via Ctrl+C (Program.cs: il primo Ctrl+C imposta `e.Cancel=true` e chiama `cts.Cancel()`). Su desktop Windows interattivo la factory restituisce `WindowsSandbox` (IsSupported = `IsWindowsVersionAtLeast(6,2)`; confermato funzionante su Win11 reale dalla memoria 'windows-appcontainer-ci-artifact'). Con plan ristretto (`plan.Unrestricted == false`) -> `WindowsSandbox.Launch` (riga 74) -> `LaunchInAppContainer` (riga 102) -> `CreateAndWait` (riga 150/392). Al Ctrl+C: `ct.IsCancellationRequested` true (riga 437) -> `TerminateProcess(pi.hProcess, 1)` (riga 439): uccide solo la radice; eventuali sottoprocessi generati dall'app restano orfani vivi. Tutti gli input al sink derivano da ingresso esterno (nome app CLI + Ctrl+C interattivo).
+
+- **Coperto da test**: No. Nessun test esercita la cancellazione del backend AppContainer (richiede host Windows interattivo + CreateProcessW reale). I test cross-platform symlink-guarded passano a vuoto su Windows; i test di sandbox win sono gated dal probe CI.
+
+- **Fix proposta**:
+  Assegnare il processo figlio a un Job Object con `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` e terminare l'intero job alla cancellazione (parita con `entireProcessTree: true`). Concretamente, in `WindowsSandbox.cs`:
+  1. Aggiungere le P/Invoke: `CreateJobObject(IntPtr lpJobAttributes, string? lpName)`, `SetInformationJobObject`, `AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess)`, `TerminateJobObject(IntPtr hJob, uint uExitCode)`, e la struct `JOBOBJECT_EXTENDED_LIMIT_INFORMATION` con flag `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000`.
+  2. In `CreateAndWait`, subito dopo il `CreateProcessW` riuscito (dopo riga 426) e PRIMA che il figlio possa generare sottoprocessi: creare il job (`hJob = CreateJobObject(IntPtr.Zero, null)`), impostare `JOBOBJECT_EXTENDED_LIMIT_INFORMATION.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` via `SetInformationJobObject`, e `AssignProcessToJobObject(hJob, pi.hProcess)`. Idealmente il processo andrebbe creato sospeso (`CREATE_SUSPENDED`), assegnato al job, poi ripreso con `ResumeThread(pi.hThread)`, cosi nessun figlio sfugge alla finestra tra create e assign; in pratica la finestra e brevissima e il `KILL_ON_JOB_CLOSE` cattura comunque i discendenti gia assegnati.
+  3. Nel ramo cancellazione (riga 437-442) sostituire `TerminateProcess(pi.hProcess, 1)` con `TerminateJobObject(hJob, 1)` (termina l'intero albero del job), mantenendo la `WaitForSingleObject(pi.hProcess, INFINITE)` successiva.
+  4. Nel `finally` (riga 447-451) chiudere anche `hJob` con `CloseHandle(hJob)` (la chiusura dell'ultimo handle al job, con KILL_ON_JOB_CLOSE, e un ulteriore backstop che termina eventuali residui).
+  Alternativa minimale senza Job Object: prima del `TerminateProcess`, enumerare i discendenti via toolhelp snapshot (`CreateToolhelp32Snapshot`/`Process32First`/`Process32Next` filtrando per `th32ParentProcessID`) e terminarli ricorsivamente; piu fragile (race su PID riusati), quindi preferibile il Job Object.
+
+- **Impatto della fix**:
+  Caller toccati: nessuno esterno: la firma di `ISandboxLauncher.Launch` e `CreateAndWait` resta invariata, la fix e interna a `WindowsSandbox`. Nessun impatto wire/schema (non tocca descriptor/firma/canonical bytes). Thread-safety: invariata; `CreateAndWait` opera su handle locali per-launch, il job e per-processo. Edge case: (a) `AssignProcessToJobObject` puo fallire se il processo e gia in un job nidificato non assegnabile (raro su lowbox; in tal caso fail-soft loggando e ricadendo sul vecchio `TerminateProcess` del solo padre, mantenendo il comportamento attuale); (b) creazione sospesa + resume aggiunge `ResumeThread` ma `pi.hThread` e gia disponibile e chiuso nel finally; (c) percorso di uscita normale (WAIT_OBJECT_0) invariato: il job viene solo chiuso nel finally senza effetti osservabili.
+
+- **Rischio regressione**: Basso. La fix aggiunge confinamento al teardown senza alterare il path di uscita normale; il fallback fail-soft preserva il comportamento odierno se l'assegnazione al job fallisce.
+
+- **Test coinvolti**:
+  Test esistenti da non rompere: `WindowsAppContainerPolicyTests` (puri, girano su qualsiasi host), `Hina.PackageManager.Tests` che esercitano `BuildCommandLine`/`QuoteArg` (BUG-020) — non toccati dalla fix. Nuovo test di regressione: aggiungere un test gated-Windows in cui un eseguibile lanciato sandboxato genera un sottoprocesso di lunga durata (es. tracciabile via PID file); cancellare il token; verificare che dopo `WaitForSingleObject` sia il padre SIA il figlio siano usciti (`Process.GetProcessById(childPid)` lancia `ArgumentException`). Il test FALLISCE prima della fix (figlio sopravvive) e PASSA dopo (job-kill). In assenza di host CI Windows interattivo, almeno un test sulla nuova logica di costruzione del job (che `CreateJobObject`/`AssignProcessToJobObject` siano invocati con i flag corretti) tramite estrazione di un helper testabile.
+
+- **Alternative**:
+  - Minima: enumerazione toolhelp dei discendenti + `TerminateProcess` su ciascuno prima del padre. Pro: nessuna struttura aggiuntiva, nessun create-suspended. Contro: race su PID riusati, non atomica, non cattura discendenti generati durante l'enumerazione.
+  - Robusta (consigliata): Job Object con `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` + create-suspended/assign/resume. Pro: atomica, cattura tutti i discendenti presenti e futuri, parita esatta con `entireProcessTree: true` degli altri backend, KILL_ON_JOB_CLOSE come backstop anche su crash del padre. Contro: piu P/Invoke e una finestra create->resume da gestire.
+
+---

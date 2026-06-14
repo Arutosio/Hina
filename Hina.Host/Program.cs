@@ -164,8 +164,11 @@ app.Use(async (ctx, next) =>
 
     if (path.Contains("manifest", StringComparison.OrdinalIgnoreCase) && path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
     {
+        // Sanitize attacker-controlled path/UA so a percent-decoded newline can't forge log
+        // lines (BUG-040). appName is bounded to known names but sanitized for defense in depth.
         logger.LogInformation("Update check: app={App} ip={Ip} path={Path} ua={UserAgent}",
-            appName, ip, path, ctx.Request.Headers.UserAgent.ToString());
+            LogSanitizer.SanitizeForLog(appName), ip, LogSanitizer.SanitizeForLog(path),
+            LogSanitizer.SanitizeForLog(ctx.Request.Headers.UserAgent.ToString()));
     }
     else
     {

@@ -18,8 +18,11 @@ namespace Hina.CLI.Commands
     // Mutations take the registry lock; reads go through the shared read-lock helper.
     internal static class PermsCommand
     {
+        // BUG-025: use OrdinalIgnoreCase to match HasFlag/GetValue (both OrdinalIgnoreCase in
+        // Core.Cli.Args). Ordinal caused `--Grant` to be rejected as an unknown flag before
+        // HasFlag/GetValue could recognise it, making case handling inconsistent.
         private static readonly HashSet<string> KnownFlags =
-            new HashSet<string>(StringComparer.Ordinal) { "--grant", "--revoke" };
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "--grant", "--revoke" };
 
         public static async Task<int> RunAsync(CommandContext ctx, string[] args)
         {
@@ -34,13 +37,20 @@ namespace Hina.CLI.Commands
             string? grant = Args.GetValue(args, "--grant");
             string? revoke = Args.GetValue(args, "--revoke");
 
-            // A bare `--grant` / `--revoke` (flag present but no path, or an empty path) used to
-            // fall through to the read-only detail view, silently dropping the mutation the user
-            // asked for. Treat it as a usage error so the missing path is obvious.
-            if ((Args.HasFlag(args, "--grant") && string.IsNullOrWhiteSpace(grant))
-                || (Args.HasFlag(args, "--revoke") && string.IsNullOrWhiteSpace(revoke)))
+            // BUG-005: GetValue returns the next token unconditionally, so `--grant --json`
+            // hands "--json" back as the path. Detect this by checking whether the returned
+            // value is itself a flag (starts with '-'); treat it the same as a missing value.
+            // Also catches the pre-existing bare `--grant` / `--revoke` with no following token.
+            if (Args.HasFlag(args, "--grant") &&
+                (string.IsNullOrWhiteSpace(grant) || grant.StartsWith("-", StringComparison.Ordinal)))
             {
-                ctx.Logger.LogError("Usage: hina perms <app> [--grant <path>[:ro|:rw]] [--revoke <path>]");
+                ctx.Logger.LogError("'--grant' requires a path value. Usage: hina perms <app> --grant <path>[:ro|:rw]");
+                return 2;
+            }
+            if (Args.HasFlag(args, "--revoke") &&
+                (string.IsNullOrWhiteSpace(revoke) || revoke.StartsWith("-", StringComparison.Ordinal)))
+            {
+                ctx.Logger.LogError("'--revoke' requires a path value. Usage: hina perms <app> --revoke <path>");
                 return 2;
             }
 

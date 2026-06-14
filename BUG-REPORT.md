@@ -2136,7 +2136,7 @@ Opzionale: test a livello InstallService che verifica che `PatchAsync` NON venga
 - **Modulo**: PM/Platform (Windows)
 - **File:linea**: Hina.PackageManager/Platform/Windows/WindowsPlatformIntegration.cs:451-467 (`EnsureBinDirOnUserPath`)
 - **Severita**: Medio
-- **Stato**: DA CONFERMARE
+- **Stato**: FIXATO (giro fix r2)
 - **Lente**: cross-platform / correttezza (data-loss su impostazione condivisa)
 - **Verdetto avversariale**: REALE
 

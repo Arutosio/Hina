@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Hina.PackageManager.Descriptor;
 using Hina.PackageManager.Platform.Windows;
+using Microsoft.Win32;
 
 namespace Hina.PackageManager.Tests
 {
@@ -66,6 +67,48 @@ namespace Hina.PackageManager.Tests
             string content = File.ReadAllText(evidence);
             Assert.Contains("@echo off", content);
             Assert.Contains($"\"{targetExec}\" %*", content);
+        }
+
+        // BUG-046: appending to the user PATH must preserve REG_EXPAND_SZ and the unexpanded
+        // %VAR% segments, not degrade them to a frozen REG_SZ literal. Windows-only; saves and
+        // restores the real HKCU\Environment\PATH around the test.
+        [Fact]
+        [SupportedOSPlatform("windows")]
+        public async Task AddToPath_PreservesRegExpandSzAndIndirection()
+        {
+            if (!IsWindows)
+            {
+                return;
+            }
+
+            using RegistryKey envKey = Microsoft.Win32.Registry.CurrentUser.CreateSubKey("Environment", writable: true);
+            object? savedValue = envKey.GetValue("PATH", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+            RegistryValueKind savedKind = savedValue != null ? envKey.GetValueKind("PATH") : RegistryValueKind.ExpandString;
+            try
+            {
+                envKey.SetValue("PATH", "%USERPROFILE%\\bin;C:\\fixed", RegistryValueKind.ExpandString);
+
+                WindowsPlatformIntegration p = NewPlatform();
+                await p.AddToPath("demo", "C:\\Apps\\demo\\bin\\demo.exe", CancellationToken.None);
+
+                string raw = (string)envKey.GetValue("PATH", "", RegistryValueOptions.DoNotExpandEnvironmentNames)!;
+
+                // Type preserved and indirection NOT expanded (before the fix: REG_SZ + literal path).
+                Assert.Equal(RegistryValueKind.ExpandString, envKey.GetValueKind("PATH"));
+                Assert.Contains("%USERPROFILE%\\bin", raw);
+                Assert.Contains(_binDir, raw);
+            }
+            finally
+            {
+                if (savedValue != null)
+                {
+                    envKey.SetValue("PATH", savedValue, savedKind);
+                }
+                else
+                {
+                    envKey.DeleteValue("PATH", throwOnMissingValue: false);
+                }
+            }
         }
 
         [Fact]

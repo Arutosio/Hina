@@ -97,7 +97,7 @@ namespace Hina.Host
                 json["cors"] = cors.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
             string serialized = JsonSerializer.Serialize(json, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(outPath, serialized);
+            WriteAtomic(outPath, serialized);
             Console.WriteLine();
             Console.WriteLine($"Wrote {Path.GetFullPath(outPath)}:");
             Console.WriteLine(serialized);
@@ -126,6 +126,28 @@ namespace Hina.Host
             Console.Write(string.IsNullOrEmpty(def) ? $"{prompt}: " : $"{prompt} [{def}]: ");
             string? line = Console.ReadLine();
             return string.IsNullOrWhiteSpace(line) ? def : line;
+        }
+
+        // Crash-safe write: serialize to a sibling .tmp in the same directory, flush to
+        // disk, then atomically rename over the target. A crash or disk-full mid-write
+        // leaves the old file intact (or absent) — never a truncated/corrupt config.
+        // Same pattern as AtomicFile in Hina.PackageManager; kept local to avoid
+        // adding a cross-project dependency for a single call site.
+        internal static void WriteAtomic(string path, string content)
+        {
+            string dir = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
+            Directory.CreateDirectory(dir);
+
+            string tmp = path + ".tmp";
+            using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                byte[] bytes = System.Text.Encoding.UTF8.GetBytes(content);
+                fs.Write(bytes, 0, bytes.Length);
+                fs.Flush(flushToDisk: true);
+            }
+
+            // Atomic on POSIX (rename(2)) and Windows for same-volume moves.
+            File.Move(tmp, path, overwrite: true);
         }
     }
 }

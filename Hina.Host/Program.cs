@@ -187,7 +187,8 @@ if (options.Apps.Count > 0)
     app.Use(async (ctx, next) =>
     {
         string path = ctx.Request.Path.Value ?? "";
-        if (path is "/health" or "/stats")
+        if (string.Equals(path, "/health", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(path, "/stats", StringComparison.OrdinalIgnoreCase))
         {
             await next();
             return;

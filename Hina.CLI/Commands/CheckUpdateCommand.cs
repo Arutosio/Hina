@@ -22,6 +22,12 @@ namespace Hina.CLI.Commands
                 async ct => await SharedHttp.Instance.GetStringAsync(SelfUpdate.LatestReleaseApiUrl, ct),
                 ctx.Ct);
 
+            // SelfUpdate.CheckAsync swallows all exceptions (including OperationCanceledException)
+            // and returns Unknown with the cancellation message. Surface it as a real OCE so
+            // Ctrl+C reaches CommandRouter's "Cancelled." path (exit 1) rather than being
+            // reported as a failed check (exit 2 / "Could not check for updates").
+            ctx.Ct.ThrowIfCancellationRequested();
+
             switch (result.Status)
             {
                 case UpdateAvailability.UpToDate:

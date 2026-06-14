@@ -307,6 +307,22 @@ namespace Hina.CLI.Tests
         }
 
         [Theory]
+        [InlineData("check-update")]
+        [InlineData("check", "update")]
+        public async Task CheckUpdate_Cancelled_ReturnsCancelledExitCode(params string[] args)
+        {
+            // BUG-023: SelfUpdate.CheckAsync swallows OperationCanceledException and returns
+            // Unknown, causing CheckUpdateCommand to report exit 2 ("Could not check for
+            // updates") instead of reaching CommandRouter's "Cancelled." path (exit 1).
+            // ThrowIfCancellationRequested() after CheckAsync re-surfaces the cancellation.
+            using var cts = new CancellationTokenSource();
+            cts.Cancel();
+            var ctx = new CommandContext(InstallPaths.ForRoot(_root), NullLogger.Instance, NullLoggerFactory.Instance, cts.Token);
+
+            Assert.Equal(1, await CommandRouter.DispatchAsync(ctx, args));
+        }
+
+        [Theory]
         [InlineData("perms", "demo", "--grant-all")]
         [InlineData("update", "demo", "--alll")]
         [InlineData("reinstall", "demo", "--rotate-keys")]

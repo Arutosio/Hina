@@ -2219,7 +2219,7 @@ Punti chiave: (a) leggere con `RegistryValueOptions.DoNotExpandEnvironmentNames`
 - **Modulo**: PM/Platform (Linux + macOS)
 - **File:linea**: Hina.PackageManager/Platform/Linux/LinuxPlatformIntegration.cs:97-102 (`AddToPath`); Hina.PackageManager/Platform/MacOS/MacOSPlatformIntegration.cs:88-92 (`AddToPath`)
 - **Severita**: Basso
-- **Stato**: DA CONFERMARE
+- **Stato**: FIXATO (giro fix r2, variante conservativa: errore chiaro, nessuna delete distruttiva)
 - **Lente**: correttezza / robustezza
 - **Verdetto avversariale**: REALE
 

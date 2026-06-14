@@ -85,6 +85,14 @@ namespace Hina.PackageManager.Platform.MacOS
             Directory.CreateDirectory(_userBinDir);
 
             string linkPath = Path.Combine(_userBinDir, name);
+            // A real directory at the shim path is neither File.Exists (false on dirs) nor a
+            // symlink (LinkTarget == null), so the cleanup guard below would skip it and
+            // CreateSymbolicLink would throw a cryptic IOException. Surface a clear error instead
+            // of failing the install opaquely; do NOT recursively delete user state (BUG-047).
+            if (Directory.Exists(linkPath) && new FileInfo(linkPath).LinkTarget == null)
+            {
+                throw new IOException($"Cannot add '{name}' to PATH: '{linkPath}' is an existing directory. Remove it and retry.");
+            }
             if (File.Exists(linkPath) || new FileInfo(linkPath).LinkTarget != null)
             {
                 TryDeleteFile(linkPath, _logger);

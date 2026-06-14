@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using Hina.Core.IO;
@@ -46,6 +47,28 @@ namespace Hina.Core.Tests
         {
             // "/hina/app-evil" shares the "/hina/app" string prefix but is NOT inside root.
             Assert.Throws<InvalidDataException>(() => PathUtils.ToOsPath(Root, "../app-evil/x"));
+        }
+
+        [Fact]
+        public void ToOsPath_NullManifestPath_ThrowsArgumentNullException()
+        {
+            // A JSON manifest with "path": null deserializes to null; must be rejected cleanly,
+            // not with an opaque NullReferenceException from manifestPath.Replace().
+            var ex = Assert.Throws<ArgumentNullException>(() => PathUtils.ToOsPath(Root, null!));
+            Assert.Equal("manifestPath", ex.ParamName);
+        }
+
+        [Fact]
+        public void ToOsPath_NullManifestPath_ExceptionIsNotNullReferenceException()
+        {
+            // Regression guard: the old code threw NRE; ensure the exception type is exactly
+            // ArgumentNullException (a subclass check would pass for NRE too, so use type equality).
+            Exception? caught = null;
+            try { PathUtils.ToOsPath(Root, null!); }
+            catch (Exception e) { caught = e; }
+
+            Assert.NotNull(caught);
+            Assert.Equal(typeof(ArgumentNullException), caught!.GetType());
         }
     }
 }

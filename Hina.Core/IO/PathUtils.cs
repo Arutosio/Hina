@@ -16,6 +16,9 @@ namespace Hina.Core.IO
         // absolute path would let PatchClient write/read outside the install directory.
         public static string ToOsPath(string rootDir, string manifestPath)
         {
+            if (manifestPath is null)
+                throw new ArgumentNullException(nameof(manifestPath), "Manifest path must not be null.");
+
             string rel = manifestPath.Replace('/', Path.DirectorySeparatorChar);
             string rootFull = Path.GetFullPath(rootDir);
             string full = Path.GetFullPath(Path.Combine(rootFull, rel));

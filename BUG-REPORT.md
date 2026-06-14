@@ -1762,7 +1762,7 @@ Opzione MINIMA (cap + log) se la singola passata e' troppo invasiva: dopo aver c
 - **Modulo**: CLI/Routing (parsing argomenti)
 - **File:linea**: Hina.CLI/Args.cs:28-29 (facade); sink reale Hina.Core/Cli/Args.cs:54; manifestazione Hina.CLI/Commands/InstallCommand.cs:34-38 (e UpdateCommand.cs:21, ReinstallCommand.cs:17, PermsCommand.cs:29)
 - **Severita**: Basso
-- **Stato**: DA CONFERMARE
+- **Stato**: FIXATO (giro fix r2)
 - **Lente**: correttezza (qualita diagnostica / UX; nessun impatto sicurezza)
 - **Verdetto avversariale**: REALE
 

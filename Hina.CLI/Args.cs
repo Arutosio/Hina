@@ -26,7 +26,10 @@ namespace Hina.CLI
             => CoreArgs.GetValue(args, name);
 
         public static string? FirstUnknownFlag(string[] args, HashSet<string> known, int startIndex = 0)
-            => CoreArgs.FirstUnknownFlag(args, known, startIndex);
+            // Pass ValuedFlags so the scan skips a valued flag's value token (e.g. the "-5" in
+            // `--request-timeout -5`) instead of mis-reporting it as an unknown flag (BUG-036:
+            // the BUG-024 fix added the Core parameter but the facade never supplied it).
+            => CoreArgs.FirstUnknownFlag(args, known, startIndex, valuedFlags: ValuedFlags);
 
         public static string? FirstPositional(string[] args, int startIndex = 0)
             => CoreArgs.FirstPositional(args, ValuedFlags, startIndex);

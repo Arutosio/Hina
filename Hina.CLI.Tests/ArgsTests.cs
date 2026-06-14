@@ -68,6 +68,22 @@ namespace Hina.CLI.Tests
             Assert.Null(Args.FirstUnknownFlag(args, known, startIndex: 1));
         }
 
+        // BUG-036: the facade must pass ValuedFlags to the Core scan so a valued flag's negative
+        // value (e.g. `--request-timeout -5`) is skipped, not mis-reported as an unknown flag.
+        [Theory]
+        [InlineData("--request-timeout")]
+        [InlineData("--retries")]
+        [InlineData("--connect-timeout")]
+        public void FirstUnknownFlag_NegativeValueOfValuedFlag_NotReportedAsUnknown(string flag)
+        {
+            var known = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+            {
+                "--allow-insecure", "--retries", "--connect-timeout", "--request-timeout"
+            };
+            string[] args = { "install", "https://example.com/a.json", flag, "-5" };
+            Assert.Null(Args.FirstUnknownFlag(args, known, startIndex: 1));
+        }
+
         // BUG-025: KnownFlags in PermsCommand used StringComparer.Ordinal, but HasFlag/GetValue
         // use OrdinalIgnoreCase. A mixed-case variant like `--Grant` was therefore rejected by
         // FirstUnknownFlag before HasFlag/GetValue could recognise it. After the fix, the KnownFlags

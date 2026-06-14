@@ -82,7 +82,7 @@ namespace Hina.CLI.Commands
             }
 
             ILogger<PatchClient> clientLogger = loggerFactory.CreateLogger<PatchClient>();
-            PatchClient client = new PatchClient(config, clientLogger);
+            using PatchClient client = new PatchClient(config, clientLogger);
 
             switch (subcommand)
             {

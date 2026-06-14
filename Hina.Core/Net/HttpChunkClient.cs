@@ -12,7 +12,7 @@ using Microsoft.Extensions.Logging;
 namespace Hina.Core.Net
 {
     // Minimal HTTP client for manifest and chunk retrieval.
-    public sealed class HttpChunkClient
+    public sealed class HttpChunkClient : IDisposable
     {
         // A manifest is JSON metadata, not payload — a few MB even for huge apps. Cap the download
         // so a hostile/compromised server can't stream an unbounded body into the JSON parser
@@ -229,6 +229,8 @@ namespace Hina.Core.Net
             int idx = strongHash.IndexOf(':');
             return idx >= 0 ? strongHash.Substring(idx + 1) : strongHash;
         }
+
+        public void Dispose() => _http.Dispose();
 
         // Read-side cap: throws once more than `max` bytes have been read, so a server that omits
         // or lies about Content-Length still can't stream an unbounded body.

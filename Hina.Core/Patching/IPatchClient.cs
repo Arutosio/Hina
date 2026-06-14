@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Hina.Core.Configuration;
@@ -5,7 +6,7 @@ using Hina.Core.Configuration;
 namespace Hina.Core.Patching
 {
     // Public API for clients embedding the patcher.
-    public interface IPatchClient
+    public interface IPatchClient : IDisposable
     {
         PatcherConfig Config { get; }
         Task<CheckResult> CheckAsync(string rootDir, CancellationToken ct);

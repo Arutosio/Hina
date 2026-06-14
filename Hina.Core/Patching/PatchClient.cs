@@ -633,5 +633,7 @@ namespace Hina.Core.Patching
                 throw new InvalidDataException("Manifest signature is invalid.");
             }
         }
+
+        public void Dispose() => _http.Dispose();
     }
 }

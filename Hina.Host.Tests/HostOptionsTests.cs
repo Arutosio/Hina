@@ -33,6 +33,21 @@ namespace Hina.Host.Tests
         }
 
         [Fact]
+        public void Load_NonexistentConfigPath_ThrowsActionableError()
+        {
+            // An explicitly named --config that does not exist must fail fast (BUG-039),
+            // not silently fall back to defaults. Use an absolute path under _tempDir so the
+            // test runner's cwd hina.host.json (if any) cannot mask the fallback.
+            string missing = Path.Combine(_tempDir, "does-not-exist.json");
+
+            var ex = Assert.Throws<InvalidDataException>(
+                () => HostOptions.Load(new[] { "--config", missing }, EmptyConfig()));
+
+            Assert.Contains("--config", ex.Message);
+            Assert.Contains("does-not-exist.json", ex.Message);
+        }
+
+        [Fact]
         public void Load_FromJsonFile_ReadsAllFields()
         {
             string cfg = Path.Combine(_tempDir, "hina.host.json");

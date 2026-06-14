@@ -24,7 +24,16 @@ namespace Hina.Host
             var opt = new HostOptions();
 
             string? configPath = GetArg(args, "--config");
-            string? jsonPath = configPath is not null && File.Exists(configPath)
+            if (!string.IsNullOrWhiteSpace(configPath) && !File.Exists(configPath))
+            {
+                // An explicitly named --config that does not exist must fail fast, not
+                // silently fall back to ./hina.host.json or built-in defaults — otherwise a
+                // typo'd/unmounted path starts the host with a different hardening posture.
+                throw new InvalidDataException(
+                    $"--config '{configPath}' does not exist (resolved to '{Path.GetFullPath(configPath)}'). " +
+                    "Provide an existing config file, or omit --config to use ./hina.host.json or built-in defaults.");
+            }
+            string? jsonPath = !string.IsNullOrWhiteSpace(configPath)
                 ? configPath
                 : (File.Exists("hina.host.json") ? "hina.host.json" : null);
 

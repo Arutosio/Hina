@@ -98,6 +98,23 @@ namespace Hina.Builder.Tests
         }
 
         [Fact]
+        public void Detect_AppBundleWithContentsMacOSButNoMachO_DoesNotProposeArbitraryFile()
+        {
+            // BUG-037: Contents/MacOS exists but holds no Mach-O (only data/text). The old
+            // fallback returned files[0] — an arbitrary, non-deterministic, possibly
+            // non-executable file — as a top-rank macOS bundle exec. It must propose nothing.
+            string txt = Path.Combine("App.app", "Contents", "MacOS", "Info.txt");
+            Write(txt, new byte[] { 0x68, 0x69 }); // "hi" — not a Mach-O magic
+            string dat = Path.Combine("App.app", "Contents", "MacOS", "data.bin");
+            Write(dat, new byte[] { 0x00, 0x01, 0x02 });
+
+            var found = ExecutableDetector.Detect(new DirectoryInfo(_root));
+
+            Assert.DoesNotContain(found, e => e.IsBundle);
+            Assert.DoesNotContain(found, e => e.Os == TargetOs.Macos);
+        }
+
+        [Fact]
         public void Detect_AppBundleWithoutContentsMacOS_DirectoryPathNotProposedAsExecutable()
         {
             // Belt-and-suspenders check: no candidate should ever carry a RelPath that

@@ -282,12 +282,12 @@ namespace Hina.Core.Patching
                         await journal.SaveAsync(journalPath);
                     }
 
-                    File.Copy(tempPath, localPath, overwrite: true);
-                    // The file is now swapped in. Deleting the temp is cleanup only — a failure here
-                    // (e.g. AV/indexer holding the handle on Windows) must NOT trigger rollback of an
-                    // already-applied file. Leftover .hina.tmp is removed by PatchCleanup later.
-                    try { File.Delete(tempPath); }
-                    catch (Exception delEx) { _logger.LogDebug(delEx, "Could not delete temp file {Temp}; left for cleanup.", tempPath); }
+                    // Atomic swap: rename the rebuilt temp onto the live path (BUG-032). File.Copy
+                    // would rewrite localPath in place, so a crash/power-loss mid-copy would leave
+                    // the already-in-production binary truncated. File.Move (MoveFileEx /
+                    // rename(2), same volume since tempPath is a sibling) is all-or-nothing and
+                    // consumes the temp, matching RegistryStore/AtomicFile.
+                    File.Move(tempPath, localPath, overwrite: true);
 
                     result.AppliedFiles.Add(file.Path);
                 }

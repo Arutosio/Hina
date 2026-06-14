@@ -1616,7 +1616,7 @@ Opzione MINIMA (cap + log) se la singola passata e' troppo invasiva: dopo aver c
 - **Modulo**: Core/Patching
 - **File:linea**: Hina.Core/Patching/PatchClient.cs:285
 - **Severita**: Medio
-- **Stato**: DA CONFERMARE
+- **Stato**: FIXATO (giro fix r2)
 - **Lente**: correttezza / durabilita
 - **Verdetto avversariale**: REALE
 

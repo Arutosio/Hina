@@ -78,6 +78,23 @@ namespace Hina.PackageManager.Tests
             Assert.Equal(3, handler.Calls);
         }
 
+        // BUG-041: 429 / 408 are transient ("retry me"), like 5xx — must be retried, not aborted.
+        [Theory]
+        [InlineData(HttpStatusCode.TooManyRequests)]  // 429
+        [InlineData(HttpStatusCode.RequestTimeout)]   // 408
+        public async Task DescriptorFetcher_RetriesOnRateLimit_ThenSucceeds(HttpStatusCode status)
+        {
+            FlakyHandler handler = new FlakyHandler(failBefore: 2, failStatus: status);
+            HttpClient client = new HttpClient(handler);
+
+            DescriptorFetcher fetcher = new DescriptorFetcher(client, maxRetries: 3, retryBaseDelay: TimeSpan.FromMilliseconds(5));
+
+            AppDescriptor d = await fetcher.FetchAsync(new Uri("https://example.com/x.json"), CancellationToken.None);
+
+            Assert.Equal("demo", d.Name);
+            Assert.Equal(3, handler.Calls);  // before the fix: Calls==1, then throws
+        }
+
         [Fact]
         public async Task DescriptorFetcher_DoesNotRetryOn404()
         {
@@ -289,11 +306,13 @@ namespace Hina.PackageManager.Tests
         public int Calls;
         private readonly int _failBefore;
         private readonly HttpStatusCode? _always;
+        private readonly HttpStatusCode _failStatus;
 
-        public FlakyHandler(int failBefore = 0, HttpStatusCode? alwaysReturn = null)
+        public FlakyHandler(int failBefore = 0, HttpStatusCode? alwaysReturn = null, HttpStatusCode failStatus = HttpStatusCode.ServiceUnavailable)
         {
             _failBefore = failBefore;
             _always = alwaysReturn;
+            _failStatus = failStatus;
         }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -305,7 +324,7 @@ namespace Hina.PackageManager.Tests
             }
             if (call <= _failBefore)
             {
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+                return Task.FromResult(new HttpResponseMessage(_failStatus));
             }
             // Build a tiny signed descriptor so DescriptorParser/Validator accept it.
             (string priv, string pub) = KeyGenerator.GenerateEd25519();

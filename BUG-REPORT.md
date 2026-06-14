@@ -1958,7 +1958,7 @@ Nota: dopo il guard, `configPath` se non-null e' garantito esistente, quindi `js
 - **Modulo**: PM/Descriptor
 - **File:linea**: Hina.PackageManager/Descriptor/DescriptorFetcher.cs:109-118 (in particolare riga 115 `return (int)code >= 500;`)
 - **Severita**: Medio (disponibilita/resilienza; NON un bypass firma — la verifica Ed25519 del descriptor resta intatta)
-- **Stato**: DA CONFERMARE
+- **Stato**: FIXATO (giro fix r2)
 - **Lente**: correttezza / resilienza di rete
 - **Verdetto avversariale**: REALE
 

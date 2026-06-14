@@ -112,7 +112,13 @@ namespace Hina.PackageManager.Descriptor
             // a 404 just wastes time.
             if (ex.StatusCode is HttpStatusCode code)
             {
-                return (int)code >= 500;
+                // 429 (Too Many Requests) and 408 (Request Timeout) are the server explicitly
+                // asking us to retry — treat as transient, like 5xx. Other 4xx are not (BUG-041,
+                // matches Hina.Core/Net/RetryPolicy.cs). Honoring Retry-After is out of scope here:
+                // EnsureSuccessStatusCode discards the response headers.
+                return code == HttpStatusCode.TooManyRequests   // 429
+                    || code == HttpStatusCode.RequestTimeout    // 408
+                    || (int)code >= 500;
             }
             return true;
         }

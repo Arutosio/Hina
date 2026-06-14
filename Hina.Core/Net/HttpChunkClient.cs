@@ -68,6 +68,7 @@ namespace Hina.Core.Net
             // was cancelled mid-request; honour cancellation before treating a status as a retryable error.
             ct.ThrowIfCancellationRequested();
             EnsureNoDowngrade(manifestUrl, response);
+            ThrowWithRetryAfterIfRateLimited(response);
             response.EnsureSuccessStatusCode();
             EnsureWithinCap(response, MaxManifestBytes, "Manifest", manifestUrl);
 
@@ -124,6 +125,7 @@ namespace Hina.Core.Net
             using HttpResponseMessage response = await _http.GetAsync(chunkUrl, HttpCompletionOption.ResponseHeadersRead, ct);
             ct.ThrowIfCancellationRequested();
             EnsureNoDowngrade(chunkUrl, response);
+            ThrowWithRetryAfterIfRateLimited(response);
             response.EnsureSuccessStatusCode();
             EnsureWithinCap(response, compressedCap, "Chunk", chunkUrl);
 
@@ -137,6 +139,36 @@ namespace Hina.Core.Net
             using MemoryStream buffer = new MemoryStream(capacity);
             await limited.CopyToAsync(buffer, ct);
             return DecompressAndVerify(buffer.GetBuffer(), (int)buffer.Length, hashOnly, maxBytes);
+        }
+
+        // When the server returns 429 Too Many Requests, read the Retry-After header (if present)
+        // and throw an HttpRequestException that carries the hint in Exception.Data so that
+        // RetryPolicy.ExecuteAsync can honour it instead of computing an exponential backoff delay.
+        // We must do this *before* EnsureSuccessStatusCode because the response is disposed after
+        // that call and the headers become inaccessible.
+        private static void ThrowWithRetryAfterIfRateLimited(HttpResponseMessage response)
+        {
+            if (response.StatusCode != System.Net.HttpStatusCode.TooManyRequests)
+            {
+                return;
+            }
+
+            var ex = new HttpRequestException(
+                $"Server returned 429 Too Many Requests.",
+                inner: null,
+                statusCode: System.Net.HttpStatusCode.TooManyRequests);
+
+            // Retry-After can be a delta-seconds integer or an HTTP-date; only the integer form
+            // is useful here. Ignore unparseable values — the retry policy will fall back to
+            // exponential backoff automatically.
+            if (response.Headers.RetryAfter?.Delta is TimeSpan delta && delta.TotalSeconds > 0)
+            {
+                // Convert to milliseconds and clamp to int range; RetryPolicy caps it further at maxDelayMs.
+                long retryAfterMs = (long)delta.TotalMilliseconds;
+                ex.Data[RetryPolicy.RetryAfterMsDataKey] = retryAfterMs > int.MaxValue ? int.MaxValue : (int)retryAfterMs;
+            }
+
+            throw ex;
         }
 
         // A redirect that lands on http:// after we requested https:// pulls the payload over a

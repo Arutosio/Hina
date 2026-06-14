@@ -135,6 +135,41 @@ namespace Hina.Core.Tests
         }
 
         // -----------------------------------------------------------------------
+        // BUG-031 — CDC manifest with MANY distinct sizes is matched in a single pass
+        // -----------------------------------------------------------------------
+
+        [Fact]
+        public async Task BUG031_CdcManifest_ManyDistinctSizes_AllMatchedInSinglePass()
+        {
+            // A larger CDC file yields many distinct chunk sizes. The matcher must still find every
+            // chunk locally (chunks are served 404, so any unmatched chunk fails the patch). This
+            // exercises the single-pass multi-size matcher across many distinct window sizes, the
+            // case the old per-size re-read amplified to O(#sizes * length).
+            IHasher hasher = new Sha256Hasher();
+            string content = GenerateData(200_000, seed: 31);
+            CreateSourceFile("big.bin", content);
+
+            ManifestBuilder builder = new ManifestBuilder(hasher);
+            ContentDefinedChunker cdc = new ContentDefinedChunker(hasher, minSize: 512, maxSize: 4096, avgSize: 1024);
+            DirectoryInfo sourceDir = new DirectoryInfo(_sourceDir);
+            Manifest.Manifest manifest = await builder.BuildAsync(sourceDir, _baseUrl, 0, cdc, CancellationToken.None);
+
+            int distinctSizes = manifest.Files[0].Chunks.Select(c => c.Size).Distinct().Count();
+            Assert.True(distinctSizes > 20, $"Expected many distinct CDC sizes; got {distinctSizes}");
+
+            manifest.Version = "1.0.0";
+            await ManifestSerializer.WriteAsync(manifest, Path.Combine(_buildOutputDir, "manifest.json"), CancellationToken.None);
+
+            // Identical local content + 404 chunk server: success means every chunk matched locally.
+            File.WriteAllText(Path.Combine(_targetDir, "big.bin"), content);
+            PatchClient client = CreatePatchClient(backup: false, verify: true, chunkServer404: true);
+            PatchResult result = await client.PatchAsync(_targetDir, CancellationToken.None);
+
+            Assert.True(result.Success,
+                $"Patch failed ({result.Message}): single-pass multi-size matcher missed a chunk.");
+        }
+
+        // -----------------------------------------------------------------------
         // BUG-010 — Last (shorter) chunk must also be found by the size-aware matcher
         // -----------------------------------------------------------------------
 

@@ -451,11 +451,13 @@ namespace Hina.Core.Patching
             // Collect distinct chunk sizes present in this manifest file.
             // Fixed-size chunking → one size (or two if the last chunk is shorter).
             // CDC chunking → many sizes between min and max.
-            // We run one independent rolling-window pass per distinct size so that every chunk,
-            // regardless of its actual byte count, gets a chance to be found in the local file.
-            // This fixes BUG-002 (CDC matcher used file.ChunkSize as the sole window size, which
-            // mismatched all variable-size CDC chunks) and BUG-010 (the last, shorter chunk of a
-            // fixed-size run was also missed because its size differed from file.ChunkSize).
+            // Every distinct size needs its own rolling window so that every chunk, regardless of
+            // its actual byte count, gets a chance to be found. This fixes BUG-002 (CDC matcher
+            // used file.ChunkSize as the sole window size, which mismatched all variable-size CDC
+            // chunks) and BUG-010 (the last, shorter chunk of a fixed-size run was missed). We keep
+            // all window sizes rolling in a SINGLE pass over the file (BUG-031) instead of
+            // re-reading the whole file once per distinct size — the latter is O(#sizes * length)
+            // I/O and pathological for CDC manifests, which have thousands of distinct sizes.
             Dictionary<int, Dictionary<uint, List<WeakEntry>>> perSizeWeakMaps =
                 new Dictionary<int, Dictionary<uint, List<WeakEntry>>>();
 
@@ -495,52 +497,81 @@ namespace Hina.Core.Patching
                 fileLength = probe.Length;
             }
 
-            // One rolling-window pass per distinct chunk size.
-            foreach (KeyValuePair<int, Dictionary<uint, List<WeakEntry>>> entry in perSizeWeakMaps)
+            // Distinct window sizes that can possibly match (file must hold at least one window).
+            List<int> sizes = new List<int>();
+            foreach (int s in perSizeWeakMaps.Keys)
             {
-                int windowSize = entry.Key;
-                Dictionary<uint, List<WeakEntry>> weakMap = entry.Value;
-
-                // Skip this window size if the local file is shorter than one window.
-                if (fileLength < windowSize)
+                if (s <= fileLength)
                 {
-                    continue;
+                    sizes.Add(s);
                 }
+            }
+            if (sizes.Count == 0)
+            {
+                return matches;
+            }
 
-                using (FileStream fs = File.OpenRead(localPath))
+            int maxW = 0;
+            foreach (int s in sizes)
+            {
+                if (s > maxW)
                 {
-                    byte[] window = new byte[windowSize];
-                    int read = await fs.ReadAsync(window.AsMemory(0, windowSize), ct);
-                    if (read < windowSize)
+                    maxW = s;
+                }
+            }
+
+            // Single pass: keep one rolling checksum per distinct size plus a ring buffer of the
+            // last maxW bytes (so the byte leaving window w at position p is history[(p-w) % maxW]).
+            int n = sizes.Count;
+            uint[] weak = new uint[n];
+            byte[] history = new byte[maxW];
+            byte[] linear = new byte[maxW];
+
+            using (FileStream fs = File.OpenRead(localPath))
+            {
+                byte[] buffer = new byte[64 * 1024];
+                long p = -1;
+                int bufferRead;
+                while ((bufferRead = await fs.ReadAsync(buffer.AsMemory(0, buffer.Length), ct)) > 0)
+                {
+                    for (int i = 0; i < bufferRead; i++)
                     {
-                        continue;
-                    }
+                        byte add = buffer[i];
+                        p++;
+                        int writeIdx = (int)(p % maxW);
 
-                    // Reusable scratch for the linearized ring buffer — avoids per-weak-hit allocation.
-                    byte[] linear = new byte[windowSize];
-
-                    long offset = 0;
-                    uint weak = RollingChecksum.Compute(window);
-                    TryMatchWindow(window, 0, weak, offset, weakMap, matches, linear);
-
-                    int ringIndex = 0;
-                    byte[] buffer = new byte[64 * 1024];
-                    int bufferRead;
-
-                    // Slide one byte at a time using a ring buffer and rolling checksum.
-                    while ((bufferRead = await fs.ReadAsync(buffer.AsMemory(0, buffer.Length), ct)) > 0)
-                    {
-                        for (int i = 0; i < bufferRead; i++)
+                        // Roll sizes whose window was already full at p-1. Read the leaving byte
+                        // BEFORE overwriting the slot: for w == maxW the leaving slot IS writeIdx.
+                        for (int k = 0; k < n; k++)
                         {
-                            byte remove = window[ringIndex];
-                            byte add = buffer[i];
-                            window[ringIndex] = add;
-                            ringIndex = (ringIndex + 1) % windowSize;
+                            int w = sizes[k];
+                            if (p >= w)
+                            {
+                                byte remove = history[(int)((p - w) % maxW)];
+                                weak[k] = RollingChecksum.Roll(weak[k], remove, add, w);
+                            }
+                        }
 
-                            weak = RollingChecksum.Roll(weak, remove, add, windowSize);
-                            offset++;
+                        history[writeIdx] = add;
 
-                            TryMatchWindow(window, ringIndex, weak, offset, weakMap, matches, linear);
+                        // Seed the checksum for any size whose window becomes full exactly at p.
+                        for (int k = 0; k < n; k++)
+                        {
+                            if (p == sizes[k] - 1)
+                            {
+                                Linearize(history, maxW, p, sizes[k], linear);
+                                weak[k] = RollingChecksum.Compute(linear.AsSpan(0, sizes[k]));
+                            }
+                        }
+
+                        // Try to match every size whose window ends at p.
+                        for (int k = 0; k < n; k++)
+                        {
+                            int w = sizes[k];
+                            if (p >= w - 1)
+                            {
+                                TryMatchAt(history, maxW, p, w, weak[k], perSizeWeakMaps[w], matches, linear);
+                            }
                         }
                     }
                 }
@@ -549,14 +580,15 @@ namespace Hina.Core.Patching
             return matches;
         }
 
-        // Synchronous, allocation-free on both the no-hit and hit paths: no per-byte await state
-        // machine, no MemoryStream, no SHA256 object, no hex string. Hashes the linearized window
-        // straight into a stack buffer and compares raw bytes.
-        private static void TryMatchWindow(
-            byte[] ring,
-            int ringIndex,
+        // Synchronous, allocation-free on the no-hit path: no MemoryStream, no SHA256 object, no hex
+        // string. Linearizes the w bytes ending at endPos from the history ring into a scratch
+        // buffer, hashes into a stack buffer, and compares raw bytes. First match wins.
+        private static void TryMatchAt(
+            byte[] history,
+            int maxW,
+            long endPos,
+            int w,
             uint weak,
-            long offset,
             Dictionary<uint, List<WeakEntry>> weakMap,
             Dictionary<int, long> matches,
             byte[] linear)
@@ -566,30 +598,34 @@ namespace Hina.Core.Patching
                 return;
             }
 
-            // Resolve weak hits by strong hash to avoid collisions.
-            RingToLinear(ring, ringIndex, linear);
+            Linearize(history, maxW, endPos, w, linear);
             Span<byte> hash = stackalloc byte[32];
-            SHA256.HashData(linear, hash);
+            SHA256.HashData(linear.AsSpan(0, w), hash);
+            long startPos = endPos - w + 1;
             foreach (WeakEntry candidate in candidates)
             {
                 if (hash.SequenceEqual(candidate.Strong))
                 {
                     if (!matches.ContainsKey(candidate.Index))
                     {
-                        matches[candidate.Index] = offset;
+                        matches[candidate.Index] = startPos;
                     }
                     break;
                 }
             }
         }
 
-        private static void RingToLinear(byte[] ring, int startIndex, byte[] linear)
+        // Copies the w bytes ending at endPos (positions endPos-w+1 .. endPos) out of the history
+        // ring into linear[0..w-1], unwrapping the circular buffer.
+        private static void Linearize(byte[] history, int maxW, long endPos, int w, byte[] linear)
         {
-            int tail = ring.Length - startIndex;
-            Array.Copy(ring, startIndex, linear, 0, tail);
-            if (startIndex > 0)
+            long startPos = endPos - w + 1;
+            int startIdx = (int)(startPos % maxW);
+            int firstPart = Math.Min(w, maxW - startIdx);
+            Array.Copy(history, startIdx, linear, 0, firstPart);
+            if (firstPart < w)
             {
-                Array.Copy(ring, 0, linear, tail, startIndex);
+                Array.Copy(history, 0, linear, firstPart, w - firstPart);
             }
         }
 

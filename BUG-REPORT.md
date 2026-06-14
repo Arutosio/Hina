@@ -1565,7 +1565,7 @@ Tutti i 17 moduli completati ✅ (find -> verify -> classify). Critico completez
 - Modulo: Core/Rsync+Chunking+Compression
 - File:linea: Hina.Core/Patching/PatchClient.cs:449-550 (loop a 499, File.OpenRead a 510, slide full-file 531-545); radice nel design di Hina.Core/Rsync/ContentDefinedChunker.cs:69-120
 - Severita: Medio
-- Stato: DA CONFERMARE
+- Stato: FIXATO (giro fix r2)
 - Lente: risorse/leak (performance/risorse)
 - Verdetto avversariale: REALE
 

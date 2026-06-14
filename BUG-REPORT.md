@@ -28,10 +28,14 @@ Tutti i moduli completati ✅ (find → verify → impact).
 
 ## RIEPILOGO
 
-- **Bug CONFERMATI**: 30
-  - Critico: 1 · Alto: 8 · Medio: 11 · Basso: 10
-- **DA CONFERMARE (incerti)**: 9
+- **Bug CONFERMATI e FIXATI**: 36 (30 dal primo giro + 6 dagli incerti verificati)
+  - Critico: 1 · Alto: 8 · Medio: 13 · Basso: 14
+- **DA CONFERMARE (incerti) → verificati**: 9 totali
+  - **6 REALI → fixati** (vedi "## VERIFICA INCERTI")
+  - **2 falsi positivi** (recovery.json race, schemaVersion non-int)
+  - **1 già fixato** (container SID, chiuso da BUG-009)
 - **Scartati (non-bug)**: 40
+- **Tutti i fix verificati**: build pulita, **824 test verdi** (baseline 650 + 174 nuovi).
 
 ---
 
@@ -1326,7 +1330,27 @@ descriptor.Name is the already-validated app identifier used everywhere else in 
 
 ---
 
-## DA CONFERMARE (INCERTO)
+## VERIFICA INCERTI (esito)
+
+I 9 incerti sono stati verificati avversarialmente sul codice post-fix. Esito:
+
+| # | Sospetto | File | Esito | Sev. | Commit |
+|---|----------|------|-------|------|--------|
+| 1 | PatchClient non-disposed nel loop | VerifyCommand/PatchClient | REALE → fixato | Basso | `make PatchClient disposable` |
+| 2 | FindBundleExec consuma bundle malformato | ExecutableDetector | REALE → fixato | Basso | `don't consume a malformed .app bundle` |
+| 3 | /health case-sensitivity multi-app | Host/Program | REALE → fixato | Basso | `match /health /stats case-insensitively` |
+| 4 | Permission gate fail-open (buco residuo BUG-006) | UpdateService | REALE → fixato | **Medio** | `fail closed on any missing sandbox baseline` |
+| 5 | recovery.json race | UpdateService | **FALSO POSITIVO** | — | artefatto già lossy/fail-soft; non intacca il registry reale |
+| 6 | schemaVersion non-int aggira il gate | RegistryStore | **FALSO POSITIVO** | — | neutralizzato dal tipaggio int; solo edit manuale |
+| 7 | LockManager DeleteOnClose unlink | LockManager | REALE → fixato | **Medio-Alto** | `drop DeleteOnClose (POSIX exclusion hole)` |
+| 8 | container name sanitization SID | WindowsAppContainerPolicy | **GIÀ FIXATO** | — | chiuso da BUG-009 (moniker + hash FNV dell'anchorPath) |
+| 9 | CreateProcessW bInheritHandles | WindowsSandbox | FALSO POSITIVO (no exploit vivo) → hardening | Basso | `don't inherit handles into the AppContainer` |
+
+Voci originali dettagliate sotto.
+
+---
+
+## DA CONFERMARE (INCERTO) — voci originali
 
 - **[CLI/Commands] PatchClient creato in loop per-app senza Dispose: leak HttpClient/SocketsHttpHandler** (Hina.CLI/Commands/VerifyCommand.cs:183-196, sev. Medio, lente risorse)
   - DeepVerifyAsync fa `new PatchClient(cfg)` per ogni app dentro il loop `foreach (AppDiagnostic d in diags)` (chiamata a riga 105). Ogni PatchClient costruisce internamente un HttpClient con disposeHandler:true che possiede un SocketsHttpHandler (PatchClient.cs righe 29-57), ma PatchClient non implementa IDisposable e non viene mai disposto: ogni app in `hina verify --deep` lascia un handler/connection-pool/socket non rilasciato fino alla finalizzazione GC non deterministica.

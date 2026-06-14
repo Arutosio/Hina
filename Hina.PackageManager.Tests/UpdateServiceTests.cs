@@ -423,6 +423,95 @@ namespace Hina.PackageManager.Tests
             Assert.Equal(UpdateStatus.Updated, result.Status);
         }
 
+        // BUG-043: a shell entry ADDED by an update of a sandboxed app must be routed through
+        // `hina run` (the sandbox chokepoint), exactly like an install-time entry. Before the
+        // fix UpdateService called the 3-arg CreateMenuShortcut (launchOverride=null), so the
+        // new entry launched the binary directly, bypassing the sandbox.
+        [Fact]
+        public async Task Update_AddsEntryToSandboxedApp_RoutesNewEntryThroughHinaRun()
+        {
+            await InstallSandboxedV1(Sandbox("home", "ro"));
+
+            // v2 keeps the same sandbox (no broadening -> no consent) but adds a new "extra" entry.
+            AppDescriptor v2 = BuildDescriptor(_pubKey, version: "1.1.0");
+            v2.Sandbox = Sandbox("home", "ro");
+            v2.Entries = new()
+            {
+                new ShellEntry { Id = "main", Name = "demo", Exec = ExecRelative() },
+                new ShellEntry { Id = "extra", Name = "extra", Exec = ExecRelative() },
+            };
+            DescriptorSigner.AttachSignature(v2, Convert.FromBase64String(_privKey));
+
+            UpdateService svc = new UpdateService(
+                _paths, _platform,
+                fetcher: new StubFetcher(v2),
+                patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
+            UpdateResult result = await svc.UpdateAsync("demo",
+                new UpdateOptions { AcceptNewPermissions = false }, CancellationToken.None);
+
+            Assert.Equal(UpdateStatus.Updated, result.Status);
+
+            // The added entry must have received a non-null `hina run` launch override.
+            (string Id, string? LaunchOverride) added =
+                Assert.Single(_platform.CreatedWithOverride, c => c.Id == "extra");
+            Assert.NotNull(added.LaunchOverride);
+            Assert.Contains("run demo", added.LaunchOverride);
+        }
+
+        // BUG-044: the launch routing must be coupled to the entry creation, not the permission
+        // gate. Even when the gate APPROVES the update (sandbox narrowed -> Broadened=false, no
+        // consent), an added entry must still be routed through `hina run`.
+        [Fact]
+        public async Task Update_GateApprovedNarrowedSandbox_StillRoutesAddedEntry()
+        {
+            await InstallSandboxedV1(Sandbox("home", "rw"));
+
+            AppDescriptor v2 = BuildDescriptor(_pubKey, version: "1.1.0");
+            v2.Sandbox = Sandbox("home", "ro"); // narrowed: gate approves without consent
+            v2.Entries = new()
+            {
+                new ShellEntry { Id = "main", Name = "demo", Exec = ExecRelative() },
+                new ShellEntry { Id = "extra", Name = "extra", Exec = ExecRelative() },
+            };
+            DescriptorSigner.AttachSignature(v2, Convert.FromBase64String(_privKey));
+
+            UpdateService svc = new UpdateService(
+                _paths, _platform,
+                fetcher: new StubFetcher(v2),
+                patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
+            UpdateResult result = await svc.UpdateAsync("demo",
+                new UpdateOptions { AcceptNewPermissions = false }, CancellationToken.None);
+
+            Assert.Equal(UpdateStatus.Updated, result.Status);
+            (string Id, string? LaunchOverride) added =
+                Assert.Single(_platform.CreatedWithOverride, c => c.Id == "extra");
+            Assert.NotNull(added.LaunchOverride);
+            Assert.Contains("run demo", added.LaunchOverride);
+        }
+
+        // BUG-045: updating with a different name casing (`Demo` for an app installed as `demo`)
+        // must still resolve the cached descriptor. On a case-sensitive FS the un-canonicalized
+        // name missed descriptors/demo.json and fail-closed; canonicalizing to the stored name
+        // fixes it. (Neutral on Windows, which is case-insensitive.)
+        [Fact]
+        public async Task Update_DifferentCasingName_ResolvesCachedDescriptorAndUpdates()
+        {
+            await InstallSandboxedV1(Sandbox("home", "ro"));
+
+            AppDescriptor v2 = BuildDescriptor(_pubKey, version: "1.1.0");
+            v2.Sandbox = Sandbox("home", "ro"); // unchanged scope -> no consent needed
+            DescriptorSigner.AttachSignature(v2, Convert.FromBase64String(_privKey));
+
+            UpdateService svc = new UpdateService(
+                _paths, _platform,
+                fetcher: new StubFetcher(v2),
+                patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
+            UpdateResult result = await svc.UpdateAsync("Demo",
+                new UpdateOptions { AcceptNewPermissions = false }, CancellationToken.None);
+
+            Assert.Equal(UpdateStatus.Updated, result.Status);
+        }
+
         // BUG-006: when the cached previous descriptor is missing (e.g. deleted by the user),
         // the sandbox gate must NOT fail-open for the dangerous case: new version declares no
         // active sandbox (sandbox dropped or never declared). Without a baseline we cannot tell

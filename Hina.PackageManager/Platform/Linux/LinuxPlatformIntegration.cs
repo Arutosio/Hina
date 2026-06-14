@@ -94,6 +94,15 @@ namespace Hina.PackageManager.Platform.Linux
 
             string linkPath = Path.Combine(_userBinDir, name);
 
+            // A real directory at the shim path is neither File.Exists (false on dirs) nor a
+            // symlink (LinkTarget == null), so the cleanup guard below would skip it and
+            // CreateSymbolicLink would throw a cryptic IOException — failing the whole install.
+            // Surface a clear, actionable error instead (BUG-047). We do NOT recursively delete
+            // a real directory: that would be destructive on user state.
+            if (Directory.Exists(linkPath) && new FileInfo(linkPath).LinkTarget == null)
+            {
+                throw new IOException($"Cannot add '{name}' to PATH: '{linkPath}' is an existing directory. Remove it and retry.");
+            }
             if (File.Exists(linkPath) || new FileInfo(linkPath).LinkTarget != null)
             {
                 TryDeleteFile(linkPath, _logger);

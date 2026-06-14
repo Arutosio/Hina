@@ -62,6 +62,11 @@ namespace Hina.PackageManager.Install
                     return new UpdateResult { Name = name, Status = UpdateStatus.Failed, Message = $"'{name}' is not installed." };
                 }
                 app = found;
+                // The registry lookup is case-insensitive; canonicalize `name` to the stored
+                // casing so the descriptor-cache path (and registry writes/messages) match what
+                // install wrote. Otherwise `hina update Demo` for an app installed as `demo` would
+                // miss descriptors/demo.json on a case-sensitive FS and fail-closed (BUG-045).
+                name = found.Name;
             }
 
             // [0] The install dir can be gone if the user deleted it by hand. Patching a missing
@@ -347,7 +352,10 @@ namespace Hina.PackageManager.Install
 
                 foreach (ShellEntry entry in entriesToAdd)
                 {
-                    string evidence = await _platform.CreateMenuShortcut(entry, app.InstallPath, ct);
+                    // Route new entries of a sandboxed app through `hina run` (BUG-043): without
+                    // this they would launch the binary directly, bypassing the sandbox.
+                    string? launchOverride = LaunchRouting.BuildLaunchOverride(descriptor, entry);
+                    string evidence = await _platform.CreateMenuShortcut(entry, app.InstallPath, launchOverride, ct);
                     ShellEntryRecord rec = new ShellEntryRecord { Id = entry.Id, Evidence = evidence };
                     addedEntries.Add(rec);
                     updated.ShellEntries.Add(rec);
@@ -506,7 +514,10 @@ namespace Hina.PackageManager.Install
                     foreach (ShellEntry orig in previousDescriptor.Entries)
                     {
                         if (orig.Id != r.Id) continue;
-                        try { await _platform.CreateMenuShortcut(orig, app.InstallPath, CancellationToken.None); }
+                        // Re-create with the same sandbox routing the previous descriptor had,
+                        // so a rollback can't downgrade a re-created entry to unsandboxed (BUG-043).
+                        string? rollbackOverride = LaunchRouting.BuildLaunchOverride(previousDescriptor, orig);
+                        try { await _platform.CreateMenuShortcut(orig, app.InstallPath, rollbackOverride, CancellationToken.None); }
                         catch (Exception ex) { _logger.LogDebug(ex, "Re-create of shell entry {Id} during rollback failed for {Name} (fail-soft).", r.Id, name); }
                         break;
                     }

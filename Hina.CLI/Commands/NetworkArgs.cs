@@ -46,6 +46,16 @@ namespace Hina.CLI.Commands
             }
             if (int.TryParse(raw, out int parsed) && parsed > 0)
             {
+                // --connect-timeout/--request-timeout are SECONDS converted to ms (sec*1000).
+                // Without an upper bound, sec >= 2_147_484 overflows int and yields a negative
+                // timeout (ArgumentOutOfRange downstream) or, in a narrow band, a tiny positive
+                // timeout — the opposite of the intent, silently (BUG-033). --retries isn't scaled.
+                const int MaxTimeoutSeconds = 86_400; // 24h; *1000 = 86.4M << int.MaxValue
+                if (flag != "--retries" && parsed > MaxTimeoutSeconds)
+                {
+                    throw new System.FormatException(
+                        $"Value for {flag} is too large: '{raw}'. Expected 1..{MaxTimeoutSeconds} seconds.");
+                }
                 return parsed;
             }
             throw new System.FormatException($"Invalid value for {flag}: '{raw}'. Expected a positive integer.");

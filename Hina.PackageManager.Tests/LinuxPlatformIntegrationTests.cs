@@ -103,6 +103,27 @@ namespace Hina.PackageManager.Tests
         }
 
         [Fact]
+        public async Task AddToPath_ShimPathIsRealDirectory_ThrowsClearError()
+        {
+            // BUG-047: a real directory at the shim path is neither File.Exists nor a symlink, so
+            // the cleanup guard skipped it and CreateSymbolicLink threw a cryptic IOException.
+            // It must now fail with a clear message naming the path.
+            if (!_supportsSymlinks)
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(Path.Combine(_binDir, "demo")); // occupy the shim path
+            string target = Path.Combine(_tempDir, "payload");
+            File.WriteAllText(target, "x");
+
+            IOException ex = await Assert.ThrowsAsync<IOException>(
+                () => _platform.AddToPath("demo", target, CancellationToken.None));
+            Assert.Contains("demo", ex.Message);
+            Assert.Contains("directory", ex.Message);
+        }
+
+        [Fact]
         public async Task AddToPath_OverwritesPreexistingSymlink()
         {
             if (!_supportsSymlinks)

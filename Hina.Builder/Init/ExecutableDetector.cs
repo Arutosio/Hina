@@ -91,10 +91,12 @@ namespace Hina.Builder.Init
             {
                 return null;
             }
-            // First Mach-O (or, failing that, first file) under Contents/MacOS is the bundle exec.
+            // Only a real Mach-O under Contents/MacOS is the bundle exec. If there is none
+            // (malformed bundle: only data/plist/text files), treat the bundle as unrecognised
+            // rather than proposing an arbitrary, possibly non-executable, non-deterministic
+            // files[0] as a top-rank default (BUG-037).
             string[] files = Directory.GetFiles(macOsDir);
-            string? machO = files.FirstOrDefault(f => ClassifyByMagic(f) == TargetOs.Macos);
-            return machO ?? (files.Length > 0 ? files[0] : null);
+            return files.FirstOrDefault(f => ClassifyByMagic(f) == TargetOs.Macos);
         }
 
         private static TargetOs? ClassifyByMagic(string path)

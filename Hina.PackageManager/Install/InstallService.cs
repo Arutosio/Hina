@@ -208,13 +208,9 @@ namespace Hina.PackageManager.Install
                 {
                     DiscloseSandbox(descriptor.Sandbox!, sandboxEnforceable, descriptor.Name);
                 }
-                bool routeThroughHina = sandboxRequested && sandboxEnforceable;
-                string hinaExe = Environment.ProcessPath ?? "hina";
                 foreach (ShellEntry entry in descriptor.Entries)
                 {
-                    string? launchOverride = routeThroughHina
-                        ? $"\"{hinaExe}\" run {descriptor.Name} \"{entry.Id}\""
-                        : null;
+                    string? launchOverride = LaunchRouting.BuildLaunchOverride(descriptor, entry);
                     string evidence = await _platform.CreateMenuShortcut(entry, appDir, launchOverride, ct);
                     tx.RecordShellEntry(evidence);
                     newApp.ShellEntries.Add(new ShellEntryRecord { Id = entry.Id, Evidence = evidence });

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
 using System.Threading;
@@ -450,20 +451,49 @@ namespace Hina.PackageManager.Platform.Windows
 
         private void EnsureBinDirOnUserPath()
         {
-            string? current = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User);
-            if (current == null)
+            // Write the user PATH via the registry directly, preserving the RAW (unexpanded) value
+            // and its kind. Environment.Get/SetEnvironmentVariable(...,User) reads REG_EXPAND_SZ
+            // already expanded and rewrites it as REG_SZ, which freezes %VAR% indirection
+            // (e.g. %USERPROFILE%\...) to literals and degrades the type — silent data loss on a
+            // shared setting (BUG-046). HKCU\Environment\PATH is REG_EXPAND_SZ by default.
+            using RegistryKey env = Reg.CurrentUser.CreateSubKey("Environment", writable: true);
+            string? raw = env.GetValue("PATH", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string;
+            if (string.IsNullOrEmpty(raw))
             {
-                Environment.SetEnvironmentVariable("PATH", _userBinDir, EnvironmentVariableTarget.User);
+                env.SetValue("PATH", _userBinDir, RegistryValueKind.ExpandString);
+                BroadcastEnvironmentChange();
                 return;
             }
-            foreach (string segment in current.Split(';'))
+            RegistryValueKind kind = env.GetValueKind("PATH");
+            foreach (string segment in raw.Split(';'))
             {
                 if (string.Equals(segment.TrimEnd('\\'), _userBinDir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
                 {
                     return;
                 }
             }
-            Environment.SetEnvironmentVariable("PATH", current + ";" + _userBinDir, EnvironmentVariableTarget.User);
+            string updated = raw.TrimEnd(';') + ";" + _userBinDir;
+            env.SetValue("PATH", updated, kind); // preserve REG_EXPAND_SZ
+            BroadcastEnvironmentChange();
+        }
+
+        // Environment.SetEnvironmentVariable(...,User) used to broadcast WM_SETTINGCHANGE so
+        // already-running shells pick up the new PATH; preserve that parity now that we write the
+        // registry directly. Best-effort: a failed broadcast only delays propagation.
+        private static readonly IntPtr HWND_BROADCAST = new IntPtr(0xffff);
+        private const uint WM_SETTINGCHANGE = 0x001A;
+        private const uint SMTO_ABORTIFHUNG = 0x0002;
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, string lParam, uint flags, uint timeout, out IntPtr result);
+
+        private static void BroadcastEnvironmentChange()
+        {
+            try
+            {
+                SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE, IntPtr.Zero, "Environment", SMTO_ABORTIFHUNG, 5000, out _);
+            }
+            catch { /* best effort */ }
         }
 
         private static bool TryParseHkcuPath(string evidence, out string subKey)

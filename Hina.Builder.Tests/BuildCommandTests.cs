@@ -85,6 +85,7 @@ namespace Hina.Builder.Tests
             await File.WriteAllTextAsync(Path.Combine(_input, "app.bin"), "data");
             string keyPath = Path.Combine(_base, "not-a-key.txt");
             await File.WriteAllTextAsync(keyPath, "this is not base64!!");
+            var log = new CapturingLogger();
 
             int code = await BuildCommand.RunAsync(new BuildOptions
             {
@@ -93,9 +94,13 @@ namespace Hina.Builder.Tests
                 BaseUrl = "https://patch.example.com/",
                 SignKeyPath = keyPath,
                 Version = "1.0.0"
-            }, NullLogger.Instance, CancellationToken.None);
+            }, log, CancellationToken.None);
 
             Assert.Equal(2, code);
+            // BUG-038: the message must point at keygen's real output (<name>.key.b64), not a
+            // file name keygen never produces (ed25519.priv.b64).
+            Assert.Contains(log.Messages, m => m.Contains(".key.b64"));
+            Assert.DoesNotContain(log.Messages, m => m.Contains("ed25519.priv.b64"));
         }
 
         // A typo'd chunk parameter ('--chunk 0', min > max…) used to escape as an unhandled

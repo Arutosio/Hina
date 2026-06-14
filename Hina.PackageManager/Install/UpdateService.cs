@@ -62,6 +62,11 @@ namespace Hina.PackageManager.Install
                     return new UpdateResult { Name = name, Status = UpdateStatus.Failed, Message = $"'{name}' is not installed." };
                 }
                 app = found;
+                // The registry lookup is case-insensitive; canonicalize `name` to the stored
+                // casing so the descriptor-cache path (and registry writes/messages) match what
+                // install wrote. Otherwise `hina update Demo` for an app installed as `demo` would
+                // miss descriptors/demo.json on a case-sensitive FS and fail-closed (BUG-045).
+                name = found.Name;
             }
 
             // [0] The install dir can be gone if the user deleted it by hand. Patching a missing

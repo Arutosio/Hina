@@ -111,7 +111,7 @@ namespace Hina.PackageManager.Registry
                 }
                 try
                 {
-                    return root.Deserialize(PackageManagerJsonContext.Default.Registry) ?? new Registry();
+                    return EnsureCaseInsensitiveApps(root.Deserialize(PackageManagerJsonContext.Default.Registry) ?? new Registry());
                 }
                 catch (JsonException ex)
                 {
@@ -133,6 +133,20 @@ namespace Hina.PackageManager.Registry
             if (r.SchemaVersion > targetVersion)
             {
                 throw NewerSchema(path, r.SchemaVersion, targetVersion);
+            }
+            return EnsureCaseInsensitiveApps(r);
+        }
+
+        // System.Text.Json source-gen rebuilds the Apps dictionary with the DEFAULT (ordinal)
+        // comparer, dropping the OrdinalIgnoreCase comparer declared on the property. Without this
+        // a registry round-tripped through disk does case-SENSITIVE lookups, so `hina update Demo`
+        // for an app installed as `demo` reports "not installed" on every OS (BUG-045). Rebuild the
+        // dictionary with the intended comparer after load.
+        private static Registry EnsureCaseInsensitiveApps(Registry r)
+        {
+            if (r.Apps is { Count: > 0 } && !ReferenceEquals(r.Apps.Comparer, StringComparer.OrdinalIgnoreCase))
+            {
+                r.Apps = new Dictionary<string, InstalledApp>(r.Apps, StringComparer.OrdinalIgnoreCase);
             }
             return r;
         }

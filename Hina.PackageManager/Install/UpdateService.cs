@@ -347,7 +347,10 @@ namespace Hina.PackageManager.Install
 
                 foreach (ShellEntry entry in entriesToAdd)
                 {
-                    string evidence = await _platform.CreateMenuShortcut(entry, app.InstallPath, ct);
+                    // Route new entries of a sandboxed app through `hina run` (BUG-043): without
+                    // this they would launch the binary directly, bypassing the sandbox.
+                    string? launchOverride = LaunchRouting.BuildLaunchOverride(descriptor, entry);
+                    string evidence = await _platform.CreateMenuShortcut(entry, app.InstallPath, launchOverride, ct);
                     ShellEntryRecord rec = new ShellEntryRecord { Id = entry.Id, Evidence = evidence };
                     addedEntries.Add(rec);
                     updated.ShellEntries.Add(rec);
@@ -506,7 +509,10 @@ namespace Hina.PackageManager.Install
                     foreach (ShellEntry orig in previousDescriptor.Entries)
                     {
                         if (orig.Id != r.Id) continue;
-                        try { await _platform.CreateMenuShortcut(orig, app.InstallPath, CancellationToken.None); }
+                        // Re-create with the same sandbox routing the previous descriptor had,
+                        // so a rollback can't downgrade a re-created entry to unsandboxed (BUG-043).
+                        string? rollbackOverride = LaunchRouting.BuildLaunchOverride(previousDescriptor, orig);
+                        try { await _platform.CreateMenuShortcut(orig, app.InstallPath, rollbackOverride, CancellationToken.None); }
                         catch (Exception ex) { _logger.LogDebug(ex, "Re-create of shell entry {Id} during rollback failed for {Name} (fail-soft).", r.Id, name); }
                         break;
                     }

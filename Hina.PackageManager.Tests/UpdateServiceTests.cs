@@ -423,6 +423,41 @@ namespace Hina.PackageManager.Tests
             Assert.Equal(UpdateStatus.Updated, result.Status);
         }
 
+        // BUG-043: a shell entry ADDED by an update of a sandboxed app must be routed through
+        // `hina run` (the sandbox chokepoint), exactly like an install-time entry. Before the
+        // fix UpdateService called the 3-arg CreateMenuShortcut (launchOverride=null), so the
+        // new entry launched the binary directly, bypassing the sandbox.
+        [Fact]
+        public async Task Update_AddsEntryToSandboxedApp_RoutesNewEntryThroughHinaRun()
+        {
+            await InstallSandboxedV1(Sandbox("home", "ro"));
+
+            // v2 keeps the same sandbox (no broadening -> no consent) but adds a new "extra" entry.
+            AppDescriptor v2 = BuildDescriptor(_pubKey, version: "1.1.0");
+            v2.Sandbox = Sandbox("home", "ro");
+            v2.Entries = new()
+            {
+                new ShellEntry { Id = "main", Name = "demo", Exec = ExecRelative() },
+                new ShellEntry { Id = "extra", Name = "extra", Exec = ExecRelative() },
+            };
+            DescriptorSigner.AttachSignature(v2, Convert.FromBase64String(_privKey));
+
+            UpdateService svc = new UpdateService(
+                _paths, _platform,
+                fetcher: new StubFetcher(v2),
+                patchClientFactory: cfg => new FakePatchClient(cfg, NewExecFiles()));
+            UpdateResult result = await svc.UpdateAsync("demo",
+                new UpdateOptions { AcceptNewPermissions = false }, CancellationToken.None);
+
+            Assert.Equal(UpdateStatus.Updated, result.Status);
+
+            // The added entry must have received a non-null `hina run` launch override.
+            (string Id, string? LaunchOverride) added =
+                Assert.Single(_platform.CreatedWithOverride, c => c.Id == "extra");
+            Assert.NotNull(added.LaunchOverride);
+            Assert.Contains("run demo", added.LaunchOverride);
+        }
+
         // BUG-006: when the cached previous descriptor is missing (e.g. deleted by the user),
         // the sandbox gate must NOT fail-open for the dangerous case: new version declares no
         // active sandbox (sandbox dropped or never declared). Without a baseline we cannot tell

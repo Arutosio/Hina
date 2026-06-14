@@ -39,6 +39,17 @@ namespace Hina.PackageManager.Tests
         // window between the last add-phase step and the final registry write.
         public CancellationTokenSource? CancelAfterCreateShortcut { get; set; }
 
+        // Captures the launchOverride passed to the sandbox-aware overload so tests can assert
+        // that sandboxed entries are routed through `hina run` (BUG-043). Records then delegates
+        // to the 3-arg path so all existing seams (throw/cancel/evidence) still apply.
+        public List<(string Id, string? LaunchOverride)> CreatedWithOverride { get; } = new();
+
+        public Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, string? launchOverride, CancellationToken ct)
+        {
+            CreatedWithOverride.Add((entry.Id, launchOverride));
+            return CreateMenuShortcut(entry, appDir, ct);
+        }
+
         public Task<string> CreateMenuShortcut(ShellEntry entry, string appDir, CancellationToken ct)
         {
             if (CancelOnCreateShortcut != null)

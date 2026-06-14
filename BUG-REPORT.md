@@ -1812,7 +1812,7 @@ Opzione MINIMA (cap + log) se la singola passata e' troppo invasiva: dopo aver c
 - **Modulo:** Builder
 - **File:linea:** Hina.Builder/Init/ExecutableDetector.cs:94-97 (e relativo consumo a :51-52; reachability InitCommand.cs:257-263 e :362-377)
 - **Severita:** Basso
-- **Stato:** DA CONFERMARE
+- **Stato:** FIXATO (giro fix r2)
 - **Lente:** correttezza
 - **Verdetto avversariale:** REALE
 
@@ -1869,7 +1869,7 @@ Caller toccati: solo `Detect` (interno). Quando `FindBundleExec` torna `null`, D
 - **Modulo:** Builder
 - **File:linea:** Hina.Builder/BuildCommand.cs:205
 - **Severita:** Basso
-- **Stato:** DA CONFERMARE
+- **Stato:** FIXATO (giro fix r2)
 - **Lente:** correttezza
 - **Verdetto avversariale:** REALE
 
